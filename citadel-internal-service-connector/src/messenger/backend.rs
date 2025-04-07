@@ -407,19 +407,23 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
     ) -> Result<Vec<WrappedMessage>, BackendError<WrappedMessage>> {
         loop {
             match self.get_outbound_map().await {
-                Ok(outbound) => return Ok(outbound
-                    .values()
-                    .flat_map(|messages| messages.values().cloned())
-                    .collect()),
+                Ok(outbound) => {
+                    return Ok(outbound
+                        .values()
+                        .flat_map(|messages| messages.values().cloned())
+                        .collect())
+                }
                 Err(e) => {
                     // If we get a delivery error, log it and return an empty vector
                     let err_str = format!("{:?}", e);
-                    if err_str.contains("Failed to deliver message") || err_str.contains("get_kv: Server connection not found") {
+                    if err_str.contains("Failed to deliver message")
+                        || err_str.contains("get_kv: Server connection not found")
+                    {
                         citadel_logging::warn!(target: "citadel", "[GET_PENDING_OUTBOUND] Failed to get outbound map due to likely no connection up yet");
                         tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
-                        continue
+                        continue;
                     } else {
-                        return Err(e)
+                        return Err(e);
                     }
                 }
             }
@@ -431,20 +435,23 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
     ) -> Result<Vec<WrappedMessage>, BackendError<WrappedMessage>> {
         loop {
             match self.get_inbound_map().await {
-                Ok(inbound) => return Ok(inbound
-                    .values()
-                    .flat_map(|messages| messages.values().cloned())
-                    .collect()),
+                Ok(inbound) => {
+                    return Ok(inbound
+                        .values()
+                        .flat_map(|messages| messages.values().cloned())
+                        .collect())
+                }
                 Err(e) => {
-
                     // If we get a delivery error, log it and return an empty vector
                     let err_str = format!("{:?}", e);
-                    if err_str.contains("Failed to deliver message") || err_str.contains("get_kv: Server connection not found") {
+                    if err_str.contains("Failed to deliver message")
+                        || err_str.contains("get_kv: Server connection not found")
+                    {
                         citadel_logging::warn!(target: "citadel", "[GET_PENDING_INBOUND] Failed to get inbound map likely due to likely no connection up yet");
                         tokio::time::sleep(Duration::from_millis(5000)).await;
                         continue;
                     } else {
-                        return Err(e)
+                        return Err(e);
                     }
                 }
             }

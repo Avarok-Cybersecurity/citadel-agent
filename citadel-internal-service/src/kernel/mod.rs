@@ -387,7 +387,7 @@ fn spawn_tick_updater<R: Ratchet>(
 
                         if matches!(
                             status,
-                            ObjectTransferStatus::TransferComplete { .. }
+                            ObjectTransferStatus::TransferComplete
                                 | ObjectTransferStatus::ReceptionComplete
                         ) {
                             info!(target: "citadel", "File Transfer Completed - Ending Tick Updater");

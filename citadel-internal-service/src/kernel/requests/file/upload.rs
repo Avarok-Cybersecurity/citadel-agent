@@ -4,7 +4,7 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, SendFileRequestFailure, SendFileRequestSuccess,
 };
-use citadel_logging::{error, info};
+use citadel_sdk::logging::{error, info};
 use citadel_sdk::prelude::{
     NetworkError, NodeRequest, Ratchet, SendObject, TargetLockedRemote, VirtualTargetType,
 };

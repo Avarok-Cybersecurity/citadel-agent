@@ -76,11 +76,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     match lock.get(&uuid) {
                         Some(entry) => {
                             if let Err(err) = entry.send(message) {
-                                citadel_logging::error!(target:"citadel","Error sending message to client: {err:?}");
+                                citadel_sdk::logging::error!(target:"citadel","Error sending message to client: {err:?}");
                             }
                         }
                         None => {
-                            citadel_logging::info!(target:"citadel","Hash map connection not found")
+                            citadel_sdk::logging::info!(target:"citadel","Hash map connection not found")
                         }
                     }
                 }

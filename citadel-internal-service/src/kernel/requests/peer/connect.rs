@@ -5,7 +5,7 @@ use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, MessageNotification, PeerConnectFailure,
     PeerConnectSuccess,
 };
-use citadel_logging::{error, info};
+use citadel_sdk::logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::{
     ProtocolRemoteExt, ProtocolRemoteTargetExt, Ratchet, VirtualTargetType,

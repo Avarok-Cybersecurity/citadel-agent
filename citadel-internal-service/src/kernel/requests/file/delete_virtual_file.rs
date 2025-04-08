@@ -5,7 +5,7 @@ use citadel_internal_service_types::{
     DeleteVirtualFileFailure, DeleteVirtualFileSuccess, InternalServiceRequest,
     InternalServiceResponse,
 };
-use citadel_logging::error;
+use citadel_sdk::logging::error;
 use citadel_sdk::prelude::{DeleteObject, NetworkError, NodeRequest, Ratchet, VirtualTargetType};
 use uuid::Uuid;
 

@@ -4,7 +4,7 @@ use citadel_internal_service_types::{
     DisconnectNotification, InternalServiceResponse, PeerConnectNotification,
     PeerRegisterNotification,
 };
-use citadel_logging::info;
+use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{
     GroupEvent, NetworkError, PeerConnectionType, PeerEvent, PeerSignal, Ratchet,
 };

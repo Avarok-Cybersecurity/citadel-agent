@@ -1,8 +1,8 @@
 use crate::kernel::CitadelWorkspaceService;
 use async_recursion::async_recursion;
 use citadel_internal_service_types::*;
-use citadel_logging::info;
-use citadel_logging::tracing::log;
+use citadel_sdk::logging::info;
+use citadel_sdk::logging::tracing::log;
 
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_sdk::prelude::*;

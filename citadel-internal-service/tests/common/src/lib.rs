@@ -6,7 +6,7 @@ use citadel_internal_service_types::{
     FileTransferTickNotification, InternalServiceRequest, InternalServiceResponse,
     PeerConnectNotification, PeerConnectSuccess, PeerRegisterNotification, PeerRegisterSuccess,
 };
-use citadel_logging::info;
+use citadel_sdk::logging::info;
 use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
 use citadel_sdk::prefabs::server::empty::EmptyKernel;
 use citadel_sdk::prelude::*;
@@ -25,9 +25,9 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
 pub fn setup_log() {
-    citadel_logging::setup_log();
+    citadel_sdk::logging::setup_log();
     std::panic::set_hook(Box::new(|info| {
-        citadel_logging::error!(target: "citadel", "Panic: {:?}", info);
+        citadel_sdk::logging::error!(target: "citadel", "Panic: {:?}", info);
         std::process::exit(1);
     }));
 }
@@ -458,7 +458,7 @@ pub fn spawn_services(futures_to_spawn: Vec<InternalServicesFutures>) {
                 info!(target: "citadel","Vital Internal Service Ended");
             }
             Err(err) => {
-                citadel_logging::error!(target: "citadel", "Internal service error: {err:?}");
+                citadel_sdk::logging::error!(target: "citadel", "Internal service error: {err:?}");
             }
         }
     };
@@ -560,7 +560,7 @@ impl<R: Ratchet> NetKernel<R> for ReceiverFileTransferKernel<R> {
     }
 
     async fn on_node_event_received(&self, message: NodeResult<R>) -> Result<(), NetworkError> {
-        citadel_logging::trace!(target: "citadel", "SERVER received {:?}", message);
+        citadel_sdk::logging::trace!(target: "citadel", "SERVER received {:?}", message);
         if let NodeResult::ObjectTransferHandle(object_transfer_handle) = message {
             let mut handle = object_transfer_handle.handle;
             let mut path = None;
@@ -572,7 +572,7 @@ impl<R: Ratchet> NetKernel<R> for ReceiverFileTransferKernel<R> {
             while let Some(status) = handle.next().await {
                 match status {
                     ObjectTransferStatus::ReceptionComplete => {
-                        citadel_logging::trace!(target: "citadel", "Server has finished receiving the file!");
+                        citadel_sdk::logging::trace!(target: "citadel", "Server has finished receiving the file!");
                         let mut cmp_path = PathBuf::from("..");
                         cmp_path.push("resources");
                         cmp_path.push("test");
@@ -697,7 +697,7 @@ pub async fn exhaust_stream_to_file_completion(
                 }
             },
             unexpected_response => {
-                citadel_logging::warn!(target: "citadel", "Unexpected signal {unexpected_response:?}")
+                citadel_sdk::logging::warn!(target: "citadel", "Unexpected signal {unexpected_response:?}")
             }
         }
     }

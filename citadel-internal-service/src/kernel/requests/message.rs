@@ -4,7 +4,7 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, MessageSendFailure, MessageSendSuccess,
 };
-use citadel_logging::info;
+use citadel_sdk::logging::info;
 use citadel_sdk::prelude::Ratchet;
 use uuid::Uuid;
 
@@ -34,7 +34,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     &mut peer_conn.sink
                 } else {
                     // TODO: refactor all connection not found messages, we have too many duplicates
-                    citadel_logging::error!(target: "citadel","connection not found");
+                    citadel_sdk::logging::error!(target: "citadel","connection not found");
                     let response =
                         InternalServiceResponse::MessageSendFailure(MessageSendFailure {
                             cid,

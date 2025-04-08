@@ -10,7 +10,6 @@ vendored = ["citadel_sdk/vendored"]
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
-citadel_types = { workspace = true }
 citadel_sdk = { workspace = true }
 bytes = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }

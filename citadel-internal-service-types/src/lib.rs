@@ -1,6 +1,8 @@
 use bytes::BytesMut;
 use citadel_internal_service_macros::{Cid, IsError, IsNotification, RequestId};
-pub use citadel_types::prelude::{
+use citadel_sdk::types::crypto::PreSharedKey;
+use citadel_sdk::types::prelude::ObjectId;
+pub use citadel_sdk::types::prelude::{
     ConnectMode, MemberState, MessageGroupKey, ObjectTransferStatus, SecBuffer, SecurityLevel,
     SessionSecuritySettings, TransferType, UdpMode, UserIdentifier, VirtualObjectMetadata,
 };
@@ -10,9 +12,6 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
-// TODO: Move PreSharedKey into citadel-types
-use citadel_sdk::prelude::PreSharedKey;
-use citadel_types::prelude::ObjectId;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectSuccess {

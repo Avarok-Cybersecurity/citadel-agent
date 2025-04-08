@@ -17,12 +17,12 @@ bincode2 = { workspace = true }
 serde = { workspace = true }
 futures = { workspace = true, features = ["alloc"] }
 uuid = { workspace = true }
-citadel_logging = { workspace = true }
 async-trait = "0.1.79"
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
 itertools = { workspace = true }
 bytes = "1.8.0"
+citadel_sdk = { workspace = true }
 
 [dev-dependencies]
 citadel-internal-service-test-common = { workspace = true }

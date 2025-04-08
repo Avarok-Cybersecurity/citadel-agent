@@ -9,7 +9,7 @@ use citadel_internal_service_connector::io_interface::in_memory::{
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::*;
-use citadel_logging::{error, info, warn};
+use citadel_sdk::logging::{error, info, warn};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::remote_specialization::PeerRemote;
 use citadel_sdk::prelude::VirtualTargetType;

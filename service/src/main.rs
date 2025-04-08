@@ -6,7 +6,7 @@ use structopt::StructOpt;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    citadel_logging::setup_log();
+    citadel_sdk::logging::setup_log();
     let opts: Options = Options::from_args();
     let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(opts.bind).await?;
 
@@ -44,7 +44,7 @@ lazy_static::lazy_static! {
             use std::thread;
             use std::time::Duration;
             use parking_lot::deadlock;
-            use citadel_logging::*;
+            use citadel_sdk::logging::*;
             loop {
                 std::thread::sleep(Duration::from_secs(5));
                 let deadlocks = deadlock::check_deadlock();

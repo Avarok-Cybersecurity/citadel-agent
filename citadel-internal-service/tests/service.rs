@@ -13,7 +13,7 @@ mod tests {
     use citadel_internal_service_types::{
         InternalServiceRequest, InternalServiceResponse, MessageNotification, MessageSendSuccess,
     };
-    use citadel_logging::info;
+    use citadel_sdk::logging::info;
     use citadel_sdk::prelude::*;
     use core::panic;
     use futures::{SinkExt, StreamExt};

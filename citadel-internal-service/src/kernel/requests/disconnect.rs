@@ -4,7 +4,7 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     DisconnectFailure, DisconnectNotification, InternalServiceRequest, InternalServiceResponse,
 };
-use citadel_logging::info;
+use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{DisconnectFromHypernode, NodeRequest, Ratchet};
 use uuid::Uuid;
 

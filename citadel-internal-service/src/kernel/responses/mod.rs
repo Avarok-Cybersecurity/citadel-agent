@@ -1,7 +1,7 @@
 use crate::kernel::CitadelWorkspaceService;
 
 use citadel_internal_service_connector::io_interface::IOInterface;
-use citadel_logging::info;
+use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{NetworkError, NodeResult, Ratchet};
 
 mod disconnect;
@@ -29,7 +29,7 @@ pub async fn handle_node_result<T: IOInterface, R: Ratchet>(
         NodeResult::GroupEvent(group_event) => return group_event::handle(this, group_event).await,
 
         evt => {
-            citadel_logging::warn!(target: "citadel", "Unhandled node result: {evt:?}")
+            citadel_sdk::logging::warn!(target: "citadel", "Unhandled node result: {evt:?}")
         }
     }
 

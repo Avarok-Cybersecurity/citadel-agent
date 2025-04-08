@@ -2,7 +2,7 @@ use crate::kernel::requests::{handle_request, HandledRequestResult};
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
-use citadel_logging::info;
+use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{ProtocolRemoteExt, Ratchet};
 use uuid::Uuid;
 

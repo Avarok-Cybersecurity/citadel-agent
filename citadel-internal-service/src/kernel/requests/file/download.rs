@@ -4,7 +4,7 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     DownloadFileFailure, DownloadFileSuccess, InternalServiceRequest, InternalServiceResponse,
 };
-use citadel_logging::error;
+use citadel_sdk::logging::error;
 use citadel_sdk::prelude::{NetworkError, NodeRequest, PullObject, Ratchet, TargetLockedRemote};
 use uuid::Uuid;
 

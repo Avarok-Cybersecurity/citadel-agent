@@ -23,6 +23,5 @@ structopt = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 citadel-internal-service = { workspace = true }
 citadel_sdk = { workspace = true }
-citadel_logging = { workspace = true }
 parking_lot = { workspace = true, optional = true }
 lazy_static = { workspace = true, optional = true }

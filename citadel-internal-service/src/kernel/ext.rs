@@ -4,7 +4,7 @@ use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
     ServiceConnectionAccepted,
 };
-use citadel_logging::{error, info, warn};
+use citadel_sdk::logging::{error, info, warn};
 use citadel_sdk::prelude::Ratchet;
 use futures::StreamExt;
 use std::collections::HashMap;

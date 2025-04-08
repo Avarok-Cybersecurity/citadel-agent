@@ -271,7 +271,7 @@ mod tests {
                     match timeout_result {
                         Ok(result) => result?,
                         Err(_) => {
-                            citadel_logging::warn!(target: "citadel", "Ping-pong test timed out after 5 seconds between clients {} and {}", clients[i], clients[j]);
+                            citadel_sdk::logging::warn!(target: "citadel", "Ping-pong test timed out after 5 seconds between clients {} and {}", clients[i], clients[j]);
                             // Continue with the next pair instead of failing the whole test
                             continue;
                         }

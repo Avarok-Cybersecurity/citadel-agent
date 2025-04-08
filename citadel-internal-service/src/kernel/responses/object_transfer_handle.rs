@@ -1,7 +1,7 @@
 use crate::kernel::{send_response_to_tcp_client, spawn_tick_updater, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{FileTransferRequestNotification, InternalServiceResponse};
-use citadel_logging::info;
+use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{
     NetworkError, ObjectTransferHandle, ObjectTransferOrientation, Ratchet,
 };
@@ -20,8 +20,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     };
     let object_transfer_handler = object_transfer_handle.handle;
 
-    citadel_logging::info!(target: "citadel", "Orientation: {:?}", object_transfer_handler.orientation);
-    citadel_logging::info!(target: "citadel", "ObjectTransferHandle has implicated_cid: {implicated_cid:?} and peer_cid {peer_cid:?}");
+    citadel_sdk::logging::info!(target: "citadel", "Orientation: {:?}", object_transfer_handler.orientation);
+    citadel_sdk::logging::info!(target: "citadel", "ObjectTransferHandle has implicated_cid: {implicated_cid:?} and peer_cid {peer_cid:?}");
 
     // When we receive a handle, there are two possibilities:
     // A: We are the sender of the file transfer, in which case we can assume the adjacent node

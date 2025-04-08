@@ -13,7 +13,7 @@ mod tests {
         GroupRequestJoinFailure, GroupRequestJoinSuccess, GroupRespondRequestFailure,
         GroupRespondRequestSuccess, InternalServiceRequest, InternalServiceResponse,
     };
-    use citadel_logging::info;
+    use citadel_sdk::logging::info;
     use citadel_sdk::prelude::{MemberState, StackedRatchet, UserIdentifier};
     use std::error::Error;
     use std::net::SocketAddr;

@@ -26,9 +26,7 @@ citadel-internal-service-macros = { path = "./citadel-internal-service-macros", 
 intersession-layer-messaging = { path = "intersession-layer-messaging", default-features = false, version = "0.2.0" }
 
 # Avarok deps
-citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol" }
-citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol" }
-citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol" }
+citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "cw-debug" }
 
 # Standard deps
 serde = { version = "1.0.104", features = ["derive"] }

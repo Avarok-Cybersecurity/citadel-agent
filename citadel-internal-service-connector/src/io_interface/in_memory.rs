@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
 };
-use citadel_logging::tracing::log;
+use citadel_sdk::logging::tracing::log;
 use futures::Sink;
 use std::pin::Pin;
 use std::task::{Context, Poll};

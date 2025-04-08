@@ -200,7 +200,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 }
             }
             None => {
-                citadel_logging::warn!(target: "citadel", "No handler generated for GroupBroadcast")
+                citadel_sdk::logging::warn!(target: "citadel", "No handler generated for GroupBroadcast")
             }
         }
     }

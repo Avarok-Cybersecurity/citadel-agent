@@ -46,7 +46,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
         return send_response_to_tcp_client(&this.tcp_connection_map, signal, conn_uuid).await;
     } else {
-        citadel_logging::warn!(target: "citadel", "The disconnect request does not contain a connection type")
+        citadel_sdk::logging::warn!(target: "citadel", "The disconnect request does not contain a connection type")
     }
 
     Ok(())

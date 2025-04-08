@@ -7,7 +7,7 @@ use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse, SecurityLevel,
     SessionInformation,
 };
-use citadel_logging::tracing::log;
+use citadel_sdk::logging::tracing::log;
 use dashmap::DashMap;
 use futures::future::Either;
 use futures::{SinkExt, StreamExt};
@@ -83,6 +83,40 @@ impl StreamKey {
     }
 }
 
+#[derive(Clone)]
+pub struct BypasserTx {
+    tx: UnboundedSender<(StreamKey, InternalMessage)>,
+    stream_key: StreamKey,
+}
+
+impl BypasserTx {
+    /// Sends an arbitrary request to the internal service. Not processed by the ISM layer.
+    pub async fn send(
+        &self,
+        request: impl Into<InternalServicePayload>,
+    ) -> Result<(), MessengerError> {
+        let payload = Payload::Message(WrappedMessage {
+            source_id: self.stream_key.cid,
+            destination_id: LOOPBACK_ONLY,
+            message_id: 0, // Does not matter since this will bypass ISM
+            contents: request.into(),
+        });
+
+        let bypass_key = StreamKey::bypass_ism();
+
+        self.tx.send((bypass_key, payload)).map_err(|err| {
+            let reason = err.to_string();
+            match err.0 .1 {
+                Payload::Message(message) => MessengerError::SendError {
+                    reason,
+                    message: Either::Right(message.contents),
+                },
+                _ => MessengerError::OtherError { reason },
+            }
+        })
+    }
+}
+
 type CitadelWorkspaceISM<B> = ILM<WrappedMessage, B, LocalDeliveryTx, ISMHandle<B>>;
 
 pub struct LocalDeliveryTx {
@@ -129,6 +163,13 @@ where
         (this, final_rx)
     }
 
+    pub fn bypasser(&self) -> BypasserTx {
+        BypasserTx {
+            tx: self.bypass_ism_tx_to_outbound.clone(),
+            stream_key: StreamKey::bypass_ism(),
+        }
+    }
+
     /// Multiplexes the messenger, creating a unique handle for the specified local client, `cid`
     pub async fn multiplex(&self, cid: u64) -> Result<MessengerTx<B>, MessengerError> {
         let stream_key = StreamKey {
@@ -148,7 +189,10 @@ where
             .insert(stream_key, background_to_ism_inbound);
 
         let mut handle = MessengerTx {
-            bypass_ism_outbound_tx: self.bypass_ism_tx_to_outbound.clone(),
+            bypass_ism_outbound_tx: BypasserTx {
+                tx: self.bypass_ism_tx_to_outbound.clone(),
+                stream_key,
+            },
             messenger: self.clone(),
             stream_key,
             ism: None,
@@ -512,7 +556,7 @@ pub struct MessengerTx<B>
 where
     B: CitadelBackendExt,
 {
-    bypass_ism_outbound_tx: UnboundedSender<(StreamKey, InternalMessage)>,
+    bypass_ism_outbound_tx: BypasserTx,
     messenger: CitadelWorkspaceMessenger<B>,
     stream_key: StreamKey,
     ism: Option<CitadelWorkspaceISM<B>>,
@@ -645,8 +689,24 @@ where
         security_level: SecurityLevel,
         message: impl Into<Vec<u8>>,
     ) -> Result<(), MessengerError> {
+        self.send_message_to_with_security_level_and_req_id(
+            peer_cid,
+            security_level,
+            Uuid::new_v4(),
+            message,
+        )
+        .await
+    }
+
+    pub async fn send_message_to_with_security_level_and_req_id(
+        &self,
+        peer_cid: u64,
+        security_level: SecurityLevel,
+        request_id: Uuid,
+        message: impl Into<Vec<u8>>,
+    ) -> Result<(), MessengerError> {
         let payload = InternalServicePayload::Request(InternalServiceRequest::Message {
-            request_id: Uuid::new_v4(),
+            request_id,
             message: message.into(),
             cid: self.stream_key.cid,
             peer_cid: Some(peer_cid),
@@ -662,27 +722,7 @@ where
         &self,
         request: impl Into<InternalServicePayload>,
     ) -> Result<(), MessengerError> {
-        let payload = Payload::Message(WrappedMessage {
-            source_id: self.stream_key.cid,
-            destination_id: LOOPBACK_ONLY,
-            message_id: 0, // Does not matter since this will bypass ISM
-            contents: request.into(),
-        });
-
-        let bypass_key = StreamKey::bypass_ism();
-
-        self.bypass_ism_outbound_tx
-            .send((bypass_key, payload))
-            .map_err(|err| {
-                let reason = err.to_string();
-                match err.0 .1 {
-                    Payload::Message(message) => MessengerError::SendError {
-                        reason,
-                        message: Either::Right(message.contents),
-                    },
-                    _ => MessengerError::OtherError { reason },
-                }
-            })
+        self.bypass_ism_outbound_tx.send(request).await
     }
 
     async fn send_message_to_ism(

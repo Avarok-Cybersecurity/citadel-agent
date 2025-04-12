@@ -935,7 +935,7 @@ mod tests {
             pre_shared_key: None::<PreSharedKey>,
         }];
         let returned_service_info = register_and_connect_to_server(to_spawn).await;
-        let mut service_vec = returned_service_info.unwrap();
+        let mut service_vec = returned_service_info?;
         if let Some((to_service_a, from_service_a, cid)) = service_vec.get_mut(0_usize) {
             test_kv_for_service(to_service_a, from_service_a, *cid, None).await
         } else {

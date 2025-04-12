@@ -48,7 +48,16 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 remote.clone(),
                 session_security_settings,
             );
-            let connection_struct = Connection::new(sink, client_server_remote, uuid);
+
+            let username = remote
+                .account_manager()
+                .get_username_by_cid(cid)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "#INVALID_USERNAME".to_string());
+
+            let connection_struct = Connection::new(sink, client_server_remote, uuid, username);
             this.server_connection_map
                 .lock()
                 .await

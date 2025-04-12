@@ -24,6 +24,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         if connection.associated_tcp_connection == uuid {
             let mut session = SessionInformation {
                 cid: *cid,
+                username: connection.username.clone(),
                 peer_connections: HashMap::new(),
             };
             for (peer_cid, conn) in connection.peers.iter() {

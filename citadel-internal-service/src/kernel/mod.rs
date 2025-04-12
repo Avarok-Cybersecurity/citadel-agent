@@ -110,6 +110,7 @@ pub struct Connection<R: Ratchet> {
     pub(crate) associated_tcp_connection: Uuid,
     pub c2s_file_transfer_handlers: HashMap<ObjectId, Option<ObjectTransferHandler>>,
     pub groups: HashMap<MessageGroupKey, GroupConnection>,
+    pub username: String,
 }
 
 #[allow(dead_code)]
@@ -132,6 +133,7 @@ impl<R: Ratchet> Connection<R> {
         sink: PeerChannelSendHalf<R>,
         client_server_remote: ClientServerRemote<R>,
         associated_tcp_connection: Uuid,
+        username: String,
     ) -> Self {
         Connection {
             peers: HashMap::new(),
@@ -139,6 +141,7 @@ impl<R: Ratchet> Connection<R> {
             client_server_remote,
             associated_tcp_connection,
             c2s_file_transfer_handlers: HashMap::new(),
+            username,
             groups: HashMap::new(),
         }
     }

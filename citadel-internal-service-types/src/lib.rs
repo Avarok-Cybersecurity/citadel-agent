@@ -849,6 +849,7 @@ pub enum InternalServiceRequest {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SessionInformation {
     pub cid: u64,
+    pub username: String,
     pub peer_connections: HashMap<u64, PeerSessionInformation>,
 }
 

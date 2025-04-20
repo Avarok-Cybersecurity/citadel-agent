@@ -138,6 +138,19 @@ impl intersession_layer_messaging::local_delivery::LocalDelivery<WrappedMessage>
     }
 }
 
+#[derive(Serialize, Deserialize)]
+pub enum WireWrapper {
+    Message {
+        source: u64,
+        destination: u64,
+        message_id: u64,
+        contents: Vec<u8>,
+    },
+    ISMAux {
+        signal: Box<InternalMessage>,
+    },
+}
+
 impl<B> CitadelWorkspaceMessenger<B>
 where
     B: CitadelBackendExt,
@@ -244,19 +257,6 @@ where
             mut sink,
             mut stream,
         } = connector;
-
-        #[derive(Serialize, Deserialize)]
-        enum WireWrapper {
-            Message {
-                source: u64,
-                destination: u64,
-                message_id: u64,
-                contents: Vec<u8>,
-            },
-            ISMAux {
-                signal: Box<InternalMessage>,
-            },
-        }
 
         let bypass_key = StreamKey::bypass_ism();
 
@@ -569,6 +569,21 @@ where
     fn drop(&mut self) {
         // Remove the handle from the list of active handles
         self.messenger.txs_to_inbound.remove(&self.stream_key);
+    }
+}
+
+pub fn send_from_non_ism_source_to_ism_destination(
+    cid: u64,
+    payload: impl Into<InternalServicePayload>,
+) -> WireWrapper {
+    // In order for the receiver to decode the response, we must make the response ISM-compatible
+    WireWrapper::ISMAux {
+        signal: Box::new(InternalMessage::Message(WrappedMessage {
+            source_id: cid,
+            destination_id: LOOPBACK_ONLY,
+            message_id: 0, // Does not matter since this isn't tracked
+            contents: payload.into(),
+        })),
     }
 }
 

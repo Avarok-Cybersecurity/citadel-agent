@@ -317,7 +317,16 @@ where
                                 }
                             }
                             Err(err) => {
-                                log::error!(target: "citadel", "Error while deserializing ISM message: {err:?}");
+                                log::warn!(target: "citadel", "Error while deserializing ISM (?) message: {err:?}");
+                                // Forward as is. Likely sent by a non-ISM peer
+                                // Send to default direct handle
+                                // TODO: Consider having the bypasser send directly to underlying stream
+                                let other_message_type =
+                                    InternalServiceResponse::MessageNotification(message);
+                                if let Err(err) = tx_to_local_user_clone.send(other_message_type) {
+                                    log::error!(target: "citadel", "Error while sending message to local user: {err:?}");
+                                    return;
+                                }
                             }
                         }
                     }

@@ -4,7 +4,7 @@ use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
     ServiceConnectionAccepted,
 };
-use citadel_sdk::logging::{error, info, warn};
+use citadel_sdk::logging::{debug, error, warn};
 use citadel_sdk::prelude::Ratchet;
 use futures::StreamExt;
 use std::collections::HashMap;
@@ -62,7 +62,7 @@ pub trait IOInterfaceExt: IOInterface {
                         }
                     }
                 }
-                info!(target: "citadel", "Disconnected");
+                debug!(target: "citadel", "Disconnected connection {conn_id:?}");
             };
 
             tokio::select! {

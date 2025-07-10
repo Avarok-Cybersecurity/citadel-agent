@@ -1,10 +1,10 @@
 use bytes::BytesMut;
 use citadel_internal_service_macros::{Cid, IsError, IsNotification, RequestId};
-use citadel_sdk::types::crypto::PreSharedKey;
-use citadel_sdk::types::prelude::ObjectId;
-pub use citadel_sdk::types::prelude::{
-    ConnectMode, MemberState, MessageGroupKey, ObjectTransferStatus, SecBuffer, SecurityLevel,
-    SessionSecuritySettings, TransferType, UdpMode, UserIdentifier, VirtualObjectMetadata,
+use citadel_types::crypto::PreSharedKey;
+pub use citadel_types::prelude::{
+    ConnectMode, MemberState, MessageGroupKey, ObjectId, ObjectTransferStatus, SecBuffer,
+    SecurityLevel, SessionSecuritySettings, TransferType, UdpMode, UserIdentifier,
+    VirtualObjectMetadata,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

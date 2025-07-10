@@ -5,12 +5,9 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[features]
-vendored = ["citadel_sdk/vendored"]
-
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
-citadel_sdk = { workspace = true }
+citadel_types = { workspace = true, default-features = false }
 bytes = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }
 citadel-internal-service-macros = { workspace = true }

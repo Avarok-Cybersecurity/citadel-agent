@@ -1,3 +1,4 @@
+#[cfg(not(target_arch = "wasm32"))]
 use crate::codec::SerializingCodec;
 use crate::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -6,7 +7,9 @@ use citadel_internal_service_types::{
 use futures::{Sink, Stream, StreamExt};
 use std::pin::Pin;
 use std::task::{Context, Poll};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::net::TcpStream;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio_util::codec::{Decoder, Framed, LengthDelimitedCodec};
 
 pub struct InternalServiceConnector<T: IOInterface> {
@@ -68,6 +71,7 @@ impl<T: IOInterface> Sink<InternalServiceRequest> for WrappedSink<T> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn wrap_tcp_conn(
     conn: TcpStream,
 ) -> Framed<TcpStream, SerializingCodec<InternalServicePayload>> {

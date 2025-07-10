@@ -7,7 +7,7 @@ use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse, SecurityLevel,
     SessionInformation,
 };
-use citadel_sdk::logging::tracing::log;
+use citadel_logging as log;
 use dashmap::DashMap;
 use futures::future::Either;
 use futures::{SinkExt, StreamExt};

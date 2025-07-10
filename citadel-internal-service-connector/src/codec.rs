@@ -33,7 +33,7 @@ impl From<std::io::Error> for CodecError {
 
 impl From<CodecError> for std::io::Error {
     fn from(value: CodecError) -> Self {
-        std::io::Error::new(std::io::ErrorKind::Other, value.reason)
+        std::io::Error::other(value.reason)
     }
 }
 

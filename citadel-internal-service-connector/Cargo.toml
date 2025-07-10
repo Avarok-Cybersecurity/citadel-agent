@@ -6,12 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-vendored = ["citadel-internal-service-types/vendored"]
+vendored = ["citadel_sdk/vendored"]
 
 [dependencies]
 citadel-internal-service-types = { workspace = true }
 intersession-layer-messaging = { workspace = true, features = ["testing"] }
-tokio = { workspace = true, features = ["net", "rt", "macros"] }
+tokio = { workspace = true, features = ["rt", "macros"] }
 tokio-util = { workspace = true, features = ["codec"] }
 bincode2 = { workspace = true }
 serde = { workspace = true }
@@ -22,9 +22,15 @@ dashmap = { workspace = true }
 parking_lot = { workspace = true }
 itertools = { workspace = true }
 bytes = "1.8.0"
-citadel_sdk = { workspace = true }
+citadel_logging = { workspace = true }
+citadel_sdk = { workspace = true, optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true, features = ["net"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+citadel_crypt = { workspace = true, default-features = false }
+citadel-internal-service-test-common = { workspace = true }
 
 [dev-dependencies]
-citadel-internal-service-test-common = { workspace = true }
-citadel_sdk = { workspace = true, features = ["localhost-testing"]}
 rand = "0.8.5"

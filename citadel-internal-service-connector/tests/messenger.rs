@@ -1,8 +1,10 @@
+#[cfg(not(target_arch = "wasm32"))]
 use citadel_internal_service_test_common as common;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use crate::common::{get_free_port, register_and_connect_to_server_then_peers};
+    use citadel_crypt::ratchets::stacked::StackedRatchet;
     use citadel_internal_service_connector::connector::InternalServiceConnector;
     use citadel_internal_service_connector::io_interface::in_memory::InMemoryInterface;
     use citadel_internal_service_connector::io_interface::IOInterface;
@@ -11,7 +13,6 @@ mod tests {
     use citadel_internal_service_connector::messenger::{CitadelWorkspaceMessenger, MessengerTx};
     use citadel_internal_service_test_common::PeerServiceHandles;
     use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
-    use citadel_sdk::prelude::StackedRatchet;
     use futures::{SinkExt, StreamExt};
     use std::error::Error;
     use std::io::ErrorKind;
@@ -271,7 +272,7 @@ mod tests {
                     match timeout_result {
                         Ok(result) => result?,
                         Err(_) => {
-                            citadel_sdk::logging::warn!(target: "citadel", "Ping-pong test timed out after 5 seconds between clients {} and {}", clients[i], clients[j]);
+                            citadel_logging::warn!(target: "citadel", "Ping-pong test timed out after 5 seconds between clients {} and {}", clients[i], clients[j]);
                             // Continue with the next pair instead of failing the whole test
                             continue;
                         }

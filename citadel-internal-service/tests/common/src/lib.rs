@@ -75,10 +75,7 @@ impl PeerServiceHandles for Vec<PeerReturnHandle> {
 }
 
 pub fn generic_error<T: ToString>(msg: T) -> Box<dyn Error> {
-    Box::new(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        msg.to_string(),
-    ))
+    Box::new(std::io::Error::other(msg.to_string()))
 }
 
 pub async fn register_and_connect_to_server<

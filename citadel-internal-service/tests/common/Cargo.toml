@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = []
+default = ["citadel_sdk/multi-threaded"]
 vendored = ["citadel_sdk/vendored"]
 
 [dependencies]
-citadel_sdk = { workspace = true, features=["multi-threaded"] }
+citadel_sdk = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt", "macros"] }
 citadel-internal-service = { workspace = true }
 citadel-internal-service-types = { workspace = true }

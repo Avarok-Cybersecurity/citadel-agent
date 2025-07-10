@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
 };
-use citadel_sdk::logging::tracing::log;
+use citadel_logging as log;
 use futures::Sink;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -87,7 +87,7 @@ impl Sink<InternalServicePayload> for InMemorySink {
     fn start_send(self: Pin<&mut Self>, item: InternalServicePayload) -> Result<(), Self::Error> {
         self.0
             .send(item)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
+            .map_err(|err| std::io::Error::other(err.to_string()))
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {

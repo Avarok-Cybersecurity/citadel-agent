@@ -2,12 +2,12 @@
 mod tests {
     use citadel_internal_service_connector::connector::InternalServiceConnector;
     use citadel_internal_service_connector::io_interface::in_memory::InMemoryInterface;
-    use citadel_internal_service_connector::io_interface::IOInterface;
     use citadel_internal_service_types::{
         InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
     };
     use futures::{SinkExt, StreamExt};
-    use tokio::sync::mpsc;
+    use citadel_io::tokio;
+    use citadel_io::tokio::sync::mpsc;
     use uuid::Uuid;
 
     #[tokio::test]
@@ -27,7 +27,7 @@ mod tests {
     async fn test_in_memory_connector_basic() {
         // Create two pairs of channels to simulate two services communicating
         let (tx_a_to_b, mut rx_a_to_b) = mpsc::unbounded_channel::<InternalServicePayload>();
-        let (tx_b_to_a, rx_b_to_a) = mpsc::unbounded_channel::<InternalServicePayload>();
+        let (_tx_b_to_a, rx_b_to_a) = mpsc::unbounded_channel::<InternalServicePayload>();
 
         // Create interface A that sends to B
         let interface_a = InMemoryInterface {

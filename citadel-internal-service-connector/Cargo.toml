@@ -11,8 +11,8 @@ vendored = ["citadel_sdk/vendored"]
 [dependencies]
 citadel-internal-service-types = { workspace = true }
 intersession-layer-messaging = { workspace = true, features = ["testing"] }
-tokio = { workspace = true, features = ["rt", "macros"] }
-tokio-util = { workspace = true, features = ["codec"] }
+#tokio = { workspace = true, features = ["rt", "macros"] }
+#tokio-util = { workspace = true, features = ["codec"] }
 bincode2 = { workspace = true }
 serde = { workspace = true }
 futures = { workspace = true, features = ["alloc"] }
@@ -24,12 +24,10 @@ itertools = { workspace = true }
 bytes = "1.8.0"
 citadel_logging = { workspace = true }
 citadel_sdk = { workspace = true, optional = true }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { workspace = true, features = ["net"] }
+citadel_io = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-citadel_crypt = { workspace = true, default-features = false }
+citadel_crypt = { workspace = true }
 citadel-internal-service-test-common = { workspace = true }
 
 [dev-dependencies]

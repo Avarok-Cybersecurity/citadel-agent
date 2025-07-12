@@ -22,8 +22,8 @@ use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::Mutex;
+use citadel_io::tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use citadel_io::tokio::sync::Mutex;
 use uuid::Uuid;
 
 pub mod backend;
@@ -158,9 +158,9 @@ where
     pub fn new<T: IOInterface>(
         connector: InternalServiceConnector<T>,
     ) -> (Self, UnboundedReceiver<InternalServiceResponse>) {
-        let (final_tx, final_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (final_tx, final_rx) = citadel_io::tokio::sync::mpsc::unbounded_channel();
         // background layer
-        let (bypass_ism_tx_to_outbound, rx_to_outbound) = tokio::sync::mpsc::unbounded_channel();
+        let (bypass_ism_tx_to_outbound, rx_to_outbound) = citadel_io::tokio::sync::mpsc::unbounded_channel();
         let this = Self {
             backends: Arc::new(Default::default()),
             txs_to_inbound: Arc::new(Default::default()),
@@ -243,7 +243,7 @@ where
             }
         };
 
-        drop(tokio::task::spawn(task));
+        drop(citadel_io::tokio::task::spawn(task));
 
         Ok(handle)
     }
@@ -501,7 +501,7 @@ where
 
         let this = self.clone();
         let periodic_session_status_poller = async move {
-            let mut ticker = tokio::time::interval(POLL_CONNECTED_PEERS_REFRESH_PERIOD);
+            let mut ticker = citadel_io::tokio::time::interval(POLL_CONNECTED_PEERS_REFRESH_PERIOD);
             loop {
                 if !this.is_running() {
                     return;
@@ -536,7 +536,7 @@ where
 
         let this = self.clone();
         let task = async move {
-            tokio::select! {
+            citadel_io::tokio::select! {
                 _ = network_inbound_task => {
                     log::error!(target: "citadel", "Network inbound task ended. Messenger is shutting down")
                 },
@@ -553,7 +553,7 @@ where
             this.is_running.store(false, Ordering::SeqCst);
         };
 
-        drop(tokio::task::spawn(task));
+        drop(citadel_io::tokio::task::spawn(task));
     }
 
     pub fn is_running(&self) -> bool {
@@ -676,7 +676,7 @@ where
 {
     /// Waits for a peer to connect to the local client
     pub async fn wait_for_peer_to_connect(&self, peer_cid: u64) -> Result<(), MessengerError> {
-        let mut interval = tokio::time::interval(Duration::from_millis(100));
+        let mut interval = citadel_io::tokio::time::interval(Duration::from_millis(100));
         loop {
             if !self.messenger.is_running() {
                 return Err(MessengerError::Shutdown);
@@ -809,9 +809,9 @@ where
     B: CitadelBackendExt,
 {
     let (ism_to_background_outbound, background_from_ism_outbound) =
-        tokio::sync::mpsc::unbounded_channel();
+        citadel_io::tokio::sync::mpsc::unbounded_channel();
     let (background_to_ism_inbound, ism_from_background_inbound) =
-        tokio::sync::mpsc::unbounded_channel();
+        citadel_io::tokio::sync::mpsc::unbounded_channel();
 
     (
         ISMHandle {

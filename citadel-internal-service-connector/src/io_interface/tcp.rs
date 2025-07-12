@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use citadel_internal_service_types::{InternalServicePayload, InternalServiceResponse};
 use futures::stream::{SplitSink, SplitStream};
 use futures::StreamExt;
-use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
-use tokio_util::codec::Framed;
+use citadel_io::tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
+use citadel_io::tokio_util::codec::Framed;
 
 pub struct TcpIOInterface {
     pub listener: TcpListener,

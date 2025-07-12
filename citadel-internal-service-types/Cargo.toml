@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
-citadel_types = { workspace = true, default-features = false }
+citadel_types = { workspace = true }
 bytes = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }
 citadel-internal-service-macros = { workspace = true }

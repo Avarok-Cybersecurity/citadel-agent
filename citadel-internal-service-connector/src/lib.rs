@@ -12,7 +12,8 @@ mod wasm_tests {
         InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
     };
     use futures::{SinkExt, StreamExt};
-    use tokio::sync::mpsc;
+    use citadel_io::tokio;
+    use citadel_io::tokio::sync::mpsc;
 
     #[tokio::test]
     async fn test_in_memory_connector() {

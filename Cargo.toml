@@ -30,10 +30,11 @@ citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol"
 citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "cw-debug" }
 citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "cw-debug" }
 citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "cw-debug" }
+citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "cw-debug" }
 
 # Standard deps
 serde = { version = "1.0.104", features = ["derive"] }
-tokio = { version = "1.28.1", default-features = false }
+tokio = { version = "1.46.1", default-features = false }
 tokio-util = { version = "0.7.8", default-features = false }
 bincode2 = { version = "2.0.1", default-features = false }
 futures = { version = "0.3.28", default-features = false }

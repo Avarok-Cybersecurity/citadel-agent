@@ -8,13 +8,13 @@ use intersession_layer_messaging::{Backend, BackendError};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time;
+use citadel_io::tokio::time;
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct CitadelWorkspaceBackend {
     pub cid: u64,
-    expected_requests: Arc<DashMap<Uuid, tokio::sync::oneshot::Sender<InternalServiceResponse>>>,
+    expected_requests: Arc<DashMap<Uuid, citadel_io::tokio::sync::oneshot::Sender<InternalServiceResponse>>>,
     bypass_ism_outbound_tx: Option<BypasserTx>,
 }
 
@@ -27,7 +27,7 @@ pub const OUTBOUND_MESSAGE_PREFIX: &str = "outbound_messages";
 
 impl CitadelWorkspaceBackend {
     async fn wait_for_response(&self, request_id: Uuid) -> Option<InternalServiceResponse> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = citadel_io::tokio::sync::oneshot::channel();
         self.expected_requests.insert(request_id, tx);
 
         // Add a timeout to prevent infinite waiting
@@ -210,7 +210,7 @@ impl CitadelWorkspaceBackend {
     }
 
     pub fn add_expected_request(&self, request_id: Uuid) {
-        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let (tx, _rx) = citadel_io::tokio::sync::oneshot::channel();
         self.expected_requests.insert(request_id, tx);
     }
 }
@@ -405,7 +405,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
                         || err_str.contains("get_kv: Server connection not found")
                     {
                         citadel_logging::warn!(target: "citadel", "[GET_PENDING_OUTBOUND] Failed to get outbound map due to likely no connection up yet");
-                        tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
+                        citadel_io::tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
                         continue;
                     } else {
                         return Err(e);
@@ -433,7 +433,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
                         || err_str.contains("get_kv: Server connection not found")
                     {
                         citadel_logging::warn!(target: "citadel", "[GET_PENDING_INBOUND] Failed to get inbound map likely due to likely no connection up yet");
-                        tokio::time::sleep(Duration::from_millis(5000)).await;
+                        citadel_io::tokio::time::sleep(Duration::from_millis(5000)).await;
                         continue;
                     } else {
                         return Err(e);

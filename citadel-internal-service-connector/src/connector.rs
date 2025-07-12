@@ -1,4 +1,3 @@
-#[cfg(not(target_arch = "wasm32"))]
 use crate::codec::SerializingCodec;
 use crate::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -7,10 +6,8 @@ use citadel_internal_service_types::{
 use futures::{Sink, Stream, StreamExt};
 use std::pin::Pin;
 use std::task::{Context, Poll};
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::net::TcpStream;
-#[cfg(not(target_arch = "wasm32"))]
-use tokio_util::codec::{Decoder, Framed, LengthDelimitedCodec};
+use citadel_io::tokio::net::TcpStream;
+use citadel_io::tokio_util::codec::{Decoder, Framed, LengthDelimitedCodec};
 
 pub struct InternalServiceConnector<T: IOInterface> {
     pub sink: WrappedSink<T>,

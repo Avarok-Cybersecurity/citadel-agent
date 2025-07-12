@@ -2,8 +2,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::error::Error;
 use std::fmt::Display;
-use tokio_util::bytes::BytesMut;
-use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
+use citadel_io::tokio_util::bytes::BytesMut;
+use citadel_io::tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
 pub struct SerializingCodec<T> {
     pub inner: LengthDelimitedCodec,

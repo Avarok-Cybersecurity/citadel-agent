@@ -18,9 +18,10 @@ mod tests {
     use std::io::ErrorKind;
     use std::net::SocketAddr;
     use std::ops::DerefMut;
-    use tokio::sync::mpsc::UnboundedReceiver;
-    use tokio::sync::Mutex;
-    use tokio::time;
+    use citadel_io::tokio;
+    use citadel_io::tokio::sync::mpsc::UnboundedReceiver;
+    use citadel_io::tokio::sync::Mutex;
+    use citadel_io::tokio::time;
     use uuid::Uuid;
 
     #[tokio::test]

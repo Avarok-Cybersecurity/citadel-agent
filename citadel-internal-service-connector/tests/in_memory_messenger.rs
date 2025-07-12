@@ -5,9 +5,9 @@ mod tests {
     use citadel_internal_service_types::{
         InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
     };
-    use futures::{SinkExt, StreamExt};
     use citadel_io::tokio;
     use citadel_io::tokio::sync::mpsc;
+    use futures::{SinkExt, StreamExt};
     use uuid::Uuid;
 
     #[tokio::test]

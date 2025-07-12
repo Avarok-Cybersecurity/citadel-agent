@@ -5,6 +5,8 @@ use futures::{Sink, Stream};
 pub mod in_memory;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tcp;
+#[cfg(feature = "websockets")]
+pub mod websockets;
 
 #[async_trait]
 pub trait IOInterface: Sized + Send + 'static {

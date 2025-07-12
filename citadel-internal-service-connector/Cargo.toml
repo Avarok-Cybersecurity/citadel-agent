@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
+websockets = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:futures-util"]
 vendored = ["citadel_sdk/vendored"]
 
 [dependencies]
@@ -15,6 +16,7 @@ intersession-layer-messaging = { workspace = true, features = ["testing"] }
 #tokio-util = { workspace = true, features = ["codec"] }
 bincode2 = { workspace = true }
 serde = { workspace = true }
+serde_json = "1.0"
 futures = { workspace = true, features = ["alloc"] }
 uuid = { workspace = true }
 async-trait = "0.1.79"
@@ -26,9 +28,23 @@ citadel_logging = { workspace = true }
 citadel_sdk = { workspace = true, optional = true }
 citadel_io = { workspace = true }
 
+# WebSocket dependencies
+tokio-tungstenite = { version = "0.21", optional = true }
+tungstenite = { version = "0.21", optional = true }
+futures-util = { version = "0.3", optional = true }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 citadel_crypt = { workspace = true }
 citadel-internal-service-test-common = { workspace = true }
 
 [dev-dependencies]
 rand = "0.8.5"
+tokio = { version = "1.0", features = ["full"] }
+
+[[example]]
+name = "websocket_json_demo"
+required-features = ["websockets"]
+
+[[example]]
+name = "websocket_server"
+required-features = ["websockets"]

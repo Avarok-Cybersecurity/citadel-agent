@@ -322,7 +322,7 @@ async fn send_response_to_tcp_client(
         .lock()
         .await
         .get(&uuid)
-        .ok_or_else(|| NetworkError::Generic(format!("TCP connection not found: {:?}", uuid)))?
+        .ok_or_else(|| NetworkError::Generic(format!("TCP connection not found: {uuid:?}")))?
         .send(response)
         .map_err(|err| {
             NetworkError::Generic(format!("Failed to send response to TCP client: {err:?}"))

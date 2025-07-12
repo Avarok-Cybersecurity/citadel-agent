@@ -99,7 +99,9 @@ impl Sink<InternalServicePayload> for InMemorySink {
     }
 }
 
-pub struct InMemoryStream(pub citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServicePayload>);
+pub struct InMemoryStream(
+    pub citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServicePayload>,
+);
 
 impl futures::Stream for InMemoryStream {
     type Item = std::io::Result<InternalServicePayload>;

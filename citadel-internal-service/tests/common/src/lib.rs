@@ -243,9 +243,9 @@ pub async fn register_and_connect_to_server_then_peers<R: Ratchet>(
         to_spawn.push(RegisterAndConnectItems {
             internal_service_addr: bind_address_internal_service,
             server_addr: server_bind_address,
-            full_name: format!("Peer {}", peer_number),
-            username: format!("peer.{}", peer_number),
-            password: format!("secret_{}", peer_number).into_bytes().to_owned(),
+            full_name: format!("Peer {peer_number}"),
+            username: format!("peer.{peer_number}"),
+            password: format!("secret_{peer_number}").into_bytes().to_owned(),
             pre_shared_key: server_session_password.clone(),
         });
     }

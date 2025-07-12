@@ -52,3 +52,44 @@ jobs:
         with:
           submodules: recursive
       - run: cargo fmt --check
+
+  typescript-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: Avarok-Cybersecurity/gh-actions-deps@master
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'typescript-client/package-lock.json'
+      - name: Generate complete TypeScript types
+        run: |
+          cd citadel-internal-service-types
+          cargo run --features typescript --example generate_complete_types
+      - name: Install Node.js dependencies
+        run: |
+          cd typescript-client
+          npm install
+      - name: Build TypeScript client
+        run: |
+          cd typescript-client
+          npm run build
+      - name: Run WebSocket integration tests
+        run: |
+          # Start WebSocket server in background
+          cargo run --features websockets --example websocket_server &
+          SERVER_PID=$!
+          
+          # Wait for server to start
+          sleep 5
+          
+          # Run TypeScript integration tests
+          cd typescript-client
+          npm run test
+          
+          # Clean up
+          kill $SERVER_PID || true

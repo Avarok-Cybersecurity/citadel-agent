@@ -13,15 +13,15 @@ mod tests {
     use citadel_internal_service_connector::messenger::{CitadelWorkspaceMessenger, MessengerTx};
     use citadel_internal_service_test_common::PeerServiceHandles;
     use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
+    use citadel_io::tokio;
+    use citadel_io::tokio::sync::mpsc::UnboundedReceiver;
+    use citadel_io::tokio::sync::Mutex;
+    use citadel_io::tokio::time;
     use futures::{SinkExt, StreamExt};
     use std::error::Error;
     use std::io::ErrorKind;
     use std::net::SocketAddr;
     use std::ops::DerefMut;
-    use citadel_io::tokio;
-    use citadel_io::tokio::sync::mpsc::UnboundedReceiver;
-    use citadel_io::tokio::sync::Mutex;
-    use citadel_io::tokio::time;
     use uuid::Uuid;
 
     #[tokio::test]

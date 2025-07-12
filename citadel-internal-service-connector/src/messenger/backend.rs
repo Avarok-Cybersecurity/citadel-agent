@@ -3,18 +3,19 @@ use async_trait::async_trait;
 use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
 };
+use citadel_io::tokio::time;
 use dashmap::DashMap;
 use intersession_layer_messaging::{Backend, BackendError};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use citadel_io::tokio::time;
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct CitadelWorkspaceBackend {
     pub cid: u64,
-    expected_requests: Arc<DashMap<Uuid, citadel_io::tokio::sync::oneshot::Sender<InternalServiceResponse>>>,
+    expected_requests:
+        Arc<DashMap<Uuid, citadel_io::tokio::sync::oneshot::Sender<InternalServiceResponse>>>,
     bypass_ism_outbound_tx: Option<BypasserTx>,
 }
 
@@ -50,7 +51,7 @@ impl CitadelWorkspaceBackend {
         // Send the message to the network layer
         if let Some(tx) = &self.bypass_ism_outbound_tx {
             tx.send(request).await.map_err(|err| {
-                BackendError::StorageError(format!("Failed to send bypass message: {}", err))
+                BackendError::StorageError(format!("Failed to send bypass message: {err}"))
             })?;
         } else {
             return Err(BackendError::StorageError(
@@ -82,8 +83,7 @@ impl CitadelWorkspaceBackend {
                     let state: State =
                         bincode2::deserialize(&success_response.value).map_err(|err| {
                             BackendError::StorageError(format!(
-                                "Failed to deserialize {} map: {}",
-                                prefix, err
+                                "Failed to deserialize {prefix} map: {err}"
                             ))
                         })?;
                     Ok(state)
@@ -95,14 +95,12 @@ impl CitadelWorkspaceBackend {
                         self.initialize_map(prefix).await
                     } else {
                         Err(BackendError::StorageError(format!(
-                            "Failed to get {} map: {}",
-                            prefix, failure_message
+                            "Failed to get {prefix} map: {failure_message}"
                         )))
                     }
                 }
                 _ => Err(BackendError::StorageError(format!(
-                    "Unexpected response when getting {} map",
-                    prefix
+                    "Unexpected response when getting {prefix} map"
                 ))),
             }
         } else {
@@ -119,7 +117,7 @@ impl CitadelWorkspaceBackend {
         let new_state = State::new();
 
         let value = bincode2::serialize(&new_state).map_err(|err| {
-            BackendError::StorageError(format!("Failed to serialize {} map: {}", prefix, err))
+            BackendError::StorageError(format!("Failed to serialize {prefix} map: {err}"))
         })?;
 
         let request = InternalServiceRequest::LocalDBSetKV {
@@ -138,8 +136,7 @@ impl CitadelWorkspaceBackend {
                 Ok(new_state)
             } else {
                 Err(BackendError::StorageError(format!(
-                    "Failed to initialize {} map",
-                    prefix
+                    "Failed to initialize {prefix} map"
                 )))
             }
         } else {
@@ -159,7 +156,7 @@ impl CitadelWorkspaceBackend {
         let key = format!("{}-{}", prefix, self.cid);
 
         let value = bincode2::serialize(&state).map_err(|err| {
-            BackendError::StorageError(format!("Failed to serialize {} map: {}", prefix, err))
+            BackendError::StorageError(format!("Failed to serialize {prefix} map: {err}"))
         })?;
 
         let request = InternalServiceRequest::LocalDBSetKV {
@@ -236,7 +233,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
             Ok(map) => map,
             Err(e) => {
                 // If we get a delivery error, log it and create a new map
-                let err_str = format!("{:?}", e);
+                let err_str = format!("{e:?}");
                 if err_str.contains("Failed to deliver message") {
                     citadel_logging::warn!(target: "citadel", "[STORE_OUTBOUND] Failed to get outbound map due to delivery error, creating new one");
                     State::new()
@@ -253,7 +250,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
             Ok(()) => Ok(()),
             Err(e) => {
                 // If we get a delivery error, log it and return success
-                let err_str = format!("{:?}", e);
+                let err_str = format!("{e:?}");
                 if err_str.contains("Failed to deliver message") {
                     citadel_logging::warn!(target: "citadel", "[STORE_OUTBOUND] Failed to update outbound map due to delivery error, assuming success");
                     Ok(())
@@ -283,7 +280,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
             Ok(map) => map,
             Err(e) => {
                 // If we get a delivery error, log it and create a new map
-                let err_str = format!("{:?}", e);
+                let err_str = format!("{e:?}");
                 if err_str.contains("Failed to deliver message") {
                     citadel_logging::warn!(target: "citadel", "[STORE_INBOUND] Failed to get inbound map due to delivery error, creating new one");
                     State::new()
@@ -300,7 +297,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
             Ok(()) => Ok(()),
             Err(e) => {
                 // If we get a delivery error, log it and return success
-                let err_str = format!("{:?}", e);
+                let err_str = format!("{e:?}");
                 if err_str.contains("Failed to deliver message") {
                     citadel_logging::warn!(target: "citadel", "[STORE_INBOUND] Failed to update inbound map due to delivery error, assuming success");
                     Ok(())
@@ -320,7 +317,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
             Ok(map) => map,
             Err(e) => {
                 // If we get a delivery error, log it and create a new map
-                let err_str = format!("{:?}", e);
+                let err_str = format!("{e:?}");
                 if err_str.contains("Failed to deliver message") {
                     citadel_logging::warn!(target: "citadel", "[CLEAR_INBOUND] Failed to get inbound map due to delivery error, creating new one");
                     State::new()
@@ -338,7 +335,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
             Ok(()) => Ok(()),
             Err(e) => {
                 // If we get a delivery error, log it and return success
-                let err_str = format!("{:?}", e);
+                let err_str = format!("{e:?}");
                 if err_str.contains("Failed to deliver message") {
                     citadel_logging::warn!(target: "citadel", "[CLEAR_INBOUND] Failed to update inbound map due to delivery error, assuming success");
                     Ok(())
@@ -358,7 +355,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
             Ok(map) => map,
             Err(e) => {
                 // If we get a delivery error, log it and create a new map
-                let err_str = format!("{:?}", e);
+                let err_str = format!("{e:?}");
                 if err_str.contains("Failed to deliver message") {
                     citadel_logging::warn!(target: "citadel", "[CLEAR_OUTBOUND] Failed to get outbound map due to delivery error, creating new one");
                     State::new()
@@ -376,7 +373,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
             Ok(()) => Ok(()),
             Err(e) => {
                 // If we get a delivery error, log it and return success
-                let err_str = format!("{:?}", e);
+                let err_str = format!("{e:?}");
                 if err_str.contains("Failed to deliver message") {
                     citadel_logging::warn!(target: "citadel", "[CLEAR_OUTBOUND] Failed to update outbound map due to delivery error, assuming success");
                     Ok(())
@@ -400,12 +397,13 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
                 }
                 Err(e) => {
                     // If we get a delivery error, log it and return an empty vector
-                    let err_str = format!("{:?}", e);
+                    let err_str = format!("{e:?}");
                     if err_str.contains("Failed to deliver message")
                         || err_str.contains("get_kv: Server connection not found")
                     {
                         citadel_logging::warn!(target: "citadel", "[GET_PENDING_OUTBOUND] Failed to get outbound map due to likely no connection up yet");
-                        citadel_io::tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
+                        citadel_io::tokio::time::sleep(std::time::Duration::from_millis(5000))
+                            .await;
                         continue;
                     } else {
                         return Err(e);
@@ -428,7 +426,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
                 }
                 Err(e) => {
                     // If we get a delivery error, log it and return an empty vector
-                    let err_str = format!("{:?}", e);
+                    let err_str = format!("{e:?}");
                     if err_str.contains("Failed to deliver message")
                         || err_str.contains("get_kv: Server connection not found")
                     {

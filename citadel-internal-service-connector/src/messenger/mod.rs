@@ -7,6 +7,8 @@ use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse, SecurityLevel,
     SessionInformation,
 };
+use citadel_io::tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use citadel_io::tokio::sync::Mutex;
 use citadel_logging as log;
 use dashmap::DashMap;
 use futures::future::Either;
@@ -22,8 +24,6 @@ use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use citadel_io::tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use citadel_io::tokio::sync::Mutex;
 use uuid::Uuid;
 
 pub mod backend;
@@ -160,7 +160,8 @@ where
     ) -> (Self, UnboundedReceiver<InternalServiceResponse>) {
         let (final_tx, final_rx) = citadel_io::tokio::sync::mpsc::unbounded_channel();
         // background layer
-        let (bypass_ism_tx_to_outbound, rx_to_outbound) = citadel_io::tokio::sync::mpsc::unbounded_channel();
+        let (bypass_ism_tx_to_outbound, rx_to_outbound) =
+            citadel_io::tokio::sync::mpsc::unbounded_channel();
         let this = Self {
             backends: Arc::new(Default::default()),
             txs_to_inbound: Arc::new(Default::default()),

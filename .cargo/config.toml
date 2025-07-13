@@ -3,3 +3,6 @@ rustflags = ['--cfg', 'wasmedge', '--cfg', 'tokio_unstable']
 
 [target.wasm32-wasip2]
 rustflags = ['--cfg', 'wasmedge', '--cfg', 'tokio_unstable']
+
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

@@ -1,14 +1,27 @@
 {
     "name": "citadel-websocket-client",
     "version": "1.0.0",
-    "description": "TypeScript WebSocket client for Citadel Internal Service",
+    "description": "TypeScript WebSocket and WASM client for Citadel Internal Service",
     "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "files": [
+        "dist/**/*",
+        "citadel_internal_service_wasm_client_bg.wasm",
+        "citadel_internal_service_wasm_client.js",
+        "citadel_internal_service_wasm_client.d.ts",
+        "package.json"
+    ],
     "scripts": {
         "build": "tsc",
+        "build-wasm": "cd ../citadel-internal-service-wasm-client && wasm-pack build --target web && cp -r pkg/* ../typescript-client/",
         "test": "npm run build && node dist/test.js",
+        "test-wasm": "npm run build && node dist/wasm-example.js",
         "generate-types": "cd ../../.. && cargo run --features typescript --example generate_simple_types",
         "dev": "npm run generate-types && npm run build && npm run test",
-        "setup": "npm install && npm run generate-types"
+        "dev-wasm": "npm run build-wasm && npm run build && npm run test-wasm",
+        "setup": "npm install && npm run generate-types",
+        "setup-wasm": "npm install && npm run build-wasm && npm run generate-types",
+        "clean": "rm -rf dist/ node_modules/ *.wasm *.js *.d.ts snippets/ || true"
     },
     "devDependencies": {
         "@types/node": "^20.10.0",
@@ -19,5 +32,8 @@
     "dependencies": {
         "uuid": "^9.0.1",
         "ws": "^8.14.2"
-    }
+    },
+    "sideEffects": [
+        "./snippets/*"
+    ]
 }

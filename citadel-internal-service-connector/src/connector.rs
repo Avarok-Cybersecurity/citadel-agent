@@ -1,9 +1,12 @@
+#[cfg(not(target_arch = "wasm32"))]
 use crate::codec::SerializingCodec;
 use crate::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use citadel_io::tokio::net::TcpStream;
+#[cfg(not(target_arch = "wasm32"))]
 use citadel_io::tokio_util::codec::{Decoder, Framed, LengthDelimitedCodec};
 use futures::{Sink, Stream, StreamExt};
 use std::pin::Pin;
@@ -70,7 +73,7 @@ impl<T: IOInterface> Sink<InternalServiceRequest> for WrappedSink<T> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn wrap_tcp_conn(
-    conn: TcpStream,
+    conn: citadel_io::tokio::net::TcpStream,
 ) -> Framed<TcpStream, SerializingCodec<InternalServicePayload>> {
     let length_delimited = LengthDelimitedCodec::builder()
         .length_field_offset(0) // default value

@@ -501,6 +501,7 @@ where
         };
 
         let this = self.clone();
+        #[cfg(not(target_arch = "wasm32"))]
         let periodic_session_status_poller = async move {
             let mut ticker = citadel_io::tokio::time::interval(POLL_CONNECTED_PEERS_REFRESH_PERIOD);
             loop {
@@ -535,6 +536,19 @@ where
             }
         };
 
+        #[cfg(target_arch = "wasm32")]
+        let periodic_session_status_poller = async move {
+            // Disabled for WASM - session status polling is not supported in browser environments
+            // as it requires Tokio interval timers which don't work in WASM
+            loop {
+                if !this.is_running() {
+                    return;
+                }
+                // Just wait indefinitely in WASM
+                futures::future::pending::<()>().await;
+            }
+        };
+
         let this = self.clone();
         let task = async move {
             citadel_io::tokio::select! {
@@ -554,7 +568,11 @@ where
             this.is_running.store(false, Ordering::SeqCst);
         };
 
+        #[cfg(not(target_arch = "wasm32"))]
         drop(citadel_io::tokio::task::spawn(task));
+
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(task);
     }
 
     pub fn is_running(&self) -> bool {
@@ -677,15 +695,35 @@ where
 {
     /// Waits for a peer to connect to the local client
     pub async fn wait_for_peer_to_connect(&self, peer_cid: u64) -> Result<(), MessengerError> {
-        let mut interval = citadel_io::tokio::time::interval(Duration::from_millis(100));
-        loop {
-            if !self.messenger.is_running() {
-                return Err(MessengerError::Shutdown);
-            }
-            let _ = interval.tick().await;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut interval = citadel_io::tokio::time::interval(Duration::from_millis(100));
+            loop {
+                if !self.messenger.is_running() {
+                    return Err(MessengerError::Shutdown);
+                }
+                let _ = interval.tick().await;
 
-            if self.get_connected_peers().await.contains(&peer_cid) {
-                return Ok(());
+                if self.get_connected_peers().await.contains(&peer_cid) {
+                    return Ok(());
+                }
+            }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            // For WASM, use a simple polling approach with async sleep
+            loop {
+                if !self.messenger.is_running() {
+                    return Err(MessengerError::Shutdown);
+                }
+
+                if self.get_connected_peers().await.contains(&peer_cid) {
+                    return Ok(());
+                }
+
+                // Simple delay for WASM
+                futures::future::pending::<()>().await;
             }
         }
     }

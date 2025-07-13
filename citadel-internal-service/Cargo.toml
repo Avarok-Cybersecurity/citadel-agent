@@ -8,6 +8,7 @@ edition = "2021"
 [features]
 default = []
 vendored = ["citadel_sdk/vendored"]
+websockets = ["citadel-internal-service-connector/websockets"]
 
 [dependencies]
 citadel_sdk = { workspace = true, features=["multi-threaded"] }

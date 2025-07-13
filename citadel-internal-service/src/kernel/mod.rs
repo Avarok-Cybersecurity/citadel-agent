@@ -7,6 +7,8 @@ use citadel_internal_service_connector::io_interface::in_memory::{
     InMemoryInterface, InMemorySink, InMemoryStream,
 };
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
+#[cfg(feature = "websockets")]
+use citadel_internal_service_connector::io_interface::websockets::WebSocketInterface;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::*;
 use citadel_sdk::logging::{error, info, warn};
@@ -73,6 +75,14 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
         bind_address: SocketAddr,
     ) -> std::io::Result<CitadelWorkspaceService<TcpIOInterface, R>> {
         Ok(TcpIOInterface::new(bind_address).await?.into())
+    }
+
+    #[cfg(feature = "websockets")]
+    pub async fn new_websocket(
+        bind_address: SocketAddr,
+    ) -> std::io::Result<CitadelWorkspaceService<WebSocketInterface, R>> {
+        let ws_server_io = WebSocketInterface::new(bind_address).await?;
+        Ok(ws_server_io.into())
     }
 }
 

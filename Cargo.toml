@@ -8,7 +8,8 @@ members = [
     "citadel-internal-service-macros",
     "citadel-internal-service/tests/common",
     "service",
-    "intersession-layer-messaging",
+    "intersession-layer-messaging", 
+    "citadel-internal-service-wasm-client",
 ]
 
 exclude = [
@@ -24,13 +25,14 @@ citadel-internal-service = { path = "./citadel-internal-service", default-featur
 citadel-internal-service-connector = { path = "./citadel-internal-service-connector", default-features = false, version = "0.1.0" }
 citadel-internal-service-macros = { path = "./citadel-internal-service-macros", default-features = false, version = "0.1.0" }
 intersession-layer-messaging = { path = "intersession-layer-messaging", default-features = false, version = "0.2.0" }
+citadel-internal-service-wasm-client = { path = "citadel-internal-service-wasm-client", default-features = false, version = "0.1.0" }
 
 # Avarok deps
 citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "cw-debug" }
-citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "cw-debug" }
-citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "cw-debug" }
-citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "cw-debug" }
-citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "cw-debug" }
+citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "cw-debug" }
+citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "cw-debug" }
+citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "cw-debug" }
+citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "cw-debug" }
 
 # Standard deps
 serde = { version = "1.0.104", features = ["derive"] }

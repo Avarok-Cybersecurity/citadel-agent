@@ -14,3 +14,5 @@ Cargo.lock
 *.pdb
 ./.idea/*
 target_ide/
+**/node_modules/
+citadel-internal-service/filesystem/

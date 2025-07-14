@@ -47,15 +47,35 @@ fn deserialize_request_with_string_cids(
         .as_string()
         .ok_or_else(|| JsValue::from_str("Failed to convert JSON to string"))?;
 
+    log(&format!("JSON string from JS: {}", json_str));
+
     let mut json_value: serde_json::Value = serde_json::from_str(&json_str)
         .map_err(|e| JsValue::from_str(&format!("JSON parse error: {}", e)))?;
+
+    log(&format!("Parsed JSON value: {:?}", json_value));
 
     // Convert string CIDs back to numbers
     convert_string_cids_to_numbers(&mut json_value);
 
+    log(&format!("After CID conversion: {:?}", json_value));
+
     // Convert to the final request type
-    serde_json::from_value(json_value)
-        .map_err(|e| JsValue::from_str(&format!("Request deserialization error: {}", e)))
+    match serde_json::from_value::<InternalServiceRequest>(json_value.clone()) {
+        Ok(request) => Ok(request),
+        Err(e) => {
+            log(&format!("Deserialization error: {}", e));
+            // serde_json::Error doesn't have path() method
+            
+            // Try to identify which field is causing the issue
+            if let serde_json::Value::Object(map) = &json_value {
+                for (key, value) in map {
+                    log(&format!("Top-level key '{}': {:?}", key, value));
+                }
+            }
+            
+            Err(JsValue::from_str(&format!("Request deserialization error: {}", e)))
+        }
+    }
 }
 
 // Recursively convert large integers to strings to avoid JavaScript overflow

@@ -39,6 +39,7 @@ pub trait IOInterfaceExt: IOInterface {
                 }
 
                 while let Some(kernel_response) = from_kernel.recv().await {
+                    debug!(target: "citadel", "Sending kernel response to client: {:?}", kernel_response);
                     if let Err(err) = sink_send_payload::<Self>(kernel_response, &mut sink).await {
                         error!(target: "citadel", "Failed to send to client: {err:?}");
                         return;
@@ -73,7 +74,10 @@ pub trait IOInterfaceExt: IOInterface {
             tcp_connection_map.lock().await.remove(&conn_id);
             let mut server_connection_map = server_connection_map.lock().await;
             // Remove all connections whose associated_tcp_connection is conn_id
+            let count_before = server_connection_map.len();
             server_connection_map.retain(|_, v| v.associated_tcp_connection != conn_id);
+            let count_after = server_connection_map.len();
+            debug!(target: "citadel", "Removed {} connections from server_connection_map for {conn_id:?}. Reconnection will be required", count_before - count_after);
         });
     }
 }

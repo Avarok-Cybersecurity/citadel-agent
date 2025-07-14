@@ -113,6 +113,7 @@ export class InternalServiceWasmClient {
             Register: options
         };
 
+        console.log('InternalServiceWasmClient.register - sending request:', JSON.stringify(registerRequest, null, 2));
         await this.wasmModule!.send_direct_to_internal_service(registerRequest);
 
         // Wait for RegisterSuccess response

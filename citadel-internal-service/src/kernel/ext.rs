@@ -9,6 +9,7 @@ use citadel_sdk::prelude::Ratchet;
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -24,6 +25,7 @@ pub trait IOInterfaceExt: IOInterface {
         conn_id: Uuid,
         tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
         server_connection_map: Arc<Mutex<HashMap<u64, Connection<R>>>>,
+        orphan_sessions: Arc<Mutex<HashMap<Uuid, bool>>>,
     ) {
         tokio::task::spawn(async move {
             let write_task = async move {
@@ -72,12 +74,22 @@ pub trait IOInterfaceExt: IOInterface {
             }
 
             tcp_connection_map.lock().await.remove(&conn_id);
-            let mut server_connection_map = server_connection_map.lock().await;
-            // Remove all connections whose associated_tcp_connection is conn_id
-            let count_before = server_connection_map.len();
-            server_connection_map.retain(|_, v| v.associated_tcp_connection != conn_id);
-            let count_after = server_connection_map.len();
-            debug!(target: "citadel", "Removed {} connections from server_connection_map for {conn_id:?}. Reconnection will be required", count_before - count_after);
+            
+            // Check if this connection is in orphan mode
+            let is_orphan = orphan_sessions.lock().await.get(&conn_id).copied().unwrap_or(false);
+            
+            if is_orphan {
+                debug!(target: "citadel", "Connection {conn_id:?} is in orphan mode, preserving sessions");
+                // Don't remove sessions, just remove the orphan flag
+                orphan_sessions.lock().await.remove(&conn_id);
+            } else {
+                let mut server_connection_map = server_connection_map.lock().await;
+                // Remove all connections whose associated_tcp_connection is conn_id
+                let count_before = server_connection_map.len();
+                server_connection_map.retain(|_, v| v.associated_tcp_connection.load(Ordering::Relaxed) != conn_id);
+                let count_after = server_connection_map.len();
+                debug!(target: "citadel", "Removed {} connections from server_connection_map for {conn_id:?}. Reconnection will be required", count_before - count_after);
+            }
         });
     }
 }

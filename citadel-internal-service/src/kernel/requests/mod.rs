@@ -25,6 +25,7 @@ mod get_sessions;
 mod message;
 mod register;
 
+mod connection_management;
 mod file;
 mod group;
 mod local_db;
@@ -137,6 +138,10 @@ where
 
         InternalServiceRequest::GroupRequestJoin { .. } => {
             group::request_join::handle(this, uuid, command).await
+        }
+        
+        InternalServiceRequest::ConnectionManagement { .. } => {
+            connection_management::handle(this, uuid, command).await
         }
     }
 }

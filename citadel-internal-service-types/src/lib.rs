@@ -10,11 +10,52 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use uuid::Uuid;
 
 #[cfg(feature = "typescript")]
 use ts_rs::TS;
+
+/// Thread-safe wrapper for UUID that can be atomically updated
+#[derive(Debug)]
+pub struct AtomicUuid {
+    high: AtomicU64,
+    low: AtomicU64,
+}
+
+impl AtomicUuid {
+    pub fn new(uuid: Uuid) -> Self {
+        let bytes = uuid.as_bytes();
+        let high = u64::from_be_bytes(bytes[0..8].try_into().unwrap());
+        let low = u64::from_be_bytes(bytes[8..16].try_into().unwrap());
+        
+        Self {
+            high: AtomicU64::new(high),
+            low: AtomicU64::new(low),
+        }
+    }
+    
+    pub fn load(&self, ordering: Ordering) -> Uuid {
+        let high = self.high.load(ordering);
+        let low = self.low.load(ordering);
+        
+        let mut bytes = [0u8; 16];
+        bytes[0..8].copy_from_slice(&high.to_be_bytes());
+        bytes[8..16].copy_from_slice(&low.to_be_bytes());
+        
+        Uuid::from_bytes(bytes)
+    }
+    
+    pub fn store(&self, uuid: Uuid, ordering: Ordering) {
+        let bytes = uuid.as_bytes();
+        let high = u64::from_be_bytes(bytes[0..8].try_into().unwrap());
+        let low = u64::from_be_bytes(bytes[8..16].try_into().unwrap());
+        
+        self.high.store(high, ordering);
+        self.low.store(low, ordering);
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "typescript", derive(TS))]
@@ -853,6 +894,8 @@ pub enum InternalServiceResponse {
     ListAllPeersFailure(ListAllPeersFailure),
     ListRegisteredPeersResponse(ListRegisteredPeersResponse),
     ListRegisteredPeersFailure(ListRegisteredPeersFailure),
+    ConnectionManagementSuccess(ConnectionManagementSuccess),
+    ConnectionManagementFailure(ConnectionManagementFailure),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, RequestId)]
@@ -1072,6 +1115,44 @@ pub enum InternalServiceRequest {
         #[cfg_attr(feature = "typescript", ts(type = "any"))]
         group_key: MessageGroupKey,
         request_id: Uuid,
+    },
+    ConnectionManagement {
+        request_id: Uuid,
+        management_command: ConfigCommand,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct ConnectionManagementSuccess {
+    pub cid: u64,
+    pub request_id: Option<Uuid>,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct ConnectionManagementFailure {
+    pub cid: u64,
+    pub request_id: Option<Uuid>,
+    pub error: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub enum ConfigCommand {
+    SetConnectionOrphan {
+        allow_orphan_sessions: bool,
+    },
+    ClaimSession {
+        session_cid: u64,
+        only_if_orphaned: bool,
+    },
+    DisconnectOrphan {
+        session_cid: Option<u64>,
     },
 }
 

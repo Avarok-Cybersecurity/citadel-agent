@@ -21,6 +21,7 @@ use futures::{Sink, SinkExt};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -35,6 +36,7 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub remote: Option<NodeRemote<R>>,
     pub server_connection_map: Arc<Mutex<HashMap<u64, Connection<R>>>>,
     pub tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+    pub orphan_sessions: Arc<Mutex<HashMap<Uuid, bool>>>, // Maps TCP connection ID to orphan mode
     io: Arc<Mutex<Option<T>>>,
 }
 
@@ -44,6 +46,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             remote: self.remote.clone(),
             server_connection_map: self.server_connection_map.clone(),
             tcp_connection_map: self.tcp_connection_map.clone(),
+            orphan_sessions: self.orphan_sessions.clone(),
             io: self.io.clone(),
         }
     }
@@ -55,6 +58,7 @@ impl<T: IOInterface, R: Ratchet> From<T> for CitadelWorkspaceService<T, R> {
             remote: None,
             server_connection_map: Arc::new(Mutex::new(Default::default())),
             tcp_connection_map: Arc::new(Mutex::new(Default::default())),
+            orphan_sessions: Arc::new(Mutex::new(Default::default())),
             io: Arc::new(Mutex::new(Some(io))),
         }
     }
@@ -117,7 +121,7 @@ pub struct Connection<R: Ratchet> {
     pub sink_to_server: PeerChannelSendHalf<R>,
     pub client_server_remote: ClientServerRemote<R>,
     pub peers: HashMap<u64, PeerConnection<R>>,
-    pub(crate) associated_tcp_connection: Uuid,
+    pub(crate) associated_tcp_connection: Arc<AtomicUuid>,
     pub c2s_file_transfer_handlers: HashMap<ObjectId, Option<ObjectTransferHandler>>,
     pub groups: HashMap<MessageGroupKey, GroupConnection>,
     pub username: String,
@@ -128,7 +132,7 @@ pub struct PeerConnection<R: Ratchet> {
     sink: PeerChannelSendHalf<R>,
     remote: PeerRemote<R>,
     handler_map: HashMap<ObjectId, Option<ObjectTransferHandler>>,
-    associated_tcp_connection: Uuid,
+    associated_tcp_connection: Arc<AtomicUuid>,
 }
 
 #[allow(dead_code)]
@@ -142,7 +146,7 @@ impl<R: Ratchet> Connection<R> {
     fn new(
         sink: PeerChannelSendHalf<R>,
         client_server_remote: ClientServerRemote<R>,
-        associated_tcp_connection: Uuid,
+        associated_tcp_connection: Arc<AtomicUuid>,
         username: String,
     ) -> Self {
         Connection {
@@ -168,7 +172,7 @@ impl<R: Ratchet> Connection<R> {
                 sink,
                 remote,
                 handler_map: HashMap::new(),
-                associated_tcp_connection: self.associated_tcp_connection,
+                associated_tcp_connection: self.associated_tcp_connection.clone(),
             },
         );
     }
@@ -268,6 +272,7 @@ impl<T: IOInterface, R: Ratchet> NetKernel<R> for CitadelWorkspaceService<T, R> 
                     id,
                     tcp_connection_map.clone(),
                     server_connection_map.clone(),
+                    self.orphan_sessions.clone(),
                 );
             }
             Ok(())
@@ -293,7 +298,7 @@ impl<T: IOInterface, R: Ratchet> NetKernel<R> for CitadelWorkspaceService<T, R> 
                             this.server_connection_map
                                 .lock()
                                 .await
-                                .retain(|_, v| v.associated_tcp_connection != uuid);
+                                .retain(|_, v| v.associated_tcp_connection.load(Ordering::Relaxed) != uuid);
                         }
                     }
                 };
@@ -374,7 +379,7 @@ fn spawn_tick_updater<R: Ratchet>(
 ) {
     let mut handle_inner = object_transfer_handler.inner;
     if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-        let uuid = connection.associated_tcp_connection;
+        let uuid = connection.associated_tcp_connection.load(Ordering::Relaxed);
         let request_id = Some(request_id.unwrap_or(uuid));
         let sender_status_updater = async move {
             while let Some(status) = handle_inner.next().await {

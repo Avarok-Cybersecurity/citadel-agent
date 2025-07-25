@@ -5,6 +5,9 @@ import type { InternalServiceRequest } from './types/InternalServiceRequest';
 import type { InternalServiceResponse } from './types/InternalServiceResponse';
 import type { ConnectSuccess } from './types/ConnectSuccess';
 import type { RegisterSuccess } from './types/RegisterSuccess';
+import type { ConfigCommand } from './types/ConfigCommand';
+import type { ConnectionManagementSuccess } from './types/ConnectionManagementSuccess';
+import type { ConnectionManagementFailure } from './types/ConnectionManagementFailure';
 
 // WASM module will be loaded dynamically
 
@@ -114,10 +117,14 @@ export class InternalServiceWasmClient {
         };
 
         console.log('InternalServiceWasmClient.register - sending request:', JSON.stringify(registerRequest, null, 2));
+        
+        // For registration with connect_after_register=false, we need to handle this differently
+        // The response might come before the connection closes
+        const responsePromise = this.waitForResponse<RegisterSuccess>('RegisterSuccess', 5000);
+        
         await this.wasmModule!.send_direct_to_internal_service(registerRequest);
-
-        // Wait for RegisterSuccess response
-        return this.waitForResponse<RegisterSuccess>('RegisterSuccess');
+        
+        return responsePromise;
     }
 
     /**
@@ -273,14 +280,17 @@ export class InternalServiceWasmClient {
     }
 
     private handleMessage(message: InternalServiceResponse): void {
+        console.log('InternalServiceWasmClient: Received message:', JSON.stringify(message));
         try {
             // Handle specific message types for client state management
             if ('ConnectSuccess' in message) {
                 this.currentCid = message.ConnectSuccess.cid.toString();
                 this.isConnected = true;
+                console.log('InternalServiceWasmClient: ConnectSuccess received, CID:', this.currentCid);
             } else if ('RegisterSuccess' in message) {
                 this.currentCid = message.RegisterSuccess.cid.toString();
                 this.isConnected = true;
+                console.log('InternalServiceWasmClient: RegisterSuccess received, CID:', this.currentCid);
             } else if ('ServiceConnectionAccepted' in message) {
                 // Connection to service established
                 console.log('Service connection accepted');
@@ -288,6 +298,7 @@ export class InternalServiceWasmClient {
 
             // Call the user-provided message handler
             if (this.messageHandler) {
+                console.log('InternalServiceWasmClient: Calling user message handler');
                 this.messageHandler(message);
             }
         } catch (error) {
@@ -320,6 +331,11 @@ export class InternalServiceWasmClient {
                 if (hasRegisterSuccess || (isRegisterRequest && hasConnectSuccess)) {
                     clearTimeout(timeoutId);
                     this.messageHandler = originalHandler; // Restore original handler
+                    
+                    // Always call the original handler to ensure events are propagated
+                    if (originalHandler) {
+                        originalHandler(message);
+                    }
 
                     if (hasRegisterSuccess) {
                         resolve((message as any)[responseType]);
@@ -353,6 +369,130 @@ export class InternalServiceWasmClient {
             });
             throw new Error('WASM client not initialized. Call init() first.');
         }
+    }
+
+    /**
+     * Enable orphan mode for the current connection
+     * When enabled, sessions will persist even when the TCP connection drops
+     */
+    async setOrphanMode(enabled: boolean): Promise<ConnectionManagementSuccess | ConnectionManagementFailure> {
+        this.ensureInitialized();
+
+        const configCommand: ConfigCommand = {
+            SetConnectionOrphan: {
+                allow_orphan_sessions: enabled
+            }
+        };
+
+        const request: InternalServiceRequest = {
+            ConnectionManagement: {
+                request_id: InternalServiceWasmClient.generateUUID(),
+                management_command: configCommand
+            }
+        };
+
+        await this.wasmModule!.send_direct_to_internal_service(request);
+        
+        // Wait for ConnectionManagementSuccess or ConnectionManagementFailure
+        return this.waitForConnectionManagementResponse();
+    }
+
+    /**
+     * Claim an existing session (take over from another connection)
+     * @param sessionCid The CID of the session to claim
+     * @param onlyIfOrphaned If true, only claim if the session is orphaned
+     */
+    async claimSession(sessionCid: bigint | string, onlyIfOrphaned: boolean = false): Promise<ConnectionManagementSuccess | ConnectionManagementFailure> {
+        this.ensureInitialized();
+
+        const cid = typeof sessionCid === 'string' ? BigInt(sessionCid) : sessionCid;
+        
+        const configCommand: ConfigCommand = {
+            ClaimSession: {
+                session_cid: cid,
+                only_if_orphaned: onlyIfOrphaned
+            }
+        };
+
+        const request: InternalServiceRequest = {
+            ConnectionManagement: {
+                request_id: InternalServiceWasmClient.generateUUID(),
+                management_command: configCommand
+            }
+        };
+
+        await this.wasmModule!.send_direct_to_internal_service(request);
+        
+        return this.waitForConnectionManagementResponse();
+    }
+
+    /**
+     * Disconnect orphan sessions
+     * @param sessionCid Optional - if provided, disconnect specific session. If null, disconnect all orphan sessions.
+     */
+    async disconnectOrphan(sessionCid?: bigint | string | null): Promise<ConnectionManagementSuccess | ConnectionManagementFailure> {
+        this.ensureInitialized();
+
+        const cid = sessionCid ? (typeof sessionCid === 'string' ? BigInt(sessionCid) : sessionCid) : null;
+        
+        const configCommand: ConfigCommand = {
+            DisconnectOrphan: {
+                session_cid: cid
+            }
+        };
+
+        const request: InternalServiceRequest = {
+            ConnectionManagement: {
+                request_id: InternalServiceWasmClient.generateUUID(),
+                management_command: configCommand
+            }
+        };
+
+        await this.wasmModule!.send_direct_to_internal_service(request);
+        
+        return this.waitForConnectionManagementResponse();
+    }
+
+    /**
+     * Wait for a connection management response
+     */
+    private async waitForConnectionManagementResponse(timeout: number = 30000): Promise<ConnectionManagementSuccess | ConnectionManagementFailure> {
+        return new Promise((resolve, reject) => {
+            const timeoutId = setTimeout(() => {
+                reject(new Error(`Timeout waiting for ConnectionManagement response after ${timeout}ms`));
+            }, timeout);
+
+            const originalHandler = this.messageHandler;
+
+            const responseHandler = (message: InternalServiceResponse) => {
+                if ('ConnectionManagementSuccess' in message) {
+                    clearTimeout(timeoutId);
+                    this.messageHandler = originalHandler;
+                    
+                    if (originalHandler) {
+                        originalHandler(message);
+                    }
+                    
+                    resolve(message.ConnectionManagementSuccess);
+                } else if ('ConnectionManagementFailure' in message) {
+                    clearTimeout(timeoutId);
+                    this.messageHandler = originalHandler;
+                    
+                    if (originalHandler) {
+                        originalHandler(message);
+                    }
+                    
+                    resolve(message.ConnectionManagementFailure);
+                } else {
+                    // Pass through other messages
+                    if (originalHandler) {
+                        originalHandler(message);
+                    }
+                }
+            };
+
+            this.messageHandler = responseHandler;
+        });
     }
 
     /**

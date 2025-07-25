@@ -7,6 +7,7 @@ use citadel_internal_service_types::{
 };
 use citadel_sdk::prelude::{Ratchet, TargetLockedRemote};
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -21,7 +22,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let lock = server_connection_map.lock().await;
     let mut sessions = Vec::new();
     for (cid, connection) in lock.iter() {
-        if connection.associated_tcp_connection == uuid {
+        if connection.associated_tcp_connection.load(Ordering::Relaxed) == uuid {
             let mut session = SessionInformation {
                 cid: *cid,
                 username: connection.username.clone(),

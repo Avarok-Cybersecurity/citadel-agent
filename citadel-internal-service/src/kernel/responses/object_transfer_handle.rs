@@ -5,6 +5,7 @@ use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{
     NetworkError, ObjectTransferHandle, ObjectTransferOrientation, Ratchet,
 };
+use std::sync::atomic::Ordering;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
@@ -38,7 +39,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
         let mut server_connection_map = this.server_connection_map.lock().await;
         if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-            let uuid = connection.associated_tcp_connection;
+            let uuid = connection.associated_tcp_connection.load(Ordering::Relaxed);
 
             if is_revfs_pull {
                 spawn_tick_updater(

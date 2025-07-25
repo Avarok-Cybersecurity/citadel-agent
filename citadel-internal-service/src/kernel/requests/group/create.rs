@@ -6,6 +6,7 @@ use citadel_internal_service_types::{
 };
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::{ProtocolRemoteTargetExt, Ratchet, VirtualTargetType};
+use std::sync::atomic::Ordering;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -51,7 +52,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         },
                     );
 
-                    let uuid = conn.associated_tcp_connection;
+                    let uuid = conn.associated_tcp_connection.load(Ordering::Relaxed);
                     spawn_group_channel_receiver(
                         key,
                         cid,

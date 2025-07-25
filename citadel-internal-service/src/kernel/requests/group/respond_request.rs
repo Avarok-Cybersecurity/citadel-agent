@@ -10,6 +10,7 @@ use citadel_sdk::prelude::{
     NodeResult, Ratchet, TargetLockedRemote,
 };
 use futures::StreamExt;
+use std::sync::atomic::Ordering;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -49,7 +50,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let mut server_connection_map = this.server_connection_map.lock().await;
 
     let response = if let Some(connection) = server_connection_map.get_mut(&cid) {
-        let uuid = connection.associated_tcp_connection;
+        let uuid = connection.associated_tcp_connection.load(Ordering::Relaxed);
         if let Some(peer_connection) = connection.peers.get_mut(&peer_cid) {
             let peer_remote = peer_connection.remote.clone();
             drop(server_connection_map);

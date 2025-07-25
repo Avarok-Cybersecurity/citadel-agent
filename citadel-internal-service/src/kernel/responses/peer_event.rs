@@ -8,6 +8,7 @@ use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{
     GroupEvent, NetworkError, PeerConnectionType, PeerEvent, PeerSignal, Ratchet,
 };
+use std::sync::atomic::Ordering;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
@@ -32,7 +33,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 send_response_to_tcp_client(
                     &this.tcp_connection_map,
                     response,
-                    conn.associated_tcp_connection,
+                    conn.associated_tcp_connection.load(Ordering::Relaxed),
                 )
                 .await?;
             }
@@ -70,7 +71,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         request_id: None,
                     });
 
-                let associated_tcp_connection = connection.associated_tcp_connection;
+                let associated_tcp_connection = connection.associated_tcp_connection.load(Ordering::Relaxed);
                 drop(server_connection_map);
                 send_response_to_tcp_client(
                     &this.tcp_connection_map,
@@ -104,7 +105,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         request_id: None,
                     });
 
-                let associated_tcp_connection = connection.associated_tcp_connection;
+                let associated_tcp_connection = connection.associated_tcp_connection.load(Ordering::Relaxed);
                 drop(server_connection_map);
                 send_response_to_tcp_client(
                     &this.tcp_connection_map,

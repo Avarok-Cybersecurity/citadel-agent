@@ -4,6 +4,7 @@ use crate::kernel::{
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{GroupChannelCreateSuccess, InternalServiceResponse};
 use citadel_sdk::prelude::{GroupChannelCreated, NetworkError, Ratchet};
+use std::sync::atomic::Ordering;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
@@ -18,10 +19,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     if let Some(connection) = server_connection_map.get_mut(&cid) {
         connection.add_group_channel(key, GroupConnection { key, tx, cid });
 
-        let uuid = connection.associated_tcp_connection;
+        let uuid = connection.associated_tcp_connection.load(Ordering::Relaxed);
         requests::spawn_group_channel_receiver(key, cid, uuid, rx, this.tcp_connection_map.clone());
 
-        let associated_tcp_connection = connection.associated_tcp_connection;
+        let associated_tcp_connection = connection.associated_tcp_connection.load(Ordering::Relaxed);
         drop(server_connection_map);
         send_response_to_tcp_client(
             &this.tcp_connection_map,

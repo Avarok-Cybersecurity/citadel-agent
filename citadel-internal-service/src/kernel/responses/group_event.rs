@@ -7,6 +7,7 @@ use citadel_internal_service_types::{
     GroupRequestJoinDeclineResponse, GroupRequestJoinPendingNotification, InternalServiceResponse,
 };
 use citadel_sdk::prelude::{GroupBroadcast, GroupEvent, NetworkError, Ratchet};
+use std::sync::atomic::Ordering;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
@@ -189,7 +190,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         match response {
             Some(internal_service_response) => {
                 if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-                    let associated_tcp_connection = connection.associated_tcp_connection;
+                    let associated_tcp_connection = connection.associated_tcp_connection.load(Ordering::Relaxed);
                     drop(server_connection_map);
                     send_response_to_tcp_client(
                         tcp_connection_map,

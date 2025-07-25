@@ -2,6 +2,7 @@ use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{DisconnectNotification, InternalServiceResponse};
 use citadel_sdk::prelude::{Disconnect, NetworkError, Ratchet, VirtualTargetType};
+use std::sync::atomic::Ordering;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
@@ -18,7 +19,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                             peer_cid: None,
                             request_id: None,
                         }),
-                        conn.associated_tcp_connection,
+                        conn.associated_tcp_connection.load(Ordering::Relaxed),
                     )
                 } else {
                     return Ok(());
@@ -35,7 +36,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                             peer_cid: Some(peer_cid),
                             request_id: None,
                         }),
-                        conn.associated_tcp_connection,
+                        conn.associated_tcp_connection.load(Ordering::Relaxed),
                     )
                 } else {
                     return Ok(());

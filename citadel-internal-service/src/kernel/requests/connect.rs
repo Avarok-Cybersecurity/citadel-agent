@@ -2,10 +2,11 @@ use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::{create_client_server_remote, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    ConnectFailure, InternalServiceRequest, InternalServiceResponse, MessageNotification,
+    AtomicUuid, ConnectFailure, InternalServiceRequest, InternalServiceResponse, MessageNotification,
 };
 use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt, Ratchet};
 use futures::StreamExt;
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -57,7 +58,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 .flatten()
                 .unwrap_or_else(|| "#INVALID_USERNAME".to_string());
 
-            let connection_struct = Connection::new(sink, client_server_remote, uuid, username);
+            let connection_struct = Connection::new(sink, client_server_remote, Arc::new(AtomicUuid::new(uuid)), username);
             this.server_connection_map
                 .lock()
                 .await

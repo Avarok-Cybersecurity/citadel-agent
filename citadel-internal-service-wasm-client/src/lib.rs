@@ -90,8 +90,17 @@ fn convert_large_numbers_to_strings(value: &mut serde_json::Value) {
             }
         }
         serde_json::Value::Object(map) => {
-            for (_, v) in map.iter_mut() {
-                convert_large_numbers_to_strings(v);
+            // First, handle specific CID field names that should always be strings
+            for (key, v) in map.iter_mut() {
+                if key == "cid" || key == "peer_cid" || key == "session_cid" || key.ends_with("_cid") {
+                    if let serde_json::Value::Number(n) = v {
+                        if let Some(u) = n.as_u64() {
+                            *v = serde_json::Value::String(u.to_string());
+                        }
+                    }
+                } else {
+                    convert_large_numbers_to_strings(v);
+                }
             }
         }
         serde_json::Value::Array(arr) => {
@@ -109,7 +118,7 @@ fn convert_string_cids_to_numbers(value: &mut serde_json::Value) {
         serde_json::Value::Object(map) => {
             // Handle specific CID field names
             for (key, v) in map.iter_mut() {
-                if (key == "cid" || key == "peer_cid") && v.is_string() {
+                if (key == "cid" || key == "peer_cid" || key == "session_cid") && v.is_string() {
                     if let Some(s) = v.as_str() {
                         if let Ok(n) = s.parse::<u64>() {
                             *v = serde_json::Value::Number(serde_json::Number::from(n));
@@ -244,7 +253,7 @@ static SINK_CHANNEL: OnceCell<mpsc::UnboundedSender<InternalServicePayload>> = O
 
 struct WorkspaceState {
     messenger: CitadelWorkspaceMessenger<CitadelWorkspaceBackend>,
-    stream: citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
+    stream: Option<citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>>,
     connections: Arc<DashMap<u64, MessengerTx<CitadelWorkspaceBackend>>>,
 }
 
@@ -357,7 +366,7 @@ pub async fn init(ws_url: String) -> Result<(), JsValue> {
 
     let state = WorkspaceState {
         messenger,
-        stream,
+        stream: Some(stream),
         connections,
     };
 
@@ -400,12 +409,19 @@ pub async fn next_message() -> Result<JsValue, JsValue> {
     let workspace_state = get_workspace_state();
     let mut guard = workspace_state.write().await;
 
+    // Take the stream so that the open_p2p_connection and send_p2p_connection functions
+    // are not blocked while listening
     if let Some(state) = guard.as_mut() {
-        if let Some(response) = state.stream.recv().await {
-            // Convert to JsValue with custom BigInt handling for large CIDs
-            serialize_response_with_bigint(&response)
+        if let Some(mut stream) = state.stream.take() {
+            drop(guard); // drop the guard to unblock
+            if let Some(response) = stream.recv().await {
+                // Convert to JsValue with custom BigInt handling for large CIDs
+                serialize_response_with_bigint(&response)
+            } else {
+                Err(JsValue::from_str("Stream closed"))
+            }
         } else {
-            Err(JsValue::from_str("Stream closed"))
+            Err(JsValue::from_str("next_message is already being called by another process"))
         }
     } else {
         Err(JsValue::from_str("Workspace not initialized"))

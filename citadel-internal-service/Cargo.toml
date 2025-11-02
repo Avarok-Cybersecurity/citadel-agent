@@ -9,6 +9,7 @@ edition = "2021"
 default = []
 vendored = ["citadel_sdk/vendored"]
 websockets = ["citadel-internal-service-connector/websockets"]
+js = ["uuid/js"]
 
 [dependencies]
 citadel_sdk = { workspace = true, features=["multi-threaded"] }

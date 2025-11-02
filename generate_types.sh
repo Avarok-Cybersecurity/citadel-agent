@@ -154,7 +154,9 @@ export * from './SessionInformation';
 EOF
 
 echo "✅ Verifying TypeScript client compilation..."
-cd ..
+cd ../../
+echo "current dir is $(pwd)"
+npm i
 npm run build
 
 echo "🎉 TypeScript types generated successfully!"

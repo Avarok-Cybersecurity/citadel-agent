@@ -7,7 +7,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-citadel-internal-service-connector = { workspace = true }
+citadel-internal-service-connector = { workspace = true, features = ["js"]}
 citadel-internal-service-types = { workspace = true }
 citadel_io = { workspace = true, default-features = false }
 

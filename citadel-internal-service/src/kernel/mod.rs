@@ -227,6 +227,19 @@ impl<R: Ratchet> Connection<R> {
     }
 }
 
+impl<R: Ratchet> Drop for Connection<R> {
+    fn drop(&mut self) {
+        let remote = self.client_server_remote.clone();
+        let peers = self.peers.drain().into_iter().map(|(_k, v)| v.remote).collect::<Vec<_>>();
+        drop(tokio::spawn(async move { 
+            let _ = remote.disconnect().await;
+            for peer in peers {
+                let _ = peer.disconnect().await;
+            }
+         }));
+    }
+}
+
 impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
     async fn clear_peer_connection(
         &self,
@@ -333,15 +346,20 @@ async fn send_response_to_tcp_client(
     response: InternalServiceResponse,
     uuid: Uuid,
 ) -> Result<(), NetworkError> {
-    hash_map
-        .lock()
-        .await
-        .get(&uuid)
-        .ok_or_else(|| NetworkError::Generic(format!("TCP connection not found: {uuid:?}")))?
-        .send(response)
-        .map_err(|err| {
-            NetworkError::Generic(format!("Failed to send response to TCP client: {err:?}"))
-        })
+    let map = hash_map.lock().await;
+    
+    match map.get(&uuid) {
+        Some(sender) => {
+            sender.send(response).map_err(|err| {
+                NetworkError::Generic(format!("Failed to send response to TCP client: {err:?}"))
+            })
+        }
+        None => {
+            // Log a warning instead of returning an error that crashes the service
+            warn!(target: "citadel", "TCP connection not found: {uuid:?} - response will be dropped");
+            Ok(())
+        }
+    }
 }
 
 // TODO: return scoped wrapper type

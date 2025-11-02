@@ -14,6 +14,7 @@ import type { ConnectionManagementFailure } from './types/ConnectionManagementFa
 // Type definitions for WASM functions (based on our WASM implementation)
 interface WasmModule {
     init(url: string): Promise<void>;
+    restart(url: string): Promise<void>;
     open_p2p_connection(cid: string): Promise<void>;
     next_message(): Promise<any>;
     send_p2p_message(cid: string, message: any): Promise<void>;
@@ -104,6 +105,13 @@ export class InternalServiceWasmClient {
 
         // Wait for ConnectSuccess response
         return this.waitForResponse<ConnectSuccess>('ConnectSuccess');
+    }
+
+    async restart_ws_connection(): Promise<void> {
+        // 
+        await this.wasmModule!.restart(this.config.websocketUrl);
+        this.startMessageProcessing();
+        this.initializationComplete = true;
     }
 
     /**
@@ -238,8 +246,13 @@ export class InternalServiceWasmClient {
         try {
             console.log('Loading WASM module...');
 
-            // Import the WASM module
-            const wasm = await import('../citadel_internal_service_wasm_client.js');
+            // Import the WASM module with cache busting
+            const timestamp = Date.now();
+            const random = Math.random().toString(36).substring(7);
+            const moduleUrl = `../citadel_internal_service_wasm_client.js?v=${timestamp}&t=${timestamp}&r=${random}`;
+            console.log('Loading WASM from URL:', moduleUrl);
+            // Force Vite to bypass module cache with timestamp and t= param
+            const wasm = await import(/* @vite-ignore */ moduleUrl);
 
             // Initialize the WASM module (this sets up the global state)
             console.log('Initializing WASM module...');
@@ -254,6 +267,11 @@ export class InternalServiceWasmClient {
     }
 
     private startMessageProcessing(): void {
+        if (this.initializationComplete && this.wasmModule) {
+            console.warn("Will not run startMessageProcessing since already initialized")
+            return;
+        }
+
         // Start a background task to process messages
         this.processMessages();
     }
@@ -277,6 +295,7 @@ export class InternalServiceWasmClient {
         } catch (error) {
             this.handleError(new Error(`Message processing loop error: ${error}`));
         }
+        this.initializationComplete = false;
     }
 
     private handleMessage(message: InternalServiceResponse): void {

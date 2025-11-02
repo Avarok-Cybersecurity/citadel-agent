@@ -76,6 +76,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         .add_peer_connection(peer_cid, sink, peer_connect_success.remote);
 
                     let hm_for_conn = this.tcp_connection_map.clone();
+                    let server_conn_map = this.server_connection_map.clone();
 
                     let connection_read_stream = async move {
                         while let Some(message) = stream.next().await {
@@ -86,14 +87,23 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                                     peer_cid,
                                     request_id: Some(request_id),
                                 });
-                            match hm_for_conn.lock().await.get(&uuid) {
+
+                            // Get the current associated TCP connection for this session (may have changed via ClaimSession)
+                            let server_lock = server_conn_map.lock().await;
+                            let current_tcp_uuid = server_lock
+                                .get(&cid)
+                                .map(|conn| conn.associated_tcp_connection.load(std::sync::atomic::Ordering::Relaxed))
+                                .unwrap_or(uuid);
+                            drop(server_lock);
+
+                            match hm_for_conn.lock().await.get(&current_tcp_uuid) {
                                 Some(entry) => {
                                     if let Err(err) = entry.send(message) {
                                         error!(target:"citadel","Error sending message to client: {err:?}");
                                     }
                                 }
                                 None => {
-                                    info!(target:"citadel","Hash map connection not found")
+                                    info!(target:"citadel","Hash map connection not found for TCP uuid: {}", current_tcp_uuid)
                                 }
                             }
                         }

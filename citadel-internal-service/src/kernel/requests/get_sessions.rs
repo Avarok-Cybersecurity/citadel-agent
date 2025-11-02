@@ -6,6 +6,7 @@ use citadel_internal_service_types::{
     SessionInformation,
 };
 use citadel_sdk::prelude::{Ratchet, TargetLockedRemote};
+use citadel_sdk::logging::info;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use uuid::Uuid;
@@ -21,29 +22,35 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let server_connection_map = &this.server_connection_map;
     let lock = server_connection_map.lock().await;
     let mut sessions = Vec::new();
+    
+    info!(target: "citadel", "GetSessions: Found {} total sessions in server_connection_map", lock.len());
+    
+    // MODIFIED: Get ALL sessions, not just ones for current connection
+    // This allows us to see orphaned sessions from other connections
     for (cid, connection) in lock.iter() {
-        if connection.associated_tcp_connection.load(Ordering::Relaxed) == uuid {
-            let mut session = SessionInformation {
-                cid: *cid,
-                username: connection.username.clone(),
-                peer_connections: HashMap::new(),
-            };
-            for (peer_cid, conn) in connection.peers.iter() {
-                session.peer_connections.insert(
-                    *peer_cid,
-                    PeerSessionInformation {
-                        cid: *cid,
-                        peer_cid: *peer_cid,
-                        peer_username: conn
-                            .remote
-                            .target_username()
-                            .map(ToString::to_string)
-                            .unwrap_or_default(),
-                    },
-                );
-            }
-            sessions.push(session);
+        let conn_id = connection.associated_tcp_connection.load(Ordering::Relaxed);
+        info!(target: "citadel", "GetSessions: Session {} for user {} associated with connection {}", cid, connection.username, conn_id);
+        // Don't filter by current connection uuid - return all sessions
+        let mut session = SessionInformation {
+            cid: *cid,
+            username: connection.username.clone(),
+            peer_connections: HashMap::new(),
+        };
+        for (peer_cid, conn) in connection.peers.iter() {
+            session.peer_connections.insert(
+                *peer_cid,
+                PeerSessionInformation {
+                    cid: *cid,
+                    peer_cid: *peer_cid,
+                    peer_username: conn
+                        .remote
+                        .target_username()
+                        .map(ToString::to_string)
+                        .unwrap_or_default(),
+                },
+            );
         }
+        sessions.push(session);
     }
 
     let response = InternalServiceResponse::GetSessionsResponse(GetSessionsResponse {

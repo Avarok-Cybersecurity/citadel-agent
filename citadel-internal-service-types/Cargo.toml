@@ -14,11 +14,12 @@ citadel_types = { workspace = true }
 bytes = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }
 citadel-internal-service-macros = { workspace = true }
+custom_debug = { workspace = true }
 
 # TypeScript bindings
-ts-rs = { version = "10.1", optional = true, features = [
+ts-rs = { version = "11", optional = true, features = [
     "serde-compat",
     "uuid-impl",
     "bytes-impl",
     "chrono-impl",
-] }
+]}

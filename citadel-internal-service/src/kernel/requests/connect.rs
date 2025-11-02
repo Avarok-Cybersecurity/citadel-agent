@@ -65,6 +65,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 .insert(cid, connection_struct);
 
             let hm_for_conn = this.tcp_connection_map.clone();
+            let server_conn_map = this.server_connection_map.clone();
 
             let response = InternalServiceResponse::ConnectSuccess(
                 citadel_internal_service_types::ConnectSuccess {
@@ -82,15 +83,24 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                             peer_cid: 0,
                             request_id: Some(request_id),
                         });
+
+                    // Get the current associated TCP connection for this session (may have changed via ClaimSession)
+                    let server_lock = server_conn_map.lock().await;
+                    let current_tcp_uuid = server_lock
+                        .get(&cid)
+                        .map(|conn| conn.associated_tcp_connection.load(std::sync::atomic::Ordering::Relaxed))
+                        .unwrap_or(uuid);
+                    drop(server_lock);
+
                     let lock = hm_for_conn.lock().await;
-                    match lock.get(&uuid) {
+                    match lock.get(&current_tcp_uuid) {
                         Some(entry) => {
                             if let Err(err) = entry.send(message) {
                                 citadel_sdk::logging::error!(target:"citadel","Error sending message to client: {err:?}");
                             }
                         }
                         None => {
-                            citadel_sdk::logging::info!(target:"citadel","Hash map connection not found")
+                            citadel_sdk::logging::info!(target:"citadel","Hash map connection not found for TCP uuid: {}", current_tcp_uuid)
                         }
                     }
                 }

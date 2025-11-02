@@ -17,6 +17,29 @@ use futures::{Sink, Stream};
 use ws_stream_wasm::{WsMessage, WsMeta};
 // use futures_util::{SinkExt as FuturesSinkExt, StreamExt as FuturesStreamExt};
 use once_cell::sync::OnceCell;
+use wasm_bindgen::prelude::*;
+
+// WASM exports and logging setup - defined early for use in functions below
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
+    
+    // Custom debug log function that will be provided by JavaScript
+    // This will use the formatForDebug function on the JS side
+    #[wasm_bindgen(js_name = wasmDebugLog)]
+    fn debug_log(s: &str);
+}
+
+// For debugging objects that need formatting
+macro_rules! debug_log {
+    ($($t:tt)*) => (debug_log(&format_args!($($t)*).to_string()))
+}
+
+// For simple console logs that don't need formatting
+macro_rules! console_log {
+    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
+}
 
 // Custom serializer that handles u64 as BigInt
 fn serialize_response_with_bigint(response: &InternalServiceResponse) -> Result<JsValue, JsValue> {
@@ -47,29 +70,23 @@ fn deserialize_request_with_string_cids(
         .as_string()
         .ok_or_else(|| JsValue::from_str("Failed to convert JSON to string"))?;
 
-    log(&format!("JSON string from JS: {}", json_str));
-
     let mut json_value: serde_json::Value = serde_json::from_str(&json_str)
         .map_err(|e| JsValue::from_str(&format!("JSON parse error: {}", e)))?;
 
-    log(&format!("Parsed JSON value: {:?}", json_value));
-
     // Convert string CIDs back to numbers
     convert_string_cids_to_numbers(&mut json_value);
-
-    log(&format!("After CID conversion: {:?}", json_value));
 
     // Convert to the final request type
     match serde_json::from_value::<InternalServiceRequest>(json_value.clone()) {
         Ok(request) => Ok(request),
         Err(e) => {
-            log(&format!("Deserialization error: {}", e));
+            debug_log!("Deserialization error: {}", e);
             // serde_json::Error doesn't have path() method
             
             // Try to identify which field is causing the issue
             if let serde_json::Value::Object(map) = &json_value {
                 for (key, value) in map {
-                    log(&format!("Top-level key '{}': {:?}", key, value));
+                    debug_log!("Top-level key '{}': {:?}", key, value);
                 }
             }
             
@@ -138,18 +155,6 @@ fn convert_string_cids_to_numbers(value: &mut serde_json::Value) {
     }
 }
 // use std::time::Duration;
-use wasm_bindgen::prelude::*;
-
-// WASM exports and logging setup
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = console)]
-    fn log(s: &str);
-}
-
-macro_rules! console_log {
-    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
-}
 
 // Error types
 #[derive(thiserror::Error, Debug)]
@@ -255,6 +260,9 @@ struct WorkspaceState {
     messenger: CitadelWorkspaceMessenger<CitadelWorkspaceBackend>,
     stream: Option<citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>>,
     connections: Arc<DashMap<u64, MessengerTx<CitadelWorkspaceBackend>>>,
+    // On drop, this will kill the background task automatically (RAII pattern)
+    #[allow(dead_code)]
+    shutdown_tx: citadel_io::tokio::sync::oneshot::Sender<()>,
 }
 
 // Initialize the global state
@@ -271,10 +279,33 @@ pub fn main() {
 
 #[wasm_bindgen]
 pub async fn init(ws_url: String) -> Result<(), JsValue> {
-    console_log!("Initializing WASM client with URL: {}", ws_url);
+    init_inner(ws_url, false).await
+}
+
+// Should only be called when manually triggered by the UI "Retry Now" button
+#[wasm_bindgen]
+pub async fn restart(ws_url: String) -> Result<(), JsValue> {
+    init_inner(ws_url, true).await
+}
+
+async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
+    if restart {
+        if !is_initialized() {
+            return Err(JsValue::from_str("Not initialized. Call init() first."));
+        }
+        console_log!("Restarting WASM client with URL: {}", ws_url);
+        close_connection().await?;
+
+    } else {
+        if is_initialized() {
+            return Err(JsValue::from_str("Already initialized. If required, call restart() instead followed by claiming any orphaned connections."));
+        }
+        console_log!("Initializing WASM client with URL: {}", ws_url);
+    }
 
     // Create channels for WebSocket communication
     let (sink_tx, mut sink_rx) = mpsc::unbounded_channel::<InternalServicePayload>();
+    let (shutdown_tx, mut shutdown_rx) = citadel_io::tokio::sync::oneshot::channel::<()>();
     let (stream_tx, stream_rx) =
         mpsc::unbounded_channel::<std::io::Result<InternalServicePayload>>();
 
@@ -298,11 +329,15 @@ pub async fn init(ws_url: String) -> Result<(), JsValue> {
 
         loop {
             citadel_io::tokio::select! {
+                _terminated = &mut shutdown_rx => {
+                    console_log!("Shutdown signal received");
+                    break;
+                }
                 // Handle outgoing messages from sink_rx
                 Some(payload) = sink_rx.recv() => {
                     match serde_json::to_string(&payload) {
                         Ok(json) => {
-                            console_log!("Sending JSON to server: {}", json);
+                            //debug_log!("Sending JSON to server: {}", json);
                             let message = WsMessage::Text(json);
                             if let Err(e) = ws_sink.send(message).await {
                                 console_log!("Error sending WebSocket message: {:?}", e);
@@ -368,6 +403,7 @@ pub async fn init(ws_url: String) -> Result<(), JsValue> {
         messenger,
         stream: Some(stream),
         connections,
+        shutdown_tx,
     };
 
     let workspace_state = get_workspace_state();
@@ -416,8 +452,10 @@ pub async fn next_message() -> Result<JsValue, JsValue> {
             drop(guard); // drop the guard to unblock
             if let Some(response) = stream.recv().await {
                 // Convert to JsValue with custom BigInt handling for large CIDs
+                get_workspace_state().write().await.as_mut().expect("Workspace stream corrupted").stream.replace(stream);
                 serialize_response_with_bigint(&response)
             } else {
+                get_workspace_state().write().await.as_mut().expect("Workspace stream corrupted").stream.replace(stream);
                 Err(JsValue::from_str("Stream closed"))
             }
         } else {
@@ -462,27 +500,16 @@ pub async fn send_p2p_message(cid_str: String, message: JsValue) -> Result<(), J
 #[wasm_bindgen]
 pub async fn send_direct_to_internal_service(message: JsValue) -> Result<(), JsValue> {
     console_log!("Sending direct message to internal service");
-    console_log!(
-        "Raw message from TypeScript: {:?}",
-        message
-            .as_string()
-            .unwrap_or_else(|| "Not a string".to_string())
-    );
 
     let request: InternalServiceRequest = deserialize_request_with_string_cids(message)?;
-    console_log!("Deserialized request: {:?}", request);
+    // debug_log!("Deserialized request: {:?}", request);
 
     // Use direct WebSocket channel instead of bypasser to avoid workspace lock
     if let Some(sink_tx) = SINK_CHANNEL.get() {
-        console_log!("Got direct sink channel, sending request via WebSocket");
-
         let payload = InternalServicePayload::Request(request);
-        console_log!("Created payload, sending to WebSocket channel");
-
         match sink_tx.send(payload) {
             Ok(()) => {
-                console_log!("Message sent successfully to WebSocket channel");
-                console_log!("Direct message sent to internal service");
+                console_log!("Direct message sent successfully to WebSocket channel");
                 Ok(())
             }
             Err(e) => {

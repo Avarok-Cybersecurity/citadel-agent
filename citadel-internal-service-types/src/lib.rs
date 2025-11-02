@@ -13,9 +13,54 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use uuid::Uuid;
+use custom_debug::Debug;
 
 #[cfg(feature = "typescript")]
 use ts_rs::TS;
+
+pub fn bytes_debug_fmt<T: std::fmt::Debug + AsRef<[u8]>>(val: &T, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        const SAMPLE_ENDS_COUNT: usize = 5;
+        let slice = val.as_ref();
+        let len = slice.len();
+        if len <= (SAMPLE_ENDS_COUNT*2) {
+            return write!(f, "{{BytesLike(len: {len}. values: {slice:?})}}");
+        }
+        
+        // Get the first and last 5 bytes
+        let sample_ending_boundary = len.saturating_sub(SAMPLE_ENDS_COUNT);
+        let first_bytes: &[u8] = &slice[..SAMPLE_ENDS_COUNT];
+        let last_bytes: &[u8] = &slice[sample_ending_boundary..];
+    
+        write!(f, "{{BytesLike(len: {len}. First {SAMPLE_ENDS_COUNT} bytes: {first_bytes:?}. Last {SAMPLE_ENDS_COUNT} bytes: {last_bytes:?})}}")
+}
+
+pub fn map_debug_fmt<T, K, V>(map: &T, f: &mut std::fmt::Formatter) -> std::fmt::Result
+where
+    T: ?Sized,
+    for<'a> &'a T: IntoIterator<Item = (&'a K, &'a V)>,
+    K: std::fmt::Display,
+    V: std::fmt::Debug + AsRef<[u8]>,
+{
+    write!(f, "{{MapLike: ")?;
+    
+    // Use a peekable iterator to handle the trailing comma correctly.
+    let mut iter = map.into_iter().peekable();
+
+    while let Some((k, v)) = iter.next() {
+        write!(f, "(K: {k}, V: ")?;
+        // `v` is a `&V`. Because `V: AsRef<[u8]>`, `&V` also implements `AsRef<[u8]>`.
+        // So we can pass `v` directly to our helper.
+        bytes_debug_fmt(v, f)?;
+        write!(f, ")")?;
+        
+        // Only write a comma if this is not the last item.
+        if iter.peek().is_some() {
+            write!(f, ", ")?;
+        }
+    }
+
+    write!(f, "}}")
+}
 
 /// Thread-safe wrapper for UUID that can be atomically updated
 #[derive(Debug)]
@@ -391,6 +436,7 @@ pub struct GroupMessageNotification {
     pub cid: u64,
     pub peer_cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[debug(with = bytes_debug_fmt)]
     pub message: BytesMut,
     #[cfg_attr(feature = "typescript", ts(type = "any"))]
     pub group_key: MessageGroupKey,
@@ -627,6 +673,7 @@ pub struct LocalDBGetKVSuccess {
     pub peer_cid: Option<u64>,
     pub key: String,
     #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[debug(with = bytes_debug_fmt)]
     pub value: Vec<u8>,
     pub request_id: Option<Uuid>,
 }
@@ -688,6 +735,7 @@ pub struct LocalDBGetAllKVSuccess {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     #[cfg_attr(feature = "typescript", ts(type = "Record<string, number[]>"))]
+    #[debug(with = map_debug_fmt)]
     pub map: HashMap<String, Vec<u8>>,
     pub request_id: Option<Uuid>,
 }
@@ -938,6 +986,7 @@ pub enum InternalServiceRequest {
     Message {
         request_id: Uuid,
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[debug(with = bytes_debug_fmt)]
         message: Vec<u8>,
         cid: u64,
         peer_cid: Option<u64>,
@@ -1031,6 +1080,7 @@ pub enum InternalServiceRequest {
         peer_cid: Option<u64>,
         key: String,
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[debug(with = bytes_debug_fmt)]
         value: Vec<u8>,
     },
     LocalDBDeleteKV {
@@ -1077,6 +1127,7 @@ pub enum InternalServiceRequest {
     GroupMessage {
         cid: u64,
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[debug(with = bytes_debug_fmt)]
         message: BytesMut,
         #[cfg_attr(feature = "typescript", ts(type = "any"))]
         group_key: MessageGroupKey,

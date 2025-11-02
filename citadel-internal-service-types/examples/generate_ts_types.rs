@@ -25,6 +25,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         InternalServiceRequest::export_all()?;
         InternalServiceResponse::export_all()?;
         InternalServicePayload::export_all()?;
+        
+        // Export the types that are used but might not be automatically exported
+        AccountInformation::export_all()?;
+        PeerInformation::export_all()?;
+        PeerSessionInformation::export_all()?;
 
         println!("TypeScript types generated successfully!");
         println!("Types available in: {}", export_dir);

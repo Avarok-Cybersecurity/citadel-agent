@@ -5,6 +5,15 @@
 
 set -e  # Exit on any error
 
+# Detect OS for sed compatibility
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS
+    SED_INPLACE="sed -i ''"
+else
+    # Linux
+    SED_INPLACE="sed -i"
+fi
+
 echo "🔧 Building Rust crate with TypeScript features..."
 cd citadel-internal-service-types
 cargo build --features typescript
@@ -15,48 +24,54 @@ TS_RS_EXPORT_DIR=../typescript-client/src/types cargo run --example generate_ts_
 echo "🔧 Fixing missing imports in generated TypeScript files..."
 cd ../typescript-client/src/types
 
+# Helper function to add import at beginning of file (cross-platform)
+add_import() {
+    local file=$1
+    local import_line=$2
+
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS sed
+        sed -i '' "1i\\
+$import_line
+" "$file"
+    else
+        # Linux sed
+        sed -i "1i$import_line" "$file"
+    fi
+}
+
 # Fix AccountInformation.ts
 if [ -f "AccountInformation.ts" ]; then
     if ! grep -q "import.*PeerSessionInformation" AccountInformation.ts; then
-        sed -i '' '1a\
-import type { PeerSessionInformation } from "./PeerSessionInformation";
-' AccountInformation.ts
+        add_import "AccountInformation.ts" 'import type { PeerSessionInformation } from "./PeerSessionInformation";'
     fi
 fi
 
 # Fix Accounts.ts
 if [ -f "Accounts.ts" ]; then
     if ! grep -q "import.*AccountInformation" Accounts.ts; then
-        sed -i '' '1a\
-import type { AccountInformation } from "./AccountInformation";
-' Accounts.ts
+        add_import "Accounts.ts" 'import type { AccountInformation } from "./AccountInformation";'
     fi
 fi
 
 # Fix ListAllPeersResponse.ts
 if [ -f "ListAllPeersResponse.ts" ]; then
     if ! grep -q "import.*PeerInformation" ListAllPeersResponse.ts; then
-        sed -i '' '1a\
-import type { PeerInformation } from "./PeerInformation";
-' ListAllPeersResponse.ts
+        add_import "ListAllPeersResponse.ts" 'import type { PeerInformation } from "./PeerInformation";'
     fi
 fi
 
 # Fix ListRegisteredPeersResponse.ts
 if [ -f "ListRegisteredPeersResponse.ts" ]; then
     if ! grep -q "import.*PeerInformation" ListRegisteredPeersResponse.ts; then
-        sed -i '' '1a\
-import type { PeerInformation } from "./PeerInformation";
-' ListRegisteredPeersResponse.ts
+        add_import "ListRegisteredPeersResponse.ts" 'import type { PeerInformation } from "./PeerInformation";'
     fi
 fi
 
 # Fix SessionInformation.ts
 if [ -f "SessionInformation.ts" ]; then
     if ! grep -q "import.*PeerSessionInformation" SessionInformation.ts; then
-        sed -i '' '1a\
-import type { PeerSessionInformation } from "./PeerSessionInformation";
-' SessionInformation.ts
+        add_import "SessionInformation.ts" 'import type { PeerSessionInformation } from "./PeerSessionInformation";'
     fi
 fi
 

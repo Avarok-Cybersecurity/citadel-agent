@@ -1,8 +1,8 @@
-// Export the original WebSocket-based client
-export { CitadelClient } from './CitadelClient';
-export type { CitadelClientConfig, ConnectOptions as WSConnectOptions, MessageOptions as WSMessageOptions } from './CitadelClient';
+// NOTE: CitadelClient is Node.js-only (uses 'ws' package) and should NOT be exported
+// for browser environments. Use InternalServiceWasmClient instead.
+// To use CitadelClient in Node.js, import directly: import { CitadelClient } from './CitadelClient'
 
-// Export the new WASM-based client
+// Export the WASM-based client for browser environments
 export { InternalServiceWasmClient } from './InternalServiceWasmClient';
 export type {
     WasmClientConfig,

@@ -21,14 +21,10 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
-
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen_futures;
 
 pub mod backend;
 
@@ -36,36 +32,13 @@ pub mod backend;
 /// - Native: Uses tokio::time::sleep
 /// - WASM: Uses wasmtimer::tokio::sleep
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn sleep_internal(duration: Duration) {
+async fn sleep_internal(duration: Duration) {
     citadel_io::tokio::time::sleep(duration).await;
 }
 
 #[cfg(target_arch = "wasm32")]
-pub async fn sleep_internal(duration: Duration) {
+async fn sleep_internal(duration: Duration) {
     wasmtimer::tokio::sleep(duration).await;
-}
-
-/// Platform-agnostic async timeout function
-/// - Native: Uses tokio::time::timeout
-/// - WASM: Uses wasmtimer::tokio::timeout
-#[cfg(not(target_arch = "wasm32"))]
-pub async fn timeout_internal<F, T>(duration: Duration, future: F) -> Result<T, ()>
-where
-    F: Future<Output = T>,
-{
-    citadel_io::tokio::time::timeout(duration, future)
-        .await
-        .map_err(|_| ())
-}
-
-#[cfg(target_arch = "wasm32")]
-pub async fn timeout_internal<F, T>(duration: Duration, future: F) -> Result<T, ()>
-where
-    F: Future<Output = T>,
-{
-    wasmtimer::tokio::timeout(duration, future)
-        .await
-        .map_err(|_| ())
 }
 
 /// A multiplexer for the InternalServiceConnector that allows for multiple handles
@@ -286,9 +259,9 @@ where
 
         #[cfg(not(target_arch = "wasm32"))]
         drop(citadel_io::tokio::task::spawn(task));
-
+        
         #[cfg(target_arch = "wasm32")]
-        drop(wasm_bindgen_futures::spawn_local(task));
+        drop(citadel_io::wasm_bindgen_futures::spawn_local(task));
 
         Ok(handle)
     }
@@ -544,38 +517,36 @@ where
             }
         };
 
-        let periodic_session_status_poller = {
-            let this = self.clone();
-            async move {
-                loop {
-                    if !this.is_running() {
+        let this = self.clone();
+        let periodic_session_status_poller = async move {
+            let mut ticker = citadel_io::tokio::time::interval(POLL_CONNECTED_PEERS_REFRESH_PERIOD);
+            loop {
+                if !this.is_running() {
+                    return;
+                }
+
+                ticker.tick().await;
+                let mut background_invoked_requests = this.background_invoked_requests.lock();
+                // Update the state for each client that has a running ISM instance
+                let local_cids: Vec<u64> =
+                    this.txs_to_inbound.iter().map(|r| r.key().cid).collect();
+                for source_cid in local_cids {
+                    let request_id = Uuid::new_v4();
+                    background_invoked_requests.insert(request_id);
+                    // The inbound network task will automatically update the state. All this task has to do
+                    // is send the request
+                    let request = InternalMessage::Message(WrappedMessage {
+                        source_id: source_cid,
+                        destination_id: LOOPBACK_ONLY,
+                        message_id: 0,
+                        contents: InternalServicePayload::Request(
+                            InternalServiceRequest::GetSessions { request_id },
+                        ),
+                    });
+                    log::trace!(target: "citadel", "[POLL] Sending session status poller request {bypass_key:?}: {request:?}");
+                    if let Err(err) = this.bypass_ism_tx_to_outbound.send((bypass_key, request)) {
+                        log::error!(target: "citadel", "Error while sending session status poller request: {err:?}");
                         return;
-                    }
-
-                    sleep_internal(POLL_CONNECTED_PEERS_REFRESH_PERIOD).await;
-                    let mut background_invoked_requests = this.background_invoked_requests.lock();
-                    // Update the state for each client that has a running ISM instance
-                    let local_cids: Vec<u64> =
-                        this.txs_to_inbound.iter().map(|r| r.key().cid).collect();
-                    for source_cid in local_cids {
-                        let request_id = Uuid::new_v4();
-                        background_invoked_requests.insert(request_id);
-                        // The inbound network task will automatically update the state. All this task has to do
-                        // is send the request
-                        let request = InternalMessage::Message(WrappedMessage {
-                            source_id: source_cid,
-                            destination_id: LOOPBACK_ONLY,
-                            message_id: 0,
-                            contents: InternalServicePayload::Request(
-                                InternalServiceRequest::GetSessions { request_id },
-                            ),
-                        });
-
-                        log::trace!(target: "citadel", "[POLL] Sending session status poller request {bypass_key:?}: {request:?}");
-                        if let Err(err) = this.bypass_ism_tx_to_outbound.send((bypass_key, request)) {
-                            log::error!(target: "citadel", "Error while sending session status poller request: {err:?}");
-                            return;
-                        }
                     }
                 }
             }
@@ -727,13 +698,12 @@ where
 {
     /// Waits for a peer to connect to the local client
     pub async fn wait_for_peer_to_connect(&self, peer_cid: u64) -> Result<(), MessengerError> {
-        let interval = Duration::from_millis(300);
+        let mut interval = citadel_io::tokio::time::interval(Duration::from_millis(100));
         loop {
             if !self.messenger.is_running() {
                 return Err(MessengerError::Shutdown);
             }
-
-            sleep_internal(interval).await;
+            let _ = interval.tick().await;
 
             if self.get_connected_peers().await.contains(&peer_cid) {
                 return Ok(());

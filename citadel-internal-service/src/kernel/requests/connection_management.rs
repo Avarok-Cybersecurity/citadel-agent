@@ -39,24 +39,40 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             
             ConfigCommand::ClaimSession { session_cid, only_if_orphaned } => {
                 let mut server_connection_map = this.server_connection_map.lock().await;
-                
-                if let Some(connection) = server_connection_map.get_mut(&session_cid) {
-                    let current_conn_id = connection.associated_tcp_connection.load(Ordering::Relaxed);
-                    
+
+                if let Some(connection) = server_connection_map.get(&session_cid) {
+                    let old_conn_id = connection.associated_tcp_connection.load(Ordering::Relaxed);
+
                     // Check if the session is orphaned (not associated with any active TCP connection)
-                    let is_orphaned = !this.tcp_connection_map.lock().await.contains_key(&current_conn_id);
-                    
+                    let is_orphaned = !this.tcp_connection_map.lock().await.contains_key(&old_conn_id);
+
                     if !only_if_orphaned || is_orphaned {
-                        // Update the associated TCP connection to the current one
-                        connection.associated_tcp_connection.store(conn_id, Ordering::Relaxed);
-                        
+                        // Find ALL sessions that share the same old TCP connection
+                        // This ensures all sessions from the same browser/client get updated together
+                        let sessions_to_update: Vec<u64> = server_connection_map
+                            .iter()
+                            .filter(|(_, conn)| conn.associated_tcp_connection.load(Ordering::Relaxed) == old_conn_id)
+                            .map(|(cid, _)| *cid)
+                            .collect();
+
+                        let updated_count = sessions_to_update.len();
+
+                        // Update all sessions that shared the old TCP connection to use the new one
+                        for cid in &sessions_to_update {
+                            if let Some(conn) = server_connection_map.get_mut(cid) {
+                                conn.associated_tcp_connection.store(conn_id, Ordering::Relaxed);
+                            }
+                        }
+
+                        info!(target: "citadel", "ClaimSession: Updated {} sessions from old TCP connection {:?} to new {:?}", updated_count, old_conn_id, conn_id);
+
                         // Add this connection to orphan mode to preserve it when the new connection drops
                         this.orphan_sessions.lock().await.insert(conn_id, true);
-                        
+
                         InternalServiceResponse::ConnectionManagementSuccess(ConnectionManagementSuccess {
                             cid: session_cid,
                             request_id: Some(request_id),
-                            message: format!("Successfully claimed session {}", session_cid),
+                            message: format!("Successfully claimed session {} (updated {} related sessions)", session_cid, updated_count),
                         })
                     } else {
                         InternalServiceResponse::ConnectionManagementFailure(ConnectionManagementFailure {

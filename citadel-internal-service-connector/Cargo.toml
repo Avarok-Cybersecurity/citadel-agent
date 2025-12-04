@@ -35,6 +35,7 @@ futures-util = { version = "0.3", optional = true }
 # WASM dependencies
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4"
+wasmtimer = "0.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 citadel_crypt = { workspace = true }

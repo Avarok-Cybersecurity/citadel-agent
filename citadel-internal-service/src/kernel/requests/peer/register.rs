@@ -4,6 +4,7 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, PeerRegisterFailure, PeerRegisterSuccess,
 };
+use citadel_sdk::logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::{
     ProtocolRemoteExt, ProtocolRemoteTargetExt, Ratchet, VirtualTargetType,
@@ -26,6 +27,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     else {
         unreachable!("Should never happen if programmed properly")
     };
+
+    info!(target: "citadel", "[PeerRegister] Received request: cid={}, peer_cid={}, connect_after_register={}, request_id={:?}", cid, peer_cid, connect_after_register, request_id);
+
     let remote = this.remote();
 
     let client_to_server_remote = ClientServerRemote::new(
@@ -36,16 +40,23 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         None,
     );
 
+    info!(target: "citadel", "[PeerRegister] Calling propose_target({}, {})...", cid, peer_cid);
     let response = match client_to_server_remote.propose_target(cid, peer_cid).await {
         Ok(symmetric_identifier_handle_ref) => {
+            info!(target: "citadel", "[PeerRegister] propose_target succeeded, calling register_to_peer()...");
             match symmetric_identifier_handle_ref.register_to_peer().await {
                 Ok(_peer_register_success) => {
+                    info!(target: "citadel", "[PeerRegister] register_to_peer succeeded, getting account_manager...");
                     let account_manager = symmetric_identifier_handle_ref.account_manager();
+                    info!(target: "citadel", "[PeerRegister] Calling find_target_information({}, {})...", cid, peer_cid);
                     match account_manager.find_target_information(cid, peer_cid).await {
                         Ok(target_information) => {
+                            info!(target: "citadel", "[PeerRegister] find_target_information succeeded");
                             let (_, mutual_peer) = target_information.unwrap();
+                            info!(target: "citadel", "[PeerRegister] mutual_peer.cid={}, connect_after_register={}", mutual_peer.cid, connect_after_register);
                             match connect_after_register {
                                 true => {
+                                    info!(target: "citadel", "[PeerRegister] connect_after_register=true, chaining to PeerConnect...");
                                     let connect_command = InternalServiceRequest::PeerConnect {
                                         cid,
                                         peer_cid: mutual_peer.cid,
@@ -55,45 +66,61 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                                         peer_session_password,
                                     };
 
-                                    return handle_request(this, uuid, connect_command).await;
+                                    let result = handle_request(this, uuid, connect_command).await;
+                                    info!(target: "citadel", "[PeerRegister] PeerConnect chain returned: {:?}", result.is_some());
+                                    return result;
                                 }
-                                false => InternalServiceResponse::PeerRegisterSuccess(
-                                    PeerRegisterSuccess {
-                                        cid,
-                                        peer_cid: mutual_peer.cid,
-                                        peer_username: mutual_peer
-                                            .username
-                                            .clone()
-                                            .unwrap_or_default(),
-                                        request_id: Some(request_id),
-                                    },
-                                ),
+                                false => {
+                                    info!(target: "citadel", "[PeerRegister] connect_after_register=false, returning PeerRegisterSuccess");
+                                    InternalServiceResponse::PeerRegisterSuccess(
+                                        PeerRegisterSuccess {
+                                            cid,
+                                            peer_cid: mutual_peer.cid,
+                                            peer_username: mutual_peer
+                                                .username
+                                                .clone()
+                                                .unwrap_or_default(),
+                                            request_id: Some(request_id),
+                                        },
+                                    )
+                                }
                             }
                         }
                         Err(err) => {
+                            let err_str = err.into_string();
+                            error!(target: "citadel", "[PeerRegister] find_target_information FAILED: {}", err_str);
                             InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
                                 cid,
-                                message: err.into_string(),
+                                message: err_str,
                                 request_id: Some(request_id),
                             })
                         }
                     }
                 }
 
-                Err(err) => InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
-                    cid,
-                    message: err.into_string(),
-                    request_id: Some(request_id),
-                }),
+                Err(err) => {
+                    let err_str = err.into_string();
+                    error!(target: "citadel", "[PeerRegister] register_to_peer FAILED: {}", err_str);
+                    InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
+                        cid,
+                        message: err_str,
+                        request_id: Some(request_id),
+                    })
+                }
             }
         }
 
-        Err(err) => InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
-            cid,
-            message: err.into_string(),
-            request_id: Some(request_id),
-        }),
+        Err(err) => {
+            let err_str = err.into_string();
+            error!(target: "citadel", "[PeerRegister] propose_target FAILED: {}", err_str);
+            InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
+                cid,
+                message: err_str,
+                request_id: Some(request_id),
+            })
+        }
     };
 
+    info!(target: "citadel", "[PeerRegister] Returning response for cid={}, peer_cid={}", cid, peer_cid);
     Some(HandledRequestResult { response, uuid })
 }

@@ -6,7 +6,7 @@ use citadel_internal_service_connector::connector::InternalServiceConnector;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_connector::messenger::{CitadelWorkspaceMessenger, MessengerTx};
 use citadel_internal_service_types::{
-    InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
+    InternalServicePayload, InternalServiceRequest, InternalServiceResponse, SecurityLevel,
 };
 
 use async_trait::async_trait;
@@ -70,26 +70,55 @@ fn deserialize_request_with_string_cids(
         .as_string()
         .ok_or_else(|| JsValue::from_str("Failed to convert JSON to string"))?;
 
+    // DEBUG: Log ALL Message requests to see peer_cid handling
+    if json_str.contains("\"Message\"") {
+        // Log the first 1000 chars to see full structure
+        console_log!("[P2P-WASM] Raw JSON (Message request): {}", &json_str[..json_str.len().min(1000)]);
+    }
+
     let mut json_value: serde_json::Value = serde_json::from_str(&json_str)
         .map_err(|e| JsValue::from_str(&format!("JSON parse error: {}", e)))?;
+
+    // DEBUG: Log peer_cid before conversion WITH request_id for correlation
+    if let Some(msg) = json_value.get("Message") {
+        let req_id = msg.get("request_id").and_then(|v| v.as_str()).unwrap_or("unknown");
+        if let Some(peer_cid) = msg.get("peer_cid") {
+            console_log!("[P2P-WASM] REQUEST_ID={} peer_cid BEFORE conversion: {:?} (is_string={})", req_id, peer_cid, peer_cid.is_string());
+        } else {
+            console_log!("[P2P-WASM] REQUEST_ID={} peer_cid is MISSING from Message!", req_id);
+        }
+    }
 
     // Convert string CIDs back to numbers
     convert_string_cids_to_numbers(&mut json_value);
 
+    // DEBUG: Log peer_cid after conversion
+    if let Some(msg) = json_value.get("Message") {
+        if let Some(peer_cid) = msg.get("peer_cid") {
+            console_log!("[P2P-WASM] peer_cid AFTER conversion: {:?} (is_number={})", peer_cid, peer_cid.is_number());
+        }
+    }
+
     // Convert to the final request type
     match serde_json::from_value::<InternalServiceRequest>(json_value.clone()) {
-        Ok(request) => Ok(request),
+        Ok(request) => {
+            // DEBUG: Log the final deserialized request for Message types
+            if let InternalServiceRequest::Message { cid, peer_cid, .. } = &request {
+                console_log!("[P2P-WASM] Deserialized Message: cid={}, peer_cid={:?}", cid, peer_cid);
+            }
+            Ok(request)
+        }
         Err(e) => {
             debug_log!("Deserialization error: {}", e);
             // serde_json::Error doesn't have path() method
-            
+
             // Try to identify which field is causing the issue
             if let serde_json::Value::Object(map) = &json_value {
                 for (key, value) in map {
                     debug_log!("Top-level key '{}': {:?}", key, value);
                 }
             }
-            
+
             Err(JsValue::from_str(&format!("Request deserialization error: {}", e)))
         }
     }
@@ -342,9 +371,9 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
                             if let Err(e) = ws_sink.send(message).await {
                                 console_log!("Error sending WebSocket message: {:?}", e);
                                 break;
-                            } else {
-                                console_log!("JSON message sent successfully to server");
                             }
+                            // Success case: No log needed - reduces console noise significantly
+                            // (removed verbose "JSON message sent successfully" log)
                         }
                         Err(e) => {
                             console_log!("Error serializing payload: {:?}", e);
@@ -414,13 +443,16 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
     Ok(())
 }
 
+/// Opens a messenger handle for the given CID.
+/// This creates an ISM (InterSession Messaging) channel for reliable-ordered messaging.
+/// Must be called once at login and maintained via polling (see ensure_messenger_open).
 #[wasm_bindgen]
-pub async fn open_p2p_connection(cid_str: String) -> Result<(), JsValue> {
+pub async fn open_messenger_for(cid_str: String) -> Result<(), JsValue> {
     let cid: u64 = cid_str
         .parse()
         .map_err(|e| JsValue::from_str(&format!("Invalid CID format: {}", e)))?;
 
-    console_log!("Opening P2P connection for CID: {}", cid);
+    console_log!("Opening messenger handle for CID: {}", cid);
 
     let workspace_state = get_workspace_state();
     let guard = workspace_state.read().await;
@@ -433,8 +465,43 @@ pub async fn open_p2p_connection(cid_str: String) -> Result<(), JsValue> {
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         state.connections.insert(cid, tx);
-        console_log!("P2P connection opened for CID: {}", cid);
+        console_log!("Messenger handle opened for CID: {}", cid);
         Ok(())
+    } else {
+        Err(JsValue::from_str("Workspace not initialized"))
+    }
+}
+
+/// Ensures a messenger handle is open for the given CID.
+/// Returns true if the messenger was just opened, false if already open.
+/// Use this for polling to maintain messenger handles across leader/follower tab transitions.
+#[wasm_bindgen]
+pub async fn ensure_messenger_open(cid_str: String) -> Result<bool, JsValue> {
+    let cid: u64 = cid_str
+        .parse()
+        .map_err(|e| JsValue::from_str(&format!("Invalid CID format: {}", e)))?;
+
+    let workspace_state = get_workspace_state();
+    let guard = workspace_state.read().await;
+
+    if let Some(state) = guard.as_ref() {
+        // Check if messenger handle already exists for this CID
+        if state.connections.contains_key(&cid) {
+            // Already open, no action needed
+            return Ok(false);
+        }
+
+        // Need to open messenger
+        console_log!("Opening messenger handle for CID: {} (was missing)", cid);
+        let tx = state
+            .messenger
+            .multiplex(cid)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        state.connections.insert(cid, tx);
+        console_log!("Messenger handle opened for CID: {}", cid);
+        Ok(true) // Messenger was just opened
     } else {
         Err(JsValue::from_str("Workspace not initialized"))
     }
@@ -466,30 +533,63 @@ pub async fn next_message() -> Result<JsValue, JsValue> {
     }
 }
 
+/// Convert string to SecurityLevel, matching TypeScript type:
+/// 'Standard' | 'Reinforced' | 'High' | 'Extreme'
+fn parse_security_level(s: Option<&str>) -> SecurityLevel {
+    match s {
+        Some("Standard") => SecurityLevel::Standard,
+        Some("Reinforced") => SecurityLevel::Reinforced,
+        Some("High") => SecurityLevel::High,
+        Some("Extreme") => SecurityLevel::Extreme,
+        _ => SecurityLevel::default(), // Falls back to Standard
+    }
+}
+
+/// Sends a P2P message using ISM-routed reliable messaging.
+/// Unlike send_p2p_message which bypasses ISM, this function uses
+/// send_message_to_with_security_level for guaranteed delivery.
 #[wasm_bindgen]
-pub async fn send_p2p_message(cid_str: String, message: JsValue) -> Result<(), JsValue> {
-    let cid: u64 = cid_str
+pub async fn send_p2p_message_reliable(
+    local_cid_str: String,
+    peer_cid_str: String,
+    message: Vec<u8>,
+    security_level: Option<String>,
+) -> Result<(), JsValue> {
+    let local_cid: u64 = local_cid_str
         .parse()
-        .map_err(|e| JsValue::from_str(&format!("Invalid CID format: {}", e)))?;
+        .map_err(|e| JsValue::from_str(&format!("Invalid local CID format: {}", e)))?;
+    let peer_cid: u64 = peer_cid_str
+        .parse()
+        .map_err(|e| JsValue::from_str(&format!("Invalid peer CID format: {}", e)))?;
 
-    console_log!("Sending P2P message to CID: {}", cid);
-
-    let request: InternalServiceRequest = deserialize_request_with_string_cids(message)?;
+    console_log!(
+        "Sending reliable P2P message from {} to {}",
+        local_cid,
+        peer_cid
+    );
 
     let workspace_state = get_workspace_state();
     let guard = workspace_state.read().await;
 
     if let Some(state) = guard.as_ref() {
-        if let Some(tx) = state.connections.get(&cid) {
-            tx.send_request(request)
+        if let Some(tx) = state.connections.get(&local_cid) {
+            let sec_level = parse_security_level(security_level.as_deref());
+
+            // Use ISM-routed send for reliability
+            tx.send_message_to_with_security_level(peer_cid, sec_level, message)
                 .await
                 .map_err(|e| JsValue::from_str(&e.to_string()))?;
-            console_log!("P2P message sent to CID: {}", cid);
+
+            console_log!(
+                "Reliable P2P message sent from {} to {}",
+                local_cid,
+                peer_cid
+            );
             Ok(())
         } else {
             Err(JsValue::from_str(&format!(
-                "No connection found for CID: {}",
-                cid
+                "No messaging handle found for local CID: {}. Call open_p2p_connection first.",
+                local_cid
             )))
         }
     } else {
@@ -499,7 +599,8 @@ pub async fn send_p2p_message(cid_str: String, message: JsValue) -> Result<(), J
 
 #[wasm_bindgen]
 pub async fn send_direct_to_internal_service(message: JsValue) -> Result<(), JsValue> {
-    console_log!("Sending direct message to internal service");
+    // Note: Verbose logging removed to reduce console noise
+    // Enable debug_log!() calls below for troubleshooting
 
     let request: InternalServiceRequest = deserialize_request_with_string_cids(message)?;
     // debug_log!("Deserialized request: {:?}", request);
@@ -509,7 +610,7 @@ pub async fn send_direct_to_internal_service(message: JsValue) -> Result<(), JsV
         let payload = InternalServicePayload::Request(request);
         match sink_tx.send(payload) {
             Ok(()) => {
-                console_log!("Direct message sent successfully to WebSocket channel");
+                // Success - no log needed to reduce noise
                 Ok(())
             }
             Err(e) => {

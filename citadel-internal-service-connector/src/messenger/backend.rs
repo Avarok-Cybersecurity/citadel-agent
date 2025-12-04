@@ -1,9 +1,8 @@
-use crate::messenger::{BypasserTx, MessengerTx, WrappedMessage};
+use crate::messenger::{sleep_internal, timeout_internal, BypasserTx, MessengerTx, WrappedMessage};
 use async_trait::async_trait;
 use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
 };
-use citadel_io::tokio::time;
 use dashmap::DashMap;
 use intersession_layer_messaging::{Backend, BackendError};
 use std::collections::HashMap;
@@ -31,8 +30,8 @@ impl CitadelWorkspaceBackend {
         let (tx, rx) = citadel_io::tokio::sync::oneshot::channel();
         self.expected_requests.insert(request_id, tx);
 
-        // Add a timeout to prevent infinite waiting
-        match time::timeout(std::time::Duration::from_secs(5), rx).await {
+        // Add a timeout to prevent infinite waiting (using platform-agnostic timeout)
+        match timeout_internal(Duration::from_secs(5), rx).await {
             Ok(result) => result.ok(),
             Err(_) => {
                 // Remove the request from expected_requests if it times out
@@ -402,8 +401,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
                         || err_str.contains("get_kv: Server connection not found")
                     {
                         citadel_logging::warn!(target: "citadel", "[GET_PENDING_OUTBOUND] Failed to get outbound map due to likely no connection up yet");
-                        citadel_io::tokio::time::sleep(std::time::Duration::from_millis(5000))
-                            .await;
+                        sleep_internal(Duration::from_millis(5000)).await;
                         continue;
                     } else {
                         return Err(e);
@@ -431,7 +429,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
                         || err_str.contains("get_kv: Server connection not found")
                     {
                         citadel_logging::warn!(target: "citadel", "[GET_PENDING_INBOUND] Failed to get inbound map likely due to likely no connection up yet");
-                        citadel_io::tokio::time::sleep(Duration::from_millis(5000)).await;
+                        sleep_internal(Duration::from_millis(5000)).await;
                         continue;
                     } else {
                         return Err(e);

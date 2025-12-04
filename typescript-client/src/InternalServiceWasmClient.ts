@@ -18,6 +18,7 @@ interface WasmModule {
     open_p2p_connection(cid: string): Promise<void>;
     next_message(): Promise<any>;
     send_p2p_message(cid: string, message: any): Promise<void>;
+    send_p2p_message_reliable(localCid: string, peerCid: string, message: Uint8Array, securityLevel: string | null): Promise<void>;
     send_direct_to_internal_service(message: any): Promise<void>;
     close_connection(): Promise<void>;
     get_version(): string;
@@ -108,7 +109,7 @@ export class InternalServiceWasmClient {
     }
 
     async restart_ws_connection(): Promise<void> {
-        // 
+        //
         await this.wasmModule!.restart(this.config.websocketUrl);
         this.startMessageProcessing();
         this.initializationComplete = true;
@@ -125,13 +126,13 @@ export class InternalServiceWasmClient {
         };
 
         console.log('InternalServiceWasmClient.register - sending request:', JSON.stringify(registerRequest, null, 2));
-        
+
         // For registration with connect_after_register=false, we need to handle this differently
         // The response might come before the connection closes
         const responsePromise = this.waitForResponse<RegisterSuccess>('RegisterSuccess', 5000);
-        
+
         await this.wasmModule!.send_direct_to_internal_service(registerRequest);
-        
+
         return responsePromise;
     }
 
@@ -165,6 +166,30 @@ export class InternalServiceWasmClient {
         };
 
         await this.wasmModule!.send_p2p_message(peerCidStr, messageRequest);
+    }
+
+    /**
+     * Send a reliable P2P message using ISM layer for guaranteed delivery.
+     * This method uses the ISM (InterSession Messaging) layer instead of bypassing it.
+     * @param localCid - The local user's CID
+     * @param peerCid - The target peer's CID
+     * @param message - The message bytes to send
+     * @param securityLevel - Optional security level: 'Standard', 'Reinforced', 'High', or 'Extreme'
+     */
+    async sendP2PMessageReliable(
+        localCid: string,
+        peerCid: string,
+        message: Uint8Array,
+        securityLevel?: 'Standard' | 'Reinforced' | 'High' | 'Extreme'
+    ): Promise<void> {
+        this.ensureInitialized();
+
+        await this.wasmModule!.send_p2p_message_reliable(
+            localCid,
+            peerCid,
+            message,
+            securityLevel || null
+        );
     }
 
     /**
@@ -246,20 +271,18 @@ export class InternalServiceWasmClient {
         try {
             console.log('Loading WASM module...');
 
-            // Import the WASM module with cache busting
-            const timestamp = Date.now();
-            const random = Math.random().toString(36).substring(7);
-            const moduleUrl = `../citadel_internal_service_wasm_client.js?v=${timestamp}&t=${timestamp}&r=${random}`;
-            console.log('Loading WASM from URL:', moduleUrl);
-            // Force Vite to bypass module cache with timestamp and t= param
-            const wasm = await import(/* @vite-ignore */ moduleUrl);
+            // Import the WASM JS module using relative path from src/ to package root
+            // @ts-ignore - Dynamic import of WASM glue code
+            const wasmModule = await import('../citadel_internal_service_wasm_client.js');
 
-            // Initialize the WASM module (this sets up the global state)
-            console.log('Initializing WASM module...');
-            await wasm.default();
+            // Initialize the WASM module with explicit path to .wasm binary in public directory
+            // This is needed because Vite mangles import.meta.url used by wasm-bindgen
+            const wasmBinaryUrl = '/wasm/citadel_internal_service_wasm_client_bg.wasm';
+            console.log('Initializing WASM module with binary from:', wasmBinaryUrl);
+            await wasmModule.default(wasmBinaryUrl);
             console.log('WASM module initialized successfully');
 
-            return wasm as WasmModule;
+            return wasmModule as any;
         } catch (error) {
             console.error('Failed to load WASM module:', error);
             throw new Error(`Failed to load WASM module: ${error}`);
@@ -350,7 +373,7 @@ export class InternalServiceWasmClient {
                 if (hasRegisterSuccess || (isRegisterRequest && hasConnectSuccess)) {
                     clearTimeout(timeoutId);
                     this.messageHandler = originalHandler; // Restore original handler
-                    
+
                     // Always call the original handler to ensure events are propagated
                     if (originalHandler) {
                         originalHandler(message);
@@ -411,7 +434,7 @@ export class InternalServiceWasmClient {
         };
 
         await this.wasmModule!.send_direct_to_internal_service(request);
-        
+
         // Wait for ConnectionManagementSuccess or ConnectionManagementFailure
         return this.waitForConnectionManagementResponse();
     }
@@ -425,7 +448,7 @@ export class InternalServiceWasmClient {
         this.ensureInitialized();
 
         const cid = typeof sessionCid === 'string' ? BigInt(sessionCid) : sessionCid;
-        
+
         const configCommand: ConfigCommand = {
             ClaimSession: {
                 session_cid: cid,
@@ -441,7 +464,7 @@ export class InternalServiceWasmClient {
         };
 
         await this.wasmModule!.send_direct_to_internal_service(request);
-        
+
         return this.waitForConnectionManagementResponse();
     }
 
@@ -453,7 +476,7 @@ export class InternalServiceWasmClient {
         this.ensureInitialized();
 
         const cid = sessionCid ? (typeof sessionCid === 'string' ? BigInt(sessionCid) : sessionCid) : null;
-        
+
         const configCommand: ConfigCommand = {
             DisconnectOrphan: {
                 session_cid: cid
@@ -468,7 +491,7 @@ export class InternalServiceWasmClient {
         };
 
         await this.wasmModule!.send_direct_to_internal_service(request);
-        
+
         return this.waitForConnectionManagementResponse();
     }
 
@@ -487,20 +510,20 @@ export class InternalServiceWasmClient {
                 if ('ConnectionManagementSuccess' in message) {
                     clearTimeout(timeoutId);
                     this.messageHandler = originalHandler;
-                    
+
                     if (originalHandler) {
                         originalHandler(message);
                     }
-                    
+
                     resolve(message.ConnectionManagementSuccess);
                 } else if ('ConnectionManagementFailure' in message) {
                     clearTimeout(timeoutId);
                     this.messageHandler = originalHandler;
-                    
+
                     if (originalHandler) {
                         originalHandler(message);
                     }
-                    
+
                     resolve(message.ConnectionManagementFailure);
                 } else {
                     // Pass through other messages
@@ -526,4 +549,4 @@ export class InternalServiceWasmClient {
     }
 }
 
-export default InternalServiceWasmClient; 
+export default InternalServiceWasmClient;

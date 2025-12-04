@@ -29,12 +29,15 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         Some(conn) => {
             let sink = if let Some(peer_cid) = peer_cid {
                 // send to peer
+                info!(target: "citadel", "[P2P-MSG] Sending message from {cid} to peer {peer_cid}");
+                info!(target: "citadel", "[P2P-MSG] Available peers in conn.peers: {:?}", conn.peers.keys().collect::<Vec<_>>());
                 if let Some(peer_conn) = conn.peers.get_mut(&peer_cid) {
+                    info!(target: "citadel", "[P2P-MSG] Found peer connection, sending via peer sink");
                     peer_conn.sink.set_security_level(security_level);
                     &mut peer_conn.sink
                 } else {
                     // TODO: refactor all connection not found messages, we have too many duplicates
-                    citadel_sdk::logging::error!(target: "citadel","connection not found");
+                    citadel_sdk::logging::error!(target: "citadel","[P2P-MSG] Peer connection not found for peer_cid={peer_cid}");
                     let response =
                         InternalServiceResponse::MessageSendFailure(MessageSendFailure {
                             cid,
@@ -46,6 +49,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 }
             } else {
                 // send to server
+                info!(target: "citadel", "[P2P-MSG] Sending message from {cid} to SERVER (no peer_cid)");
                 conn.sink_to_server.set_security_level(security_level);
                 &mut conn.sink_to_server
             };

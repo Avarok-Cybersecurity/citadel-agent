@@ -194,6 +194,23 @@ pub struct DisconnectFailure {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
+pub struct DeregisterSuccess {
+    pub cid: u64,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct DeregisterFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
 pub struct SendFileRequestSuccess {
     pub cid: u64,
     pub request_id: Option<Uuid>,
@@ -875,6 +892,8 @@ pub enum InternalServiceResponse {
     MessageNotification(MessageNotification),
     DisconnectNotification(DisconnectNotification),
     DisconnectFailure(DisconnectFailure),
+    DeregisterSuccess(DeregisterSuccess),
+    DeregisterFailure(DeregisterFailure),
     SendFileRequestSuccess(SendFileRequestSuccess),
     SendFileRequestFailure(SendFileRequestFailure),
     FileTransferRequestNotification(FileTransferRequestNotification),
@@ -994,6 +1013,11 @@ pub enum InternalServiceRequest {
         security_level: SecurityLevel,
     },
     Disconnect {
+        request_id: Uuid,
+        cid: u64,
+    },
+    /// Deregister from the server - permanently removes the account
+    Deregister {
         request_id: Uuid,
         cid: u64,
     },

@@ -168,15 +168,10 @@ export * from './ServiceConnectionAccepted';
 export * from './SessionInformation';
 EOF
 
-echo "✅ Verifying TypeScript client compilation..."
-cd ../../
-echo "current dir is $(pwd)"
-npm i
-npm run build
-
 echo "🎉 TypeScript types generated successfully!"
 echo "📁 Types are available in: typescript-client/src/types/"
 echo "📦 All imports automatically fixed!"
 echo "🏗️  Index file created for convenient imports!"
 echo ""
-echo "To regenerate types in the future, simply run: ./generate_types.sh" 
+echo "Note: Run npm install && npm run build in typescript-client/ to compile"
+echo "      (This is handled automatically by sync-wasm-clients.sh)" 

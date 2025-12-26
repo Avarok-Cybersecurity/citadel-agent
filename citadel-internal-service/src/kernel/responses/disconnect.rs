@@ -8,6 +8,25 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     disconnect: Disconnect,
 ) -> Result<(), NetworkError> {
+    // If disconnect is due to a rejected connection attempt, the existing session should remain valid.
+    // These are cases where a duplicate/failed connection attempt was rejected,
+    // but the original session is still active and shouldn't be removed.
+    let rejected_connection_messages = [
+        "Session Already Connected",
+        "Preconnect signalled to halt",
+    ];
+
+    for reject_msg in &rejected_connection_messages {
+        if disconnect.message.contains(reject_msg) {
+            citadel_sdk::logging::info!(
+                target: "citadel",
+                "Disconnect due to '{}' - preserving existing session in server_connection_map",
+                reject_msg
+            );
+            return Ok(());
+        }
+    }
+
     if let Some(conn) = disconnect.v_conn_type {
         let (signal, conn_uuid) = match conn {
             VirtualTargetType::LocalGroupServer { session_cid } => {

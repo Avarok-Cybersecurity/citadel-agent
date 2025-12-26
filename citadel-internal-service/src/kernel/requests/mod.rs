@@ -19,6 +19,7 @@ pub(crate) struct HandledRequestResult {
 }
 
 mod connect;
+mod deregister;
 mod disconnect;
 mod get_account_information;
 mod get_sessions;
@@ -53,6 +54,8 @@ where
         InternalServiceRequest::Message { .. } => message::handle(this, uuid, command).await,
 
         InternalServiceRequest::Disconnect { .. } => disconnect::handle(this, uuid, command).await,
+
+        InternalServiceRequest::Deregister { .. } => deregister::handle(this, uuid, command).await,
 
         InternalServiceRequest::SendFile { .. } => file::upload::handle(this, uuid, command).await,
 

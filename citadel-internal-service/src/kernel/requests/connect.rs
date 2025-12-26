@@ -4,7 +4,7 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     AtomicUuid, ConnectFailure, InternalServiceRequest, InternalServiceResponse, MessageNotification,
 };
-use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt, Ratchet};
+use citadel_sdk::prelude::{AuthenticationRequest, NodeRequest, ProtocolRemoteExt, Ratchet, Remote};
 use futures::StreamExt;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -42,6 +42,20 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     {
         Ok(conn_success) => {
             let cid = conn_success.cid;
+            citadel_sdk::logging::info!(target: "citadel", "[Connect] SUCCESS: cid={}", cid);
+
+            // DEBUG: Query active sessions in the kernel's session_manager after connect
+            citadel_sdk::logging::info!(target: "citadel", "[Connect] Querying active sessions after connect...");
+            match remote.send_callback_subscription(NodeRequest::GetActiveSessions).await {
+                Ok(mut stream_sessions) => {
+                    if let Some(result) = stream_sessions.next().await {
+                        citadel_sdk::logging::info!(target: "citadel", "[Connect] GetActiveSessions result: {:?}", result);
+                    }
+                }
+                Err(e) => {
+                    citadel_sdk::logging::error!(target: "citadel", "[Connect] Failed to query active sessions: {:?}", e);
+                }
+            }
 
             let (sink, mut stream) = conn_success.split();
             let client_server_remote = create_client_server_remote(

@@ -6,6 +6,7 @@ use citadel_sdk::prelude::{NetworkError, NodeResult, Ratchet};
 
 mod disconnect;
 mod object_transfer_handle;
+mod peer_channel_created;
 
 mod group_channel_created;
 pub(crate) mod group_event;
@@ -23,6 +24,9 @@ pub async fn handle_node_result<T: IOInterface, R: Ratchet>(
         }
         NodeResult::GroupChannelCreated(group_channel_created) => {
             return group_channel_created::handle(this, group_channel_created).await
+        }
+        NodeResult::PeerChannelCreated(peer_channel_created) => {
+            return peer_channel_created::handle(this, peer_channel_created).await
         }
         NodeResult::PeerEvent(event) => return peer_event::handle(this, event).await,
 

@@ -29,6 +29,8 @@ export interface WasmClientConfig {
     websocketUrl: string;
     messageHandler?: (message: InternalServiceResponse) => void;
     errorHandler?: (error: Error) => void;
+    /** Called when the message loop dies and cannot be recovered */
+    messageLoopDiedHandler?: (error: Error, canRecover: boolean) => void;
     timeout?: number;
 }
 
@@ -53,12 +55,37 @@ export class InternalServiceWasmClient {
     private p2pConnections = new Set<string>();
     private messageHandler?: (message: InternalServiceResponse) => void;
     private errorHandler?: (error: Error) => void;
+    private messageLoopDiedHandler?: (error: Error, canRecover: boolean) => void;
     private initializationComplete = false;
+    // Flag to signal message processing loop to stop (set when WebSocket dies)
+    private shouldStopProcessing = false;
+    // Flag to prevent multiple message processing loops
+    private messageProcessingStarted = false;
+    // Auto-recovery tracking
+    private consecutiveStreamErrors = 0;
+    private recoveryAttempts = 0;
+    private isRecovering = false;
+    private static readonly MAX_CONSECUTIVE_ERRORS = 5;
+    private static readonly MAX_RECOVERY_ATTEMPTS = 3;
+    private static readonly RECOVERY_BASE_DELAY_MS = 1000;
 
     constructor(config: WasmClientConfig) {
         this.config = config;
         this.messageHandler = config.messageHandler;
         this.errorHandler = config.errorHandler;
+        this.messageLoopDiedHandler = config.messageLoopDiedHandler;
+    }
+
+    /**
+     * Signal the message processing loop to stop.
+     * Called when WebSocket connection dies or panic occurs.
+     */
+    public stopMessageProcessing(): void {
+        console.log('[InternalServiceWasmClient] Stopping message processing');
+        this.shouldStopProcessing = true;
+        this.initializationComplete = false;
+        // Reset flag so message processing can restart on reconnection
+        this.messageProcessingStarted = false;
     }
 
     /**
@@ -67,6 +94,12 @@ export class InternalServiceWasmClient {
     async init(): Promise<void> {
         try {
             console.log(`Initializing WASM client with URL: ${this.config.websocketUrl}`);
+
+            // Reset stop flag and recovery tracking for new connection
+            this.shouldStopProcessing = false;
+            this.consecutiveStreamErrors = 0;
+            this.recoveryAttempts = 0;
+            this.isRecovering = false;
 
             // Load the shared WASM module
             const wasmModule = await this.loadWasmModule();
@@ -265,6 +298,21 @@ export class InternalServiceWasmClient {
         this.errorHandler = handler;
     }
 
+    /**
+     * Set a handler for message loop death events
+     * @param handler Called with (error, canRecover) - canRecover is true if recovery succeeded
+     */
+    setMessageLoopDiedHandler(handler: (error: Error, canRecover: boolean) => void): void {
+        this.messageLoopDiedHandler = handler;
+    }
+
+    /**
+     * Check if recovery is currently in progress
+     */
+    isRecoveringConnection(): boolean {
+        return this.isRecovering;
+    }
+
     // Private methods
 
     private async loadWasmModule(): Promise<WasmModule> {
@@ -290,26 +338,75 @@ export class InternalServiceWasmClient {
     }
 
     private startMessageProcessing(): void {
-        if (this.initializationComplete && this.wasmModule) {
-            console.warn("Will not run startMessageProcessing since already initialized")
+        // Prevent multiple message processing loops
+        if (this.messageProcessingStarted) {
+            console.warn("[InternalServiceWasmClient] Message processing already started, skipping");
             return;
         }
 
+        this.messageProcessingStarted = true;
         // Start a background task to process messages
         this.processMessages();
     }
 
     private async processMessages(): Promise<void> {
         try {
-            while (this.wasmModule && this.isInitialized()) {
+            while (this.wasmModule && this.isInitialized() && !this.shouldStopProcessing) {
                 try {
+                    // Await next_message directly - WASM will block until a message arrives
+                    // or the stream closes. No timeout needed as stream closure is the
+                    // proper way to detect WebSocket death.
                     const message = await this.wasmModule.next_message();
-                    this.handleMessage(message);
-                } catch (error) {
-                    // Handle specific errors or continue processing
-                    if (error && error.toString().includes('Stream closed')) {
+
+                    // Check stop flag before processing
+                    if (this.shouldStopProcessing) {
+                        console.log('[InternalServiceWasmClient] Stop flag set, exiting message loop');
                         break;
                     }
+
+                    // Reset consecutive error counter on successful message
+                    this.consecutiveStreamErrors = 0;
+
+                    this.handleMessage(message);
+                } catch (error) {
+                    // Check stop flag - if set, exit gracefully
+                    if (this.shouldStopProcessing) {
+                        console.log('[InternalServiceWasmClient] Stop flag set during error, exiting message loop');
+                        break;
+                    }
+
+                    // Handle specific errors
+                    const errorStr = error?.toString() || '';
+                    if (errorStr.includes('Stream closed')) {
+                        console.log('[InternalServiceWasmClient] Stream closed, attempting recovery...');
+                        const recovered = await this.attemptRecovery('Stream closed');
+                        if (!recovered) {
+                            break;
+                        }
+                        continue;
+                    }
+
+                    // "already being called" - track consecutive errors and attempt recovery
+                    if (errorStr.includes('already being called')) {
+                        this.consecutiveStreamErrors++;
+                        console.warn(`[InternalServiceWasmClient] WASM stream busy (${this.consecutiveStreamErrors}/${InternalServiceWasmClient.MAX_CONSECUTIVE_ERRORS})`);
+
+                        if (this.consecutiveStreamErrors >= InternalServiceWasmClient.MAX_CONSECUTIVE_ERRORS) {
+                            console.error('[InternalServiceWasmClient] Max consecutive errors reached, attempting recovery...');
+                            const recovered = await this.attemptRecovery('Max consecutive stream errors');
+                            if (!recovered) {
+                                break;
+                            }
+                            // Recovery succeeded, reset counter
+                            this.consecutiveStreamErrors = 0;
+                        } else {
+                            // Wait with exponential backoff before retry
+                            const delay = Math.min(1000 * Math.pow(2, this.consecutiveStreamErrors - 1), 5000);
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                        }
+                        continue;
+                    }
+
                     this.handleError(new Error(`Message processing error: ${error}`));
                     // Wait a bit before retrying
                     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -318,16 +415,92 @@ export class InternalServiceWasmClient {
         } catch (error) {
             this.handleError(new Error(`Message processing loop error: ${error}`));
         }
+        console.log('[InternalServiceWasmClient] Message processing loop ended');
         this.initializationComplete = false;
+        // Reset flag so message processing can restart on reconnection
+        this.messageProcessingStarted = false;
+    }
+
+    /**
+     * Attempt to recover the message processing loop by restarting the WebSocket connection.
+     * Returns true if recovery succeeded, false if it failed and loop should exit.
+     */
+    private async attemptRecovery(reason: string): Promise<boolean> {
+        // Prevent concurrent recovery attempts
+        if (this.isRecovering) {
+            console.log('[InternalServiceWasmClient] Recovery already in progress, waiting...');
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            return !this.shouldStopProcessing;
+        }
+
+        this.isRecovering = true;
+
+        try {
+            if (this.recoveryAttempts >= InternalServiceWasmClient.MAX_RECOVERY_ATTEMPTS) {
+                console.error(`[InternalServiceWasmClient] Max recovery attempts (${InternalServiceWasmClient.MAX_RECOVERY_ATTEMPTS}) exceeded`);
+                const error = new Error(`Message loop died: ${reason}. Recovery failed after ${this.recoveryAttempts} attempts.`);
+                this.notifyMessageLoopDied(error, false);
+                return false;
+            }
+
+            this.recoveryAttempts++;
+            const delay = InternalServiceWasmClient.RECOVERY_BASE_DELAY_MS * Math.pow(2, this.recoveryAttempts - 1);
+            console.log(`[InternalServiceWasmClient] Recovery attempt ${this.recoveryAttempts}/${InternalServiceWasmClient.MAX_RECOVERY_ATTEMPTS} (waiting ${delay}ms)...`);
+
+            await new Promise(resolve => setTimeout(resolve, delay));
+
+            // Check if we should stop before attempting recovery
+            if (this.shouldStopProcessing) {
+                console.log('[InternalServiceWasmClient] Stop flag set during recovery, aborting');
+                return false;
+            }
+
+            // Attempt to restart the WebSocket connection
+            console.log('[InternalServiceWasmClient] Restarting WebSocket connection...');
+            await this.restart_ws_connection();
+
+            console.log('[InternalServiceWasmClient] Recovery successful!');
+            this.recoveryAttempts = 0; // Reset on success
+            this.notifyMessageLoopDied(new Error(`Recovered from: ${reason}`), true);
+            return true;
+        } catch (error) {
+            console.error(`[InternalServiceWasmClient] Recovery attempt ${this.recoveryAttempts} failed:`, error);
+
+            if (this.recoveryAttempts >= InternalServiceWasmClient.MAX_RECOVERY_ATTEMPTS) {
+                const finalError = new Error(`Message loop died: ${reason}. Recovery failed: ${error}`);
+                this.notifyMessageLoopDied(finalError, false);
+                return false;
+            }
+
+            // Will retry on next iteration
+            return !this.shouldStopProcessing;
+        } finally {
+            this.isRecovering = false;
+        }
+    }
+
+    /**
+     * Notify listeners that the message loop died
+     */
+    private notifyMessageLoopDied(error: Error, recovered: boolean): void {
+        if (this.messageLoopDiedHandler) {
+            try {
+                this.messageLoopDiedHandler(error, recovered);
+            } catch (handlerError) {
+                console.error('[InternalServiceWasmClient] Error in messageLoopDiedHandler:', handlerError);
+            }
+        }
     }
 
     private handleMessage(message: InternalServiceResponse): void {
-        console.log('InternalServiceWasmClient: Received message:', JSON.stringify(message));
+        // PERF FIX: Removed per-message logging that was causing UI freezes
+        // JSON.stringify on every message is extremely expensive
         try {
             // Handle specific message types for client state management
             if ('ConnectSuccess' in message) {
                 this.currentCid = message.ConnectSuccess.cid.toString();
                 this.isConnected = true;
+                // Only log important state changes
                 console.log('InternalServiceWasmClient: ConnectSuccess received, CID:', this.currentCid);
             } else if ('RegisterSuccess' in message) {
                 this.currentCid = message.RegisterSuccess.cid.toString();
@@ -340,7 +513,6 @@ export class InternalServiceWasmClient {
 
             // Call the user-provided message handler
             if (this.messageHandler) {
-                console.log('InternalServiceWasmClient: Calling user message handler');
                 this.messageHandler(message);
             }
         } catch (error) {

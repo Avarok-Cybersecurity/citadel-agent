@@ -41,7 +41,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             let key = group_channel.key();
             let group_cid = group_channel.cid();
             let (tx, rx) = group_channel.split();
-            match this.server_connection_map.lock().await.get_mut(&cid) {
+            match this.server_connection_map.write().get_mut(&cid) {
                 Some(conn) => {
                     conn.add_group_channel(
                         key,

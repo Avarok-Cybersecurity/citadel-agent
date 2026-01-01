@@ -37,8 +37,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
     let already_connected = this
         .server_connection_map
-        .lock()
-        .await
+        .read()
         .get(&cid)
         .map(|r| r.peers.contains_key(&peer_cid))
         .unwrap_or(false);
@@ -73,83 +72,95 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             info!(target: "citadel", "[PeerConnect] find_target succeeded, calling connect_to_peer_custom with 30s timeout...");
 
             // Add timeout to prevent indefinite hanging
-            let connect_future = symmetric_identifier_handle_ref
-                .connect_to_peer_custom(session_security_settings, udp_mode, peer_session_password);
+            let connect_future = symmetric_identifier_handle_ref.connect_to_peer_custom(
+                session_security_settings,
+                udp_mode,
+                peer_session_password,
+            );
 
             match tokio::time::timeout(std::time::Duration::from_secs(30), connect_future).await {
                 Ok(connect_result) => match connect_result {
-                Ok(peer_connect_success) => {
-                    info!(target: "citadel", "[PeerConnect] connect_to_peer_custom succeeded!");
-                    let (sink, mut stream) = peer_connect_success.channel.split();
-                    {
-                        let mut map = this.server_connection_map.lock().await;
-                        if let Some(conn) = map.get_mut(&cid) {
-                            conn.add_peer_connection(peer_cid, sink, peer_connect_success.remote);
-                            info!(target: "citadel", "[PeerConnect] Added peer {} to cid {}'s peers. Total peers: {}", peer_cid, cid, conn.peers.len());
-                        } else {
-                            error!(target: "citadel", "[PeerConnect] CRITICAL: Cannot find session {} in server_connection_map to add peer {}", cid, peer_cid);
-                        }
-                    }
-
-                    let hm_for_conn = this.tcp_connection_map.clone();
-                    let server_conn_map = this.server_connection_map.clone();
-
-                    let connection_read_stream = async move {
-                        info!(target:"citadel","[P2P-RECV] Starting P2P read stream for cid={cid} from peer={peer_cid}");
-                        while let Some(message) = stream.next().await {
-                            info!(target:"citadel","[P2P-RECV] Received P2P message! cid={cid}, peer_cid={peer_cid}, msg_len={}", message.len());
-                            let message =
-                                InternalServiceResponse::MessageNotification(MessageNotification {
-                                    message: message.into_buffer(),
-                                    cid,
+                    Ok(peer_connect_success) => {
+                        info!(target: "citadel", "[PeerConnect] connect_to_peer_custom succeeded!");
+                        let (sink, mut stream) = peer_connect_success.channel.split();
+                        {
+                            let mut map = this.server_connection_map.write();
+                            if let Some(conn) = map.get_mut(&cid) {
+                                conn.add_peer_connection(
                                     peer_cid,
-                                    request_id: Some(request_id),
-                                });
-
-                            // Get the current associated TCP connection for this session (may have changed via ClaimSession)
-                            let server_lock = server_conn_map.lock().await;
-                            let current_tcp_uuid = server_lock
-                                .get(&cid)
-                                .map(|conn| conn.associated_tcp_connection.load(std::sync::atomic::Ordering::Relaxed))
-                                .unwrap_or(uuid);
-                            drop(server_lock);
-
-                            info!(target:"citadel","[P2P-RECV] Forwarding to TCP uuid: {current_tcp_uuid}");
-                            match hm_for_conn.lock().await.get(&current_tcp_uuid) {
-                                Some(entry) => {
-                                    info!(target:"citadel","[P2P-RECV] Found TCP entry, sending MessageNotification");
-                                    if let Err(err) = entry.send(message) {
-                                        error!(target:"citadel","[P2P-RECV] Error sending message to client: {err:?}");
-                                    } else {
-                                        info!(target:"citadel","[P2P-RECV] Successfully sent MessageNotification to client");
-                                    }
-                                }
-                                None => {
-                                    info!(target:"citadel","[P2P-RECV] Hash map connection not found for TCP uuid: {}", current_tcp_uuid)
-                                }
+                                    sink,
+                                    peer_connect_success.remote,
+                                );
+                                info!(target: "citadel", "[PeerConnect] Added peer {} to cid {}'s peers. Total peers: {}", peer_cid, cid, conn.peers.len());
+                            } else {
+                                error!(target: "citadel", "[PeerConnect] CRITICAL: Cannot find session {} in server_connection_map to add peer {}", cid, peer_cid);
                             }
                         }
-                        info!(target:"citadel","[P2P-RECV] P2P read stream ended for cid={cid} from peer={peer_cid}");
-                    };
 
-                    tokio::spawn(connection_read_stream);
+                        let hm_for_conn = this.tcp_connection_map.clone();
+                        let server_conn_map = this.server_connection_map.clone();
 
-                    InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
-                        cid,
-                        peer_cid,
-                        request_id: Some(request_id),
-                    })
-                }
+                        let connection_read_stream = async move {
+                            info!(target:"citadel","[P2P-RECV-CONNECT] *** Starting P2P read stream for LOCAL_CID={cid} from PEER={peer_cid} ***");
+                            info!(target:"citadel","[P2P-RECV-CONNECT] This stream will receive messages SENT BY peer {peer_cid}");
+                            while let Some(message) = stream.next().await {
+                                info!(target:"citadel","[P2P-RECV] Received P2P message! cid={cid}, peer_cid={peer_cid}, msg_len={}", message.len());
+                                let message = InternalServiceResponse::MessageNotification(
+                                    MessageNotification {
+                                        message: message.into_buffer(),
+                                        cid,
+                                        peer_cid,
+                                        request_id: Some(request_id),
+                                    },
+                                );
 
-                Err(err) => {
-                    let err_str = err.into_string();
-                    error!(target: "citadel", "[PeerConnect] connect_to_peer_custom FAILED: {}", err_str);
-                    InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
-                        cid,
-                        message: err_str,
-                        request_id: Some(request_id),
-                    })
-                }
+                                // Get the current associated TCP connection for this session (may have changed via ClaimSession)
+                                let server_lock = server_conn_map.read();
+                                let current_tcp_uuid = server_lock
+                                    .get(&cid)
+                                    .map(|conn| {
+                                        conn.associated_tcp_connection
+                                            .load(std::sync::atomic::Ordering::Relaxed)
+                                    })
+                                    .unwrap_or(uuid);
+                                drop(server_lock);
+
+                                info!(target:"citadel","[P2P-RECV] Forwarding to TCP uuid: {current_tcp_uuid}");
+                                match hm_for_conn.read().get(&current_tcp_uuid) {
+                                    Some(entry) => {
+                                        info!(target:"citadel","[P2P-RECV] Found TCP entry, sending MessageNotification");
+                                        if let Err(err) = entry.send(message) {
+                                            error!(target:"citadel","[P2P-RECV] Error sending message to client: {err:?}");
+                                        } else {
+                                            info!(target:"citadel","[P2P-RECV] Successfully sent MessageNotification to client");
+                                        }
+                                    }
+                                    None => {
+                                        info!(target:"citadel","[P2P-RECV] Hash map connection not found for TCP uuid: {}", current_tcp_uuid)
+                                    }
+                                }
+                            }
+                            info!(target:"citadel","[P2P-RECV] P2P read stream ended for cid={cid} from peer={peer_cid}");
+                        };
+
+                        tokio::spawn(connection_read_stream);
+
+                        InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
+                            cid,
+                            peer_cid,
+                            request_id: Some(request_id),
+                        })
+                    }
+
+                    Err(err) => {
+                        let err_str = err.into_string();
+                        error!(target: "citadel", "[PeerConnect] connect_to_peer_custom FAILED: {}", err_str);
+                        InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
+                            cid,
+                            message: err_str,
+                            request_id: Some(request_id),
+                        })
+                    }
                 },
                 Err(_elapsed) => {
                     error!(target: "citadel", "[PeerConnect] connect_to_peer_custom TIMED OUT after 30 seconds");

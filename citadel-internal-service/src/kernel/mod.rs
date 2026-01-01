@@ -20,10 +20,10 @@ use futures::stream::StreamExt;
 use futures::{Sink, SinkExt};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::Mutex;
+use parking_lot::RwLock;
 use uuid::Uuid;
 
 pub(crate) mod ext;
@@ -34,10 +34,15 @@ pub type RatchetType = StackedRatchet;
 
 pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub remote: Option<NodeRemote<R>>,
-    pub server_connection_map: Arc<Mutex<HashMap<u64, Connection<R>>>>,
-    pub tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
-    pub orphan_sessions: Arc<Mutex<HashMap<Uuid, bool>>>, // Maps TCP connection ID to orphan mode
-    io: Arc<Mutex<Option<T>>>,
+    /// Session connection map - use .read() for lookups, .write() for insert/remove
+    /// CRITICAL: Never hold lock across .await points - use block pattern to extract needed data
+    pub server_connection_map: Arc<RwLock<HashMap<u64, Connection<R>>>>,
+    pub tcp_connection_map: Arc<RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+    pub orphan_sessions: Arc<RwLock<HashMap<Uuid, bool>>>, // Maps TCP connection ID to orphan mode
+    /// Stores pending PeerConnect signals awaiting UI acceptance.
+    /// Key is (session_cid, peer_cid), value is the original PeerSignal for responding.
+    pub pending_peer_connect_signals: Arc<RwLock<HashMap<(u64, u64), PeerSignal>>>,
+    io: Arc<RwLock<Option<T>>>,
 }
 
 impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
@@ -47,6 +52,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             server_connection_map: self.server_connection_map.clone(),
             tcp_connection_map: self.tcp_connection_map.clone(),
             orphan_sessions: self.orphan_sessions.clone(),
+            pending_peer_connect_signals: self.pending_peer_connect_signals.clone(),
             io: self.io.clone(),
         }
     }
@@ -56,10 +62,11 @@ impl<T: IOInterface, R: Ratchet> From<T> for CitadelWorkspaceService<T, R> {
     fn from(io: T) -> Self {
         CitadelWorkspaceService {
             remote: None,
-            server_connection_map: Arc::new(Mutex::new(Default::default())),
-            tcp_connection_map: Arc::new(Mutex::new(Default::default())),
-            orphan_sessions: Arc::new(Mutex::new(Default::default())),
-            io: Arc::new(Mutex::new(Some(io))),
+            server_connection_map: Arc::new(RwLock::new(Default::default())),
+            tcp_connection_map: Arc::new(RwLock::new(Default::default())),
+            orphan_sessions: Arc::new(RwLock::new(Default::default())),
+            pending_peer_connect_signals: Arc::new(RwLock::new(Default::default())),
+            io: Arc::new(RwLock::new(Some(io))),
         }
     }
 }
@@ -116,9 +123,13 @@ impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {
     }
 }
 
+/// Wrapper around PeerChannelSendHalf that allows cloning for async-safe access.
+/// This enables us to drop the RwLock on server_connection_map before awaiting sends.
+pub type AsyncSink<R> = Arc<tokio::sync::Mutex<PeerChannelSendHalf<R>>>;
+
 #[allow(dead_code)]
 pub struct Connection<R: Ratchet> {
-    pub sink_to_server: PeerChannelSendHalf<R>,
+    pub sink_to_server: AsyncSink<R>,
     pub client_server_remote: ClientServerRemote<R>,
     pub peers: HashMap<u64, PeerConnection<R>>,
     pub(crate) associated_tcp_connection: Arc<AtomicUuid>,
@@ -129,8 +140,10 @@ pub struct Connection<R: Ratchet> {
 
 #[allow(dead_code)]
 pub struct PeerConnection<R: Ratchet> {
-    sink: PeerChannelSendHalf<R>,
-    remote: PeerRemote<R>,
+    pub sink: AsyncSink<R>,
+    /// Optional PeerRemote for advanced operations (file transfers, etc.)
+    /// May be None for acceptor-side connections where we only have the channel.
+    remote: Option<PeerRemote<R>>,
     handler_map: HashMap<ObjectId, Option<ObjectTransferHandler>>,
     associated_tcp_connection: Arc<AtomicUuid>,
 }
@@ -151,7 +164,7 @@ impl<R: Ratchet> Connection<R> {
     ) -> Self {
         Connection {
             peers: HashMap::new(),
-            sink_to_server: sink,
+            sink_to_server: Arc::new(tokio::sync::Mutex::new(sink)),
             client_server_remote,
             associated_tcp_connection,
             c2s_file_transfer_handlers: HashMap::new(),
@@ -169,8 +182,25 @@ impl<R: Ratchet> Connection<R> {
         self.peers.insert(
             peer_cid,
             PeerConnection {
-                sink,
-                remote,
+                sink: Arc::new(tokio::sync::Mutex::new(sink)),
+                remote: Some(remote),
+                handler_map: HashMap::new(),
+                associated_tcp_connection: self.associated_tcp_connection.clone(),
+            },
+        );
+    }
+
+    /// Add a peer connection without a PeerRemote (for acceptor-side channels)
+    pub fn add_peer_connection_channel_only(
+        &mut self,
+        peer_cid: u64,
+        sink: PeerChannelSendHalf<R>,
+    ) {
+        self.peers.insert(
+            peer_cid,
+            PeerConnection {
+                sink: Arc::new(tokio::sync::Mutex::new(sink)),
+                remote: None,
                 handler_map: HashMap::new(),
                 associated_tcp_connection: self.associated_tcp_connection.clone(),
             },
@@ -230,32 +260,37 @@ impl<R: Ratchet> Connection<R> {
 impl<R: Ratchet> Drop for Connection<R> {
     fn drop(&mut self) {
         let remote = self.client_server_remote.clone();
-        let peers = self.peers.drain().into_iter().map(|(_k, v)| v.remote).collect::<Vec<_>>();
-        drop(tokio::spawn(async move { 
+        // Filter out peers without remotes (acceptor-side connections)
+        let peers: Vec<_> = self
+            .peers
+            .drain()
+            .into_iter()
+            .filter_map(|(_k, v)| v.remote)
+            .collect();
+        drop(tokio::spawn(async move {
             let _ = remote.disconnect().await;
             for peer in peers {
                 let _ = peer.disconnect().await;
             }
-         }));
+        }));
     }
 }
 
 impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
-    async fn clear_peer_connection(
+    fn clear_peer_connection(
         &self,
         implicated_cid: u64,
         peer_cid: u64,
     ) -> Option<PeerConnection<R>> {
         self.server_connection_map
-            .lock()
-            .await
+            .write()
             .get_mut(&implicated_cid)?
             .clear_peer_connection(peer_cid)
     }
 }
 
 #[async_trait]
-impl<T: IOInterface, R: Ratchet> NetKernel<R> for CitadelWorkspaceService<T, R> {
+impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService<T, R> {
     fn load_remote(&mut self, node_remote: NodeRemote<R>) -> Result<(), NetworkError> {
         self.remote = Some(node_remote);
         Ok(())
@@ -265,7 +300,7 @@ impl<T: IOInterface, R: Ratchet> NetKernel<R> for CitadelWorkspaceService<T, R> 
         let this = self.clone();
         let remote = self.remote.clone().unwrap();
         let remote_for_closure = remote.clone();
-        let mut io = self.io.lock().await.take().expect("Already called");
+        let mut io = self.io.write().take().expect("Already called");
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -276,7 +311,7 @@ impl<T: IOInterface, R: Ratchet> NetKernel<R> for CitadelWorkspaceService<T, R> 
             while let Some((sink, stream)) = io.next_connection().await {
                 let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel::<InternalServiceResponse>();
                 let id = Uuid::new_v4();
-                tcp_connection_map.lock().await.insert(id, tx1);
+                tcp_connection_map.write().insert(id, tx1);
                 io.spawn_connection_handler(
                     sink,
                     stream,
@@ -303,15 +338,13 @@ impl<T: IOInterface, R: Ratchet> NetKernel<R> for CitadelWorkspaceService<T, R> 
                     {
                         if let Err(err) =
                             send_response_to_tcp_client(&this.tcp_connection_map, response, uuid)
-                                .await
                         {
                             // The TCP connection no longer exists. Delete it from both maps
                             error!(target: "citadel", "Failed to send response to TCP client: {err:?}");
-                            this.tcp_connection_map.lock().await.remove(&uuid);
-                            this.server_connection_map
-                                .lock()
-                                .await
-                                .retain(|_, v| v.associated_tcp_connection.load(Ordering::Relaxed) != uuid);
+                            this.tcp_connection_map.write().remove(&uuid);
+                            this.server_connection_map.write().retain(|_, v| {
+                                v.associated_tcp_connection.load(Ordering::Relaxed) != uuid
+                            });
                         }
                     }
                 };
@@ -341,19 +374,17 @@ impl<T: IOInterface, R: Ratchet> NetKernel<R> for CitadelWorkspaceService<T, R> 
     }
 }
 
-async fn send_response_to_tcp_client(
-    hash_map: &Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+fn send_response_to_tcp_client(
+    hash_map: &Arc<RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
     response: InternalServiceResponse,
     uuid: Uuid,
 ) -> Result<(), NetworkError> {
-    let map = hash_map.lock().await;
-    
+    let map = hash_map.read();
+
     match map.get(&uuid) {
-        Some(sender) => {
-            sender.send(response).map_err(|err| {
-                NetworkError::Generic(format!("Failed to send response to TCP client: {err:?}"))
-            })
-        }
+        Some(sender) => sender.send(response).map_err(|err| {
+            NetworkError::Generic(format!("Failed to send response to TCP client: {err:?}"))
+        }),
         None => {
             // Log a warning instead of returning an error that crashes the service
             warn!(target: "citadel", "TCP connection not found: {uuid:?} - response will be dropped");
@@ -392,7 +423,7 @@ fn spawn_tick_updater<R: Ratchet>(
     implicated_cid: u64,
     peer_cid: Option<u64>,
     server_connection_map: &mut HashMap<u64, Connection<R>>,
-    tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+    tcp_connection_map: Arc<RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
     request_id: Option<Uuid>,
 ) {
     let mut handle_inner = object_transfer_handler.inner;
@@ -402,7 +433,9 @@ fn spawn_tick_updater<R: Ratchet>(
         let sender_status_updater = async move {
             while let Some(status) = handle_inner.next().await {
                 let status_message = status.clone();
-                match tcp_connection_map.lock().await.get(&uuid) {
+                // Clone the sender outside the lock to avoid holding lock across send
+                let sender = { tcp_connection_map.read().get(&uuid).cloned() };
+                match sender {
                     Some(entry) => {
                         let message = InternalServiceResponse::FileTransferTickNotification(
                             FileTransferTickNotification {

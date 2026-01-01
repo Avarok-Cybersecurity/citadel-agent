@@ -6,7 +6,7 @@ use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{ProtocolRemoteExt, Ratchet};
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,

@@ -48,10 +48,14 @@ uuid = { version="1.3.3", features = [
 ]}
 anyhow = "1.0.71"
 async-recursion = { version = "1.0.4" }
-parking_lot = { version = "0.12.1" }
+parking_lot = { version = "0.12.1", features = ["deadlock_detection"] }
 structopt = { version = "0.3.26" }
 lazy_static = "1.4.0"
 async-trait = "0.1.83"
 itertools = "0.13.0"
 dashmap = "6.1.0"
 custom_debug = { version = "0.6.2" }
+# rfd is only used in citadel-internal-service for native file picker dialogs
+# Default features disabled to avoid wayland dependency issues in Docker
+# On macOS/Windows, native dialogs work without extra features
+rfd = { version = "0.15", default-features = false, features = ["tokio"] }

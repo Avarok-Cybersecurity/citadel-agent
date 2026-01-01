@@ -22,8 +22,7 @@ mod tests {
         info!(target: "citadel", "=== Starting test_list_all_peers ===");
 
         // Create server
-        let (server, server_bind_address) =
-            server_info_skip_cert_verification::<StackedRatchet>();
+        let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
         // Create two internal services (one for each peer)
@@ -136,10 +135,7 @@ mod tests {
                 info!(target: "citadel", "ListAllPeers test PASSED");
             }
             InternalServiceResponse::ListAllPeersFailure(failure) => {
-                panic!(
-                    "ListAllPeers failed: {}",
-                    failure.message
-                );
+                panic!("ListAllPeers failed: {}", failure.message);
             }
             other => {
                 panic!("Unexpected response: {:?}", other);
@@ -156,8 +152,7 @@ mod tests {
         info!(target: "citadel", "=== Starting test_list_registered_peers ===");
 
         // Create server
-        let (server, server_bind_address) =
-            server_info_skip_cert_verification::<StackedRatchet>();
+        let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
         // Create two internal services
@@ -255,10 +250,7 @@ mod tests {
                 info!(target: "citadel", "ListRegisteredPeers (before registration) test PASSED");
             }
             InternalServiceResponse::ListRegisteredPeersFailure(failure) => {
-                panic!(
-                    "ListRegisteredPeers failed: {}",
-                    failure.message
-                );
+                panic!("ListRegisteredPeers failed: {}", failure.message);
             }
             other => {
                 panic!("Unexpected response: {:?}", other);
@@ -275,8 +267,7 @@ mod tests {
         info!(target: "citadel", "=== Starting test_list_registered_peers_after_registration ===");
 
         // Create server
-        let (server, server_bind_address) =
-            server_info_skip_cert_verification::<StackedRatchet>();
+        let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
         // Create two internal services
@@ -449,10 +440,7 @@ mod tests {
                 info!(target: "citadel", "ListRegisteredPeers (after registration) test PASSED");
             }
             InternalServiceResponse::ListRegisteredPeersFailure(failure) => {
-                panic!(
-                    "ListRegisteredPeers failed: {}",
-                    failure.message
-                );
+                panic!("ListRegisteredPeers failed: {}", failure.message);
             }
             other => {
                 panic!("Unexpected response: {:?}", other);

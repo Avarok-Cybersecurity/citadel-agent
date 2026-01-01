@@ -18,7 +18,7 @@ async fn send_response_with_fallback<T: IOInterface, R: Ratchet>(
     response: InternalServiceResponse,
     target_uuid: uuid::Uuid,
 ) -> Result<(), NetworkError> {
-    let tcp_map = this.tcp_connection_map.lock().await;
+    let tcp_map = this.tcp_connection_map.read();
 
     // First, try the target connection directly
     if let Some(sender) = tcp_map.get(&target_uuid) {
@@ -61,7 +61,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 },
             disconnect_response: _,
         } => {
-            if let Some(conn) = this.clear_peer_connection(session_cid, peer_cid).await {
+            if let Some(conn) = this.clear_peer_connection(session_cid, peer_cid) {
                 let response =
                     InternalServiceResponse::DisconnectNotification(DisconnectNotification {
                         cid: session_cid,
@@ -100,8 +100,15 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             invitee_response: _,
         } => {
             info!(target: "citadel", "User {session_cid:?} received Register Request from {peer_cid:?}");
-            let server_connection_map = this.server_connection_map.lock().await;
-            if let Some(connection) = server_connection_map.get(&session_cid) {
+            // Extract what we need from the lock, then drop it before any await
+            let tcp_conn = {
+                let server_connection_map = this.server_connection_map.read();
+                server_connection_map
+                    .get(&session_cid)
+                    .map(|conn| conn.associated_tcp_connection.load(Ordering::Relaxed))
+            }; // Lock dropped here
+
+            if let Some(associated_tcp_connection) = tcp_conn {
                 let response =
                     InternalServiceResponse::PeerRegisterNotification(PeerRegisterNotification {
                         cid: session_cid,
@@ -109,9 +116,6 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         peer_username: inviter_username,
                         request_id: None,
                     });
-
-                let associated_tcp_connection = connection.associated_tcp_connection.load(Ordering::Relaxed);
-                drop(server_connection_map);
                 // Use fallback function that broadcasts to all connections if target is stale
                 send_response_with_fallback(this, response, associated_tcp_connection).await?;
             }
@@ -129,8 +133,35 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             session_password: _,
         } => {
             info!(target: "citadel", "User {session_cid:?} received Connect Request from {peer_cid:?}");
-            let server_connection_map = this.server_connection_map.lock().await;
-            if let Some(connection) = server_connection_map.get(&session_cid) {
+
+            // Store the pending signal for later acceptance via PeerConnectAccept
+            // We reconstruct the signal since the match consumes the fields
+            let pending_signal = PeerSignal::PostConnect {
+                peer_conn_type: PeerConnectionType::LocalGroupPeer {
+                    // Note: The original signal has session_cid/peer_cid swapped from our perspective
+                    session_cid: peer_cid,
+                    peer_cid: session_cid,
+                },
+                ticket_opt: Some(event.ticket),
+                invitee_response: None,
+                session_security_settings: session_security_settings.clone(),
+                udp_mode,
+                session_password: None,
+            };
+            this.pending_peer_connect_signals
+                .write()
+                .insert((session_cid, peer_cid), pending_signal);
+            info!(target: "citadel", "Stored pending PeerConnect signal for ({}, {})", session_cid, peer_cid);
+
+            // Extract what we need from the lock, then drop it before any await
+            let tcp_conn = {
+                let server_connection_map = this.server_connection_map.read();
+                server_connection_map
+                    .get(&session_cid)
+                    .map(|conn| conn.associated_tcp_connection.load(Ordering::Relaxed))
+            }; // Lock dropped here
+
+            if let Some(associated_tcp_connection) = tcp_conn {
                 let response =
                     InternalServiceResponse::PeerConnectNotification(PeerConnectNotification {
                         cid: session_cid,
@@ -139,9 +170,6 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         udp_mode,
                         request_id: None,
                     });
-
-                let associated_tcp_connection = connection.associated_tcp_connection.load(Ordering::Relaxed);
-                drop(server_connection_map);
                 // Use fallback function that broadcasts to all connections if target is stale
                 send_response_with_fallback(this, response, associated_tcp_connection).await?;
             }

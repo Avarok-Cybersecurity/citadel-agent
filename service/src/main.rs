@@ -7,6 +7,13 @@ use structopt::StructOpt;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     citadel_sdk::logging::setup_log();
+
+    // Initialize deadlock detector if feature is enabled
+    #[cfg(feature = "deadlock-detection")]
+    {
+        let _ = *DEADLOCK_INIT;
+    }
+
     let opts: Options = Options::from_args();
     let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(opts.bind).await?;
 

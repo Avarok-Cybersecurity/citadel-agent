@@ -25,7 +25,6 @@ itertools = { workspace = true }
 bytes = "1.8.0"
 citadel_logging = { workspace = true }
 citadel_sdk = { workspace = true, optional = true }
-citadel_io = { workspace = true, default-features = false }
 
 # WebSocket dependencies
 tokio-tungstenite = { version = "0.21", optional = true }
@@ -34,8 +33,14 @@ futures-util = { version = "0.3", optional = true }
 
 # WASM dependencies
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+citadel_io = { workspace = true, default-features = false }
+wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
 wasmtimer = "0.2"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+citadel_io = { workspace = true, features = ["std"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 citadel_crypt = { workspace = true }

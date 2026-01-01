@@ -29,7 +29,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     });
 
     // Remove from connection map first
-    this.server_connection_map.lock().await.remove(&cid);
+    this.server_connection_map.write().remove(&cid);
 
     match remote.send(request).await {
         Ok(_res) => {

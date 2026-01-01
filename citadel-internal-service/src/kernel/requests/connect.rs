@@ -2,9 +2,10 @@ use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::{create_client_server_remote, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    AtomicUuid, ConnectFailure, InternalServiceRequest, InternalServiceResponse, MessageNotification,
+    AtomicUuid, ConnectFailure, InternalServiceRequest, InternalServiceResponse,
+    MessageNotification,
 };
-use citadel_sdk::prelude::{AuthenticationRequest, NodeRequest, ProtocolRemoteExt, Ratchet, Remote};
+use citadel_sdk::prelude::{AuthenticationRequest, NodeRequest, ProtocolRemoteExt, Ratchet};
 use futures::StreamExt;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -46,7 +47,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
             // DEBUG: Query active sessions in the kernel's session_manager after connect
             citadel_sdk::logging::info!(target: "citadel", "[Connect] Querying active sessions after connect...");
-            match remote.send_callback_subscription(NodeRequest::GetActiveSessions).await {
+            match remote
+                .send_callback_subscription(NodeRequest::GetActiveSessions)
+                .await
+            {
                 Ok(mut stream_sessions) => {
                     if let Some(result) = stream_sessions.next().await {
                         citadel_sdk::logging::info!(target: "citadel", "[Connect] GetActiveSessions result: {:?}", result);
@@ -72,11 +76,13 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 .flatten()
                 .unwrap_or_else(|| "#INVALID_USERNAME".to_string());
 
-            let connection_struct = Connection::new(sink, client_server_remote, Arc::new(AtomicUuid::new(uuid)), username);
-            this.server_connection_map
-                .lock()
-                .await
-                .insert(cid, connection_struct);
+            let connection_struct = Connection::new(
+                sink,
+                client_server_remote,
+                Arc::new(AtomicUuid::new(uuid)),
+                username,
+            );
+            this.server_connection_map.write().insert(cid, connection_struct);
 
             let hm_for_conn = this.tcp_connection_map.clone();
             let server_conn_map = this.server_connection_map.clone();
@@ -99,14 +105,17 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         });
 
                     // Get the current associated TCP connection for this session (may have changed via ClaimSession)
-                    let server_lock = server_conn_map.lock().await;
+                    let server_lock = server_conn_map.read();
                     let current_tcp_uuid = server_lock
                         .get(&cid)
-                        .map(|conn| conn.associated_tcp_connection.load(std::sync::atomic::Ordering::Relaxed))
+                        .map(|conn| {
+                            conn.associated_tcp_connection
+                                .load(std::sync::atomic::Ordering::Relaxed)
+                        })
                         .unwrap_or(uuid);
                     drop(server_lock);
 
-                    let lock = hm_for_conn.lock().await;
+                    let lock = hm_for_conn.read();
                     match lock.get(&current_tcp_uuid) {
                         Some(entry) => {
                             if let Err(err) = entry.send(message) {

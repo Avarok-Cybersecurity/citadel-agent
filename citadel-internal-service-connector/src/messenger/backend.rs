@@ -1,7 +1,7 @@
 use crate::messenger::{sleep_internal, timeout_internal, BypasserTx, MessengerTx, WrappedMessage};
 use async_trait::async_trait;
 use citadel_internal_service_types::{
-    InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
+    BatchedResponseData, InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
 };
 use dashmap::DashMap;
 use intersession_layer_messaging::{Backend, BackendError};
@@ -208,6 +208,86 @@ impl CitadelWorkspaceBackend {
     pub fn add_expected_request(&self, request_id: Uuid) {
         let (tx, _rx) = citadel_io::tokio::sync::oneshot::channel();
         self.expected_requests.insert(request_id, tx);
+    }
+
+    /// Sends multiple requests in a single batch and waits for all responses.
+    /// This is more efficient than sequential requests as it:
+    /// 1. Uses a single network roundtrip
+    /// 2. Backend executes all requests in parallel
+    /// 3. Avoids sequential await blocking in WASM
+    ///
+    /// Returns responses in the same order as the input requests.
+    pub async fn send_batched(
+        &self,
+        requests: Vec<InternalServiceRequest>,
+    ) -> Result<Vec<InternalServiceResponse>, BackendError<WrappedMessage>> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let batch_request_id = Uuid::new_v4();
+        citadel_logging::info!(target: "citadel", "[SEND_BATCHED] Sending {} requests in batch, request_id={}", requests.len(), batch_request_id);
+
+        let batched_request = InternalServiceRequest::Batched {
+            request_id: batch_request_id,
+            commands: requests,
+        };
+
+        self.send_to_network(batched_request).await?;
+
+        if let Some(response) = self.wait_for_response(batch_request_id).await {
+            match response {
+                InternalServiceResponse::BatchedResponse(BatchedResponseData { results, .. }) => {
+                    Ok(results)
+                }
+                other => {
+                    citadel_logging::warn!(target: "citadel", "[SEND_BATCHED] Unexpected response type: {:?}", other);
+                    Err(BackendError::StorageError(
+                        "Unexpected response type for batched request".to_string(),
+                    ))
+                }
+            }
+        } else {
+            citadel_logging::warn!(target: "citadel", "[SEND_BATCHED] Timeout waiting for batched response");
+            Err(BackendError::StorageError(
+                "Timeout waiting for batched response".to_string(),
+            ))
+        }
+    }
+
+    /// Loads multiple values in a single batched request.
+    /// More efficient than calling load_value() multiple times.
+    pub async fn load_values_batched(
+        &self,
+        keys: &[&str],
+    ) -> Result<Vec<Option<Vec<u8>>>, BackendError<WrappedMessage>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Build batch of LocalDBGetKV requests
+        let requests: Vec<InternalServiceRequest> = keys
+            .iter()
+            .map(|key| InternalServiceRequest::LocalDBGetKV {
+                request_id: Uuid::new_v4(),
+                cid: self.cid,
+                peer_cid: None,
+                key: format!("{}-{}", key, self.cid),
+            })
+            .collect();
+
+        let responses = self.send_batched(requests).await?;
+
+        // Extract values from responses
+        let results: Vec<Option<Vec<u8>>> = responses
+            .into_iter()
+            .map(|resp| match resp {
+                InternalServiceResponse::LocalDBGetKVSuccess(success) => Some(success.value),
+                _ => None,
+            })
+            .collect();
+
+        Ok(results)
     }
 }
 
@@ -491,6 +571,14 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
             citadel_logging::warn!(target: "citadel", "[LOAD_VALUE] No response received when loading value for key={}, assuming key doesn't exist", key);
             Ok(None)
         }
+    }
+
+    async fn load_values_batched(
+        &self,
+        keys: &[&str],
+    ) -> Result<Vec<Option<Vec<u8>>>, BackendError<WrappedMessage>> {
+        // Delegate to the inherent method that uses batched network requests
+        CitadelWorkspaceBackend::load_values_batched(self, keys).await
     }
 }
 

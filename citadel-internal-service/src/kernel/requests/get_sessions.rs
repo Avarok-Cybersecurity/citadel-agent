@@ -5,8 +5,8 @@ use citadel_internal_service_types::{
     GetSessionsResponse, InternalServiceRequest, InternalServiceResponse, PeerSessionInformation,
     SessionInformation,
 };
-use citadel_sdk::prelude::{Ratchet, TargetLockedRemote};
 use citadel_sdk::logging::info;
+use citadel_sdk::prelude::{Ratchet, TargetLockedRemote};
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use uuid::Uuid;
@@ -20,11 +20,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
     let server_connection_map = &this.server_connection_map;
-    let lock = server_connection_map.lock().await;
+    let lock = server_connection_map.read();
     let mut sessions = Vec::new();
-    
+
     info!(target: "citadel", "GetSessions: Found {} total sessions in server_connection_map", lock.len());
-    
+
     // MODIFIED: Get ALL sessions, not just ones for current connection
     // This allows us to see orphaned sessions from other connections
     for (cid, connection) in lock.iter() {
@@ -44,7 +44,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     peer_cid: *peer_cid,
                     peer_username: conn
                         .remote
-                        .target_username()
+                        .as_ref()
+                        .and_then(|r| r.target_username())
                         .map(ToString::to_string)
                         .unwrap_or_default(),
                 },

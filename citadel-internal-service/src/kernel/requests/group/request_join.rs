@@ -26,12 +26,24 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
 
-    let mut server_connection_map = this.server_connection_map.lock().await;
-    let response = if let Some(connection) = server_connection_map.get_mut(&cid) {
-        let target_cid = group_key.cid;
-        if let Some(peer_connection) = connection.peers.get_mut(&target_cid) {
-            let peer_remote = peer_connection.remote.clone();
-            drop(server_connection_map);
+    // Extract peer_remote inside lock block, then drop before await
+    let target_cid = group_key.cid;
+    let peer_remote_result = {
+        let server_connection_map = this.server_connection_map.read();
+        match server_connection_map.get(&cid) {
+            Some(connection) => match connection.peers.get(&target_cid) {
+                Some(peer_connection) => match &peer_connection.remote {
+                    Some(peer_remote) => Ok(peer_remote.clone()),
+                    None => Err("Could not Request to join Group - Peer connection missing remote (acceptor-only connection)".to_string()),
+                },
+                None => Err("Could not Request to join Group - Peer not found".to_string()),
+            },
+            None => Err("Could not Request to join Group - Connection not found".to_string()),
+        }
+    }; // Lock dropped here - BEFORE any await
+
+    let response = match peer_remote_result {
+        Ok(peer_remote) => {
             let group_request = GroupBroadcast::RequestJoin {
                 sender: cid,
                 key: group_key,
@@ -87,19 +99,12 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     })
                 }
             }
-        } else {
-            InternalServiceResponse::GroupRequestJoinFailure(GroupRequestJoinFailure {
-                cid,
-                message: "Could not Request to join Group - Peer not found".to_string(),
-                request_id: Some(request_id),
-            })
         }
-    } else {
-        InternalServiceResponse::GroupRequestJoinFailure(GroupRequestJoinFailure {
+        Err(message) => InternalServiceResponse::GroupRequestJoinFailure(GroupRequestJoinFailure {
             cid,
-            message: "Could not Request to join Group - Connection not found".to_string(),
+            message,
             request_id: Some(request_id),
-        })
+        }),
     };
 
     Some(HandledRequestResult { response, uuid })

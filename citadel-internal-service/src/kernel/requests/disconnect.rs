@@ -21,7 +21,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let request =
         NodeRequest::DisconnectFromHypernode(DisconnectFromHypernode { session_cid: cid });
 
-    this.server_connection_map.lock().await.remove(&cid);
+    this.server_connection_map.write().remove(&cid);
 
     match remote.send(request).await {
         Ok(_res) => {

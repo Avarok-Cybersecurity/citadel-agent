@@ -3,7 +3,7 @@ use citadel_internal_service_test_common as common;
 #[cfg(test)]
 mod tests {
     use crate::common::{
-        get_free_port, register_and_connect_to_server as register_multiple, 
+        get_free_port, register_and_connect_to_server as register_multiple,
         server_info_skip_cert_verification, RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
@@ -46,7 +46,7 @@ mod tests {
             password: "password",
             pre_shared_key: None::<PreSharedKey>,
         }];
-        
+
         let mut service_vec = register_multiple(to_spawn).await?;
         let (to_service, mut from_service, _cid) = service_vec.remove(0);
 
@@ -63,7 +63,7 @@ mod tests {
 
         // Wait for response
         let response = from_service.recv().await.ok_or("No response received")?;
-        
+
         match response {
             InternalServiceResponse::ConnectionManagementSuccess(success) => {
                 assert_eq!(success.message, "Orphan mode enabled for connection");
@@ -83,7 +83,7 @@ mod tests {
         to_service.send(disable_orphan_request)?;
 
         let response = from_service.recv().await.ok_or("No response received")?;
-        
+
         match response {
             InternalServiceResponse::ConnectionManagementSuccess(success) => {
                 assert_eq!(success.message, "Orphan mode disabled for connection");
@@ -97,7 +97,7 @@ mod tests {
     #[tokio::test]
     async fn test_orphan_session_persistence() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
-        
+
         let bind_address_internal_service: SocketAddr =
             format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
@@ -125,7 +125,7 @@ mod tests {
             password: "password123",
             pre_shared_key: None::<PreSharedKey>,
         }];
-        
+
         let mut service_vec = register_multiple(to_spawn).await?;
         let (to_service, mut from_service, session_cid) = service_vec.remove(0);
 
@@ -155,7 +155,7 @@ mod tests {
             password: "password456",
             pre_shared_key: None::<PreSharedKey>,
         }];
-        
+
         let mut service_vec2 = register_multiple(to_spawn2).await?;
         let (to_service2, mut from_service2, _cid2) = service_vec2.remove(0);
 
@@ -185,7 +185,7 @@ mod tests {
     #[tokio::test]
     async fn test_disconnect_all_orphan_sessions() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
-        
+
         let bind_address_internal_service: SocketAddr =
             format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
@@ -213,7 +213,7 @@ mod tests {
             password: "password123",
             pre_shared_key: None::<PreSharedKey>,
         }];
-        
+
         let mut service_vec = register_multiple(to_spawn).await?;
         let (to_service, mut from_service, _cid) = service_vec.remove(0);
 
@@ -243,7 +243,7 @@ mod tests {
             password: "adminpass",
             pre_shared_key: None::<PreSharedKey>,
         }];
-        
+
         let mut service_vec2 = register_multiple(to_spawn2).await?;
         let (to_service2, mut from_service2, _cid2) = service_vec2.remove(0);
 
@@ -251,9 +251,7 @@ mod tests {
         let request_id = Uuid::new_v4();
         let disconnect_all_request = InternalServiceRequest::ConnectionManagement {
             request_id,
-            management_command: ConfigCommand::DisconnectOrphan {
-                session_cid: None,
-            },
+            management_command: ConfigCommand::DisconnectOrphan { session_cid: None },
         };
 
         to_service2.send(disconnect_all_request)?;
@@ -261,7 +259,10 @@ mod tests {
 
         match response {
             InternalServiceResponse::ConnectionManagementSuccess(success) => {
-                assert!(success.message.contains("Disconnected") && success.message.contains("orphan sessions"));
+                assert!(
+                    success.message.contains("Disconnected")
+                        && success.message.contains("orphan sessions")
+                );
             }
             _ => panic!("Expected ConnectionManagementSuccess, got {:?}", response),
         }

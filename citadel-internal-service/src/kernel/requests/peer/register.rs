@@ -7,12 +7,12 @@ use citadel_internal_service_types::{
 use citadel_sdk::logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::{
-    NodeRequest, ProtocolRemoteExt, ProtocolRemoteTargetExt, Ratchet, Remote, VirtualTargetType,
+    NodeRequest, ProtocolRemoteExt, ProtocolRemoteTargetExt, Ratchet, VirtualTargetType,
 };
 use futures::StreamExt;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
@@ -43,7 +43,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
     // DEBUG: Query active sessions in the kernel's session_manager
     info!(target: "citadel", "[PeerRegister] Querying active sessions in session_manager...");
-    match remote.send_callback_subscription(NodeRequest::GetActiveSessions).await {
+    match remote
+        .send_callback_subscription(NodeRequest::GetActiveSessions)
+        .await
+    {
         Ok(mut stream) => {
             if let Some(result) = stream.next().await {
                 info!(target: "citadel", "[PeerRegister] GetActiveSessions result: {:?}", result);

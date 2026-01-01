@@ -84,6 +84,9 @@ where
     is_running: Arc<AtomicBool>,
     backends: Arc<DashMap<u64, B>>,
     final_tx: UnboundedSender<InternalServiceResponse>,
+    /// Pending inbound messages for CIDs that don't have ILM handles yet.
+    /// This fixes the race condition where messages arrive before multiplex() is called.
+    pending_inbound_messages: Arc<DashMap<u64, Vec<InternalMessage>>>,
 }
 
 impl<B> Clone for CitadelWorkspaceMessenger<B>
@@ -99,6 +102,7 @@ where
             is_running: self.is_running.clone(),
             final_tx: self.final_tx.clone(),
             backends: self.backends.clone(),
+            pending_inbound_messages: self.pending_inbound_messages.clone(),
         }
     }
 }
@@ -210,6 +214,7 @@ where
             background_invoked_requests: Arc::new(parking_lot::Mutex::new(Default::default())),
             bypass_ism_tx_to_outbound,
             final_tx,
+            pending_inbound_messages: Arc::new(Default::default()),
         };
 
         this.spawn_background_tasks(connector, rx_to_outbound);
@@ -230,6 +235,8 @@ where
             cid,
             stream_id: ISM_STREAM_ID,
         };
+        log::info!(target: "ism", "[MULTIPLEX] Creating ILM handle for CID {} with stream_key={:?}", cid, stream_key);
+
         let (ism_handle, background_handle) = create_ipc_handles(self.clone(), stream_key);
         let local_delivery_wrapper = LocalDeliveryTx {
             final_tx: self.final_tx.clone(),
@@ -240,7 +247,23 @@ where
             background_to_ism_inbound,
         } = background_handle;
         self.txs_to_inbound
-            .insert(stream_key, background_to_ism_inbound);
+            .insert(stream_key, background_to_ism_inbound.clone());
+
+        let all_keys: Vec<StreamKey> = self.txs_to_inbound.iter().map(|r| *r.key()).collect();
+        log::info!(target: "ism", "[MULTIPLEX] Registered ILM for CID {}. All registered stream_keys: {:?}", cid, all_keys);
+
+        // Process any pending messages that arrived before the ILM was ready.
+        // This fixes the race condition where messages/ACKs arrive before multiplex() is called.
+        if let Some((_, pending_messages)) = self.pending_inbound_messages.remove(&cid) {
+            let count = pending_messages.len();
+            log::info!(target: "ism", "[MULTIPLEX] Processing {} pending messages for CID {}", count, cid);
+            for msg in pending_messages {
+                if let Err(err) = background_to_ism_inbound.send(msg) {
+                    log::error!(target: "ism", "[MULTIPLEX] Failed to deliver pending message: {err:?}");
+                }
+            }
+            log::info!(target: "ism", "[MULTIPLEX] Delivered {} pending messages for CID {}", count, cid);
+        }
 
         let mut handle = MessengerTx {
             bypass_ism_outbound_tx: BypasserTx {
@@ -320,7 +343,7 @@ where
                         // deserialize and relay to ISM
                         match bincode2::deserialize::<WireWrapper>(&message.message) {
                             Ok(ism_message) => {
-                                // Assume this is an ISM message
+                                // ISM message processing
 
                                 let ism_message = match ism_message {
                                     WireWrapper::ISMAux { signal } => *signal,
@@ -330,10 +353,30 @@ where
                                         destination,
                                         message_id,
                                     } => {
+                                        // Replace message bytes with unwrapped content
                                         let _ = std::mem::replace(
                                             &mut message.message,
                                             BytesMut::from(Bytes::from(contents)),
                                         );
+
+                                        // CRITICAL FIX: Forward UNWRAPPED MessageNotification to JavaScript.
+                                        // This ensures the frontend receives messages immediately with:
+                                        // 1. Correct peer_cid (from original MessageNotification)
+                                        // 2. Unwrapped message bytes (deserializable as P2PCommand)
+                                        //
+                                        // Previously, ISM messages were ONLY routed to ISM, which caused
+                                        // the leader tab to never receive P2P messages because ISM
+                                        // delivery wasn't working correctly in multi-tab scenarios.
+                                        let forward_message = InternalServiceResponse::MessageNotification(
+                                            message.clone()
+                                        );
+                                        if let Err(err) = tx_to_local_user_clone.send(forward_message) {
+                                            log::error!(target: "citadel", "Error forwarding ISM MessageNotification to JS: {err:?}");
+                                        } else {
+                                            log::trace!(target: "citadel", "Forwarded ISM MessageNotification to JS (cid={}, peer_cid={})",
+                                                message.cid, message.peer_cid);
+                                        }
+
                                         InternalMessage::Message(WrappedMessage {
                                             source_id: source,
                                             destination_id: destination,
@@ -352,13 +395,27 @@ where
                                     stream_id: ISM_STREAM_ID,
                                 };
 
+                                let available_keys: Vec<StreamKey> = this.txs_to_inbound.iter().map(|r| *r.key()).collect();
+                                log::info!(target: "ism", "[MSG-ROUTE] Routing message: source={} dest={} msg_id={} | Looking for stream_key={:?} | Available: {:?}",
+                                    ism_message.source_id(), ism_message.destination_id(),
+                                    match &ism_message { InternalMessage::Message(m) => m.message_id, _ => 0 },
+                                    stream_key, available_keys);
+
                                 if let Some(tx) = this.txs_to_inbound.get(&stream_key) {
                                     if let Err(err) = tx.send(ism_message) {
-                                        log::error!(target: "citadel", "Error while sending message to ISM: {err:?}");
+                                        log::error!(target: "citadel", "[MSG-ROUTE] FAILED to send to ISM channel: {err:?}");
+                                    } else {
+                                        log::info!(target: "ism", "[MSG-ROUTE] SUCCESS - sent to ILM for dest={}", stream_key.cid);
                                     }
                                 } else {
-                                    // TODO: enqueue for later use; though, this should not happen due to pre-send checks in ISM
-                                    log::warn!(target: "citadel", "Received message for unknown stream key: {stream_key:?} | Available: {:?}", this.txs_to_inbound.iter().map(|r| *r.key()).collect::<Vec<_>>());
+                                    // Queue message for later delivery when multiplex() is called.
+                                    // This fixes the race condition where messages arrive before ILM is ready.
+                                    log::warn!(target: "ism", "[MSG-ROUTE] QUEUED - No ILM registered for CID {}. Queuing for later delivery. Available: {:?}",
+                                        stream_key.cid, available_keys);
+                                    this.pending_inbound_messages
+                                        .entry(stream_key.cid)
+                                        .or_default()
+                                        .push(ism_message);
                                 }
                             }
                             Err(err) => {
@@ -423,6 +480,7 @@ where
                         // Pass through backend inspection
                         let uncaught_non_ism_message =
                             if let Some(backend) = this.backends.get(&non_ism_message.cid()) {
+                                // Found backend by CID - use it
                                 let backend = backend.value();
                                 if let Some(value) = backend
                                     .inspect_received_payload(non_ism_message)
@@ -434,6 +492,28 @@ where
                                 } else {
                                     continue;
                                 }
+                            } else if non_ism_message.request_id().is_some() {
+                                // No backend for CID - check ALL backends for this request_id
+                                // This handles BatchedResponse and other CID-0 responses
+                                let mut consumed = false;
+                                for entry in this.backends.iter() {
+                                    let backend = entry.value();
+                                    if backend
+                                        .inspect_received_payload(non_ism_message.clone())
+                                        .await
+                                        .ok()
+                                        .flatten()
+                                        .is_none()
+                                    {
+                                        // Backend consumed the message (it was waiting for this request_id)
+                                        consumed = true;
+                                        break;
+                                    }
+                                }
+                                if consumed {
+                                    continue;
+                                }
+                                non_ism_message
                             } else {
                                 non_ism_message
                             };
@@ -572,7 +652,8 @@ where
                         });
 
                         log::trace!(target: "citadel", "[POLL] Sending session status poller request {bypass_key:?}: {request:?}");
-                        if let Err(err) = this.bypass_ism_tx_to_outbound.send((bypass_key, request)) {
+                        if let Err(err) = this.bypass_ism_tx_to_outbound.send((bypass_key, request))
+                        {
                             log::error!(target: "citadel", "Error while sending session status poller request: {err:?}");
                             return;
                         }
@@ -906,6 +987,38 @@ where
             })
     }
 
+    /// Returns the list of connected peer CIDs for this session.
+    ///
+    /// For WASM target: Calls JavaScript callback `window.__citadel_get_peers_for_session(local_cid)`
+    /// which queries the TypeScript P2PAutoConnectService (single source of truth).
+    ///
+    /// For native target: Uses internal connected_peers map from GetSessionsResponse polling.
+    #[cfg(target_arch = "wasm32")]
+    async fn connected_peers(&self) -> Vec<<Self::Message as MessageMetadata>::PeerId> {
+        use wasm_bindgen::prelude::*;
+
+        #[wasm_bindgen]
+        extern "C" {
+            #[wasm_bindgen(js_namespace = window, js_name = __citadel_get_peers_for_session)]
+            fn get_peers_for_session(local_cid: u64) -> js_sys::BigUint64Array;
+        }
+
+        let cid = self.local_id();
+        let js_array = get_peers_for_session(cid);
+
+        // Convert BigUint64Array to Vec<u64>
+        let length = js_array.length() as usize;
+        let mut result = Vec::with_capacity(length);
+        for i in 0..length {
+            result.push(js_array.get_index(i as u32));
+        }
+
+        log::trace!(target: "citadel", "[WASM] connected_peers({cid}) -> {} peers from TypeScript", result.len());
+        result
+    }
+
+    /// Native implementation: Uses internal connected_peers map from GetSessionsResponse polling.
+    #[cfg(not(target_arch = "wasm32"))]
     async fn connected_peers(&self) -> Vec<<Self::Message as MessageMetadata>::PeerId> {
         let cid = self.local_id();
         if let Some(sess) = self.messenger_ptr.connected_peers.read().get(&cid) {

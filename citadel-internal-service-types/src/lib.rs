@@ -6,6 +6,7 @@ pub use citadel_types::prelude::{
     SecurityLevel, SessionSecuritySettings, TransferType, UdpMode, UserIdentifier,
     VirtualObjectMetadata,
 };
+use custom_debug::Debug;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -13,25 +14,27 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use uuid::Uuid;
-use custom_debug::Debug;
 
 #[cfg(feature = "typescript")]
 use ts_rs::TS;
 
-pub fn bytes_debug_fmt<T: std::fmt::Debug + AsRef<[u8]>>(val: &T, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        const SAMPLE_ENDS_COUNT: usize = 5;
-        let slice = val.as_ref();
-        let len = slice.len();
-        if len <= (SAMPLE_ENDS_COUNT*2) {
-            return write!(f, "{{BytesLike(len: {len}. values: {slice:?})}}");
-        }
-        
-        // Get the first and last 5 bytes
-        let sample_ending_boundary = len.saturating_sub(SAMPLE_ENDS_COUNT);
-        let first_bytes: &[u8] = &slice[..SAMPLE_ENDS_COUNT];
-        let last_bytes: &[u8] = &slice[sample_ending_boundary..];
-    
-        write!(f, "{{BytesLike(len: {len}. First {SAMPLE_ENDS_COUNT} bytes: {first_bytes:?}. Last {SAMPLE_ENDS_COUNT} bytes: {last_bytes:?})}}")
+pub fn bytes_debug_fmt<T: std::fmt::Debug + AsRef<[u8]>>(
+    val: &T,
+    f: &mut std::fmt::Formatter,
+) -> std::fmt::Result {
+    const SAMPLE_ENDS_COUNT: usize = 5;
+    let slice = val.as_ref();
+    let len = slice.len();
+    if len <= (SAMPLE_ENDS_COUNT * 2) {
+        return write!(f, "{{BytesLike(len: {len}. values: {slice:?})}}");
+    }
+
+    // Get the first and last 5 bytes
+    let sample_ending_boundary = len.saturating_sub(SAMPLE_ENDS_COUNT);
+    let first_bytes: &[u8] = &slice[..SAMPLE_ENDS_COUNT];
+    let last_bytes: &[u8] = &slice[sample_ending_boundary..];
+
+    write!(f, "{{BytesLike(len: {len}. First {SAMPLE_ENDS_COUNT} bytes: {first_bytes:?}. Last {SAMPLE_ENDS_COUNT} bytes: {last_bytes:?})}}")
 }
 
 pub fn map_debug_fmt<T, K, V>(map: &T, f: &mut std::fmt::Formatter) -> std::fmt::Result
@@ -42,7 +45,7 @@ where
     V: std::fmt::Debug + AsRef<[u8]>,
 {
     write!(f, "{{MapLike: ")?;
-    
+
     // Use a peekable iterator to handle the trailing comma correctly.
     let mut iter = map.into_iter().peekable();
 
@@ -52,7 +55,7 @@ where
         // So we can pass `v` directly to our helper.
         bytes_debug_fmt(v, f)?;
         write!(f, ")")?;
-        
+
         // Only write a comma if this is not the last item.
         if iter.peek().is_some() {
             write!(f, ", ")?;
@@ -74,29 +77,29 @@ impl AtomicUuid {
         let bytes = uuid.as_bytes();
         let high = u64::from_be_bytes(bytes[0..8].try_into().unwrap());
         let low = u64::from_be_bytes(bytes[8..16].try_into().unwrap());
-        
+
         Self {
             high: AtomicU64::new(high),
             low: AtomicU64::new(low),
         }
     }
-    
+
     pub fn load(&self, ordering: Ordering) -> Uuid {
         let high = self.high.load(ordering);
         let low = self.low.load(ordering);
-        
+
         let mut bytes = [0u8; 16];
         bytes[0..8].copy_from_slice(&high.to_be_bytes());
         bytes[8..16].copy_from_slice(&low.to_be_bytes());
-        
+
         Uuid::from_bytes(bytes)
     }
-    
+
     pub fn store(&self, uuid: Uuid, ordering: Ordering) {
         let bytes = uuid.as_bytes();
         let high = u64::from_be_bytes(bytes[0..8].try_into().unwrap());
         let low = u64::from_be_bytes(bytes[8..16].try_into().unwrap());
-        
+
         self.high.store(high, ordering);
         self.low.store(low, ordering);
     }
@@ -262,6 +265,30 @@ pub struct DeleteVirtualFileFailure {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
+pub struct PickFileSuccess {
+    pub cid: u64,
+    /// The full path to the selected file
+    #[cfg_attr(feature = "typescript", ts(type = "string"))]
+    pub file_path: PathBuf,
+    /// The file name (without path)
+    pub file_name: String,
+    /// The file size in bytes
+    pub file_size: u64,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct PickFileFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
 pub struct PeerConnectSuccess {
     pub cid: u64,
     pub peer_cid: u64,
@@ -273,6 +300,25 @@ pub struct PeerConnectSuccess {
 #[cfg_attr(feature = "typescript", ts(export))]
 pub struct PeerConnectFailure {
     pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct PeerConnectAcceptSuccess {
+    pub cid: u64,
+    pub peer_cid: u64,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct PeerConnectAcceptFailure {
+    pub cid: u64,
+    pub peer_cid: u64,
     pub message: String,
     pub request_id: Option<Uuid>,
 }
@@ -903,8 +949,12 @@ pub enum InternalServiceResponse {
     DownloadFileFailure(DownloadFileFailure),
     DeleteVirtualFileSuccess(DeleteVirtualFileSuccess),
     DeleteVirtualFileFailure(DeleteVirtualFileFailure),
+    PickFileSuccess(PickFileSuccess),
+    PickFileFailure(PickFileFailure),
     PeerConnectSuccess(PeerConnectSuccess),
     PeerConnectFailure(PeerConnectFailure),
+    PeerConnectAcceptSuccess(PeerConnectAcceptSuccess),
+    PeerConnectAcceptFailure(PeerConnectAcceptFailure),
     PeerConnectNotification(PeerConnectNotification),
     PeerRegisterNotification(PeerRegisterNotification),
     PeerDisconnectSuccess(PeerDisconnectSuccess),
@@ -963,6 +1013,8 @@ pub enum InternalServiceResponse {
     ListRegisteredPeersFailure(ListRegisteredPeersFailure),
     ConnectionManagementSuccess(ConnectionManagementSuccess),
     ConnectionManagementFailure(ConnectionManagementFailure),
+    /// Results from a batched request, in the same order as input commands
+    BatchedResponse(BatchedResponseData),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, RequestId)]
@@ -1058,6 +1110,18 @@ pub enum InternalServiceRequest {
         peer_cid: Option<u64>,
         request_id: Uuid,
     },
+    /// Opens a native file picker dialog to select a file.
+    /// Returns the full file path, name, and size.
+    /// This runs on the native internal-service (not WASM) so it has full filesystem access.
+    PickFile {
+        request_id: Uuid,
+        cid: u64,
+        /// Optional title for the file picker dialog
+        title: Option<String>,
+        /// Optional list of allowed file extensions (e.g., ["pdf", "txt"])
+        #[cfg_attr(feature = "typescript", ts(type = "string[] | null"))]
+        allowed_extensions: Option<Vec<String>>,
+    },
     ListAllPeers {
         request_id: Uuid,
         cid: u64,
@@ -1081,6 +1145,23 @@ pub enum InternalServiceRequest {
         request_id: Uuid,
         cid: u64,
         peer_cid: u64,
+    },
+    /// Accept an incoming P2P connection request from a peer.
+    /// This is sent in response to PeerConnectNotification to complete the handshake.
+    PeerConnectAccept {
+        request_id: Uuid,
+        /// CID of the local session accepting the connection
+        cid: u64,
+        /// CID of the peer who initiated the connection
+        peer_cid: u64,
+        /// Accept (true) or decline (false) the connection
+        accept: bool,
+        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        udp_mode: UdpMode,
+        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        session_security_settings: SessionSecuritySettings,
+        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        peer_session_password: Option<PreSharedKey>,
     },
     PeerRegister {
         request_id: Uuid,
@@ -1195,6 +1276,13 @@ pub enum InternalServiceRequest {
         request_id: Uuid,
         management_command: ConfigCommand,
     },
+    /// Execute multiple requests in parallel, returning results in the same order as input.
+    /// This enables single-roundtrip batch operations for efficiency.
+    Batched {
+        request_id: Uuid,
+        /// The list of commands to execute in parallel
+        commands: Vec<InternalServiceRequest>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1204,6 +1292,17 @@ pub struct ConnectionManagementSuccess {
     pub cid: u64,
     pub request_id: Option<Uuid>,
     pub message: String,
+}
+
+/// Response from a batched request containing results in the same order as input commands
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct BatchedResponseData {
+    /// CID is 0 for batched responses (batch is not tied to a single session)
+    pub cid: u64,
+    pub request_id: Option<Uuid>,
+    pub results: Vec<InternalServiceResponse>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

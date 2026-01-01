@@ -19,17 +19,24 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let InternalServiceRequest::ListAllPeers { request_id, cid } = request else {
         unreachable!("Should never happen if programmed properly")
     };
-    info!("[ListAllPeers] Handling request for cid={}, request_id={:?}", cid, request_id);
+    info!(
+        "[ListAllPeers] Handling request for cid={}, request_id={:?}",
+        cid, request_id
+    );
     let remote = this.remote();
 
-    info!("[ListAllPeers] Calling get_local_group_peers for cid={}", cid);
+    info!(
+        "[ListAllPeers] Calling get_local_group_peers for cid={}",
+        cid
+    );
 
     // Add 5 second timeout to prevent SDK call from hanging indefinitely
     // get_local_group_peers returns all peers on the network (may or may not be registered)
     let result = timeout(
         Duration::from_secs(5),
-        remote.get_local_group_peers(cid, None)
-    ).await;
+        remote.get_local_group_peers(cid, None),
+    )
+    .await;
 
     let sdk_result = match result {
         Ok(inner) => inner,
@@ -48,7 +55,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
     match sdk_result {
         Ok(peers) => {
-            info!("[ListAllPeers] SUCCESS: Found {} peers for cid={}", peers.len(), cid);
+            info!(
+                "[ListAllPeers] SUCCESS: Found {} peers for cid={}",
+                peers.len(),
+                cid
+            );
             let peer_information = peers
                 .into_iter()
                 .filter(|peer| peer.cid != cid) // Filter out self

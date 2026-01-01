@@ -48,6 +48,8 @@ thiserror = "2.0"
 
 # Logging for debugging
 console_error_panic_hook = "0.1"
+console_log = { version = "1.0", features = ["color"] }
+log = "0.4"
 
 # Static storage
 once_cell = "1.19"

@@ -10,8 +10,8 @@ use citadel_internal_service_types::{
 };
 
 use async_trait::async_trait;
-use citadel_io::tokio::sync::{mpsc, RwLock};
-use dashmap::DashMap;
+use citadel_io::tokio::sync::{RwLock, mpsc};
+use dashmap::{DashMap, DashSet};
 use futures::{Sink, Stream};
 // use send_wrapper::SendWrapper;  // Not needed with channel-based approach
 use ws_stream_wasm::{WsMessage, WsMeta};
@@ -24,11 +24,16 @@ use wasm_bindgen::prelude::*;
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
     fn log(s: &str);
-    
+
     // Custom debug log function that will be provided by JavaScript
     // This will use the formatForDebug function on the JS side
     #[wasm_bindgen(js_name = wasmDebugLog)]
     fn debug_log(s: &str);
+
+    // Callback to notify JavaScript when WebSocket connection dies
+    // This allows the UI to show a retry modal
+    #[wasm_bindgen(js_name = onWasmWebSocketDisconnected)]
+    fn on_websocket_disconnected(reason: &str);
 }
 
 // For debugging objects that need formatting
@@ -73,7 +78,10 @@ fn deserialize_request_with_string_cids(
     // DEBUG: Log ALL Message requests to see peer_cid handling
     if json_str.contains("\"Message\"") {
         // Log the first 1000 chars to see full structure
-        console_log!("[P2P-WASM] Raw JSON (Message request): {}", &json_str[..json_str.len().min(1000)]);
+        console_log!(
+            "[P2P-WASM] Raw JSON (Message request): {}",
+            &json_str[..json_str.len().min(1000)]
+        );
     }
 
     let mut json_value: serde_json::Value = serde_json::from_str(&json_str)
@@ -81,11 +89,22 @@ fn deserialize_request_with_string_cids(
 
     // DEBUG: Log peer_cid before conversion WITH request_id for correlation
     if let Some(msg) = json_value.get("Message") {
-        let req_id = msg.get("request_id").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let req_id = msg
+            .get("request_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         if let Some(peer_cid) = msg.get("peer_cid") {
-            console_log!("[P2P-WASM] REQUEST_ID={} peer_cid BEFORE conversion: {:?} (is_string={})", req_id, peer_cid, peer_cid.is_string());
+            console_log!(
+                "[P2P-WASM] REQUEST_ID={} peer_cid BEFORE conversion: {:?} (is_string={})",
+                req_id,
+                peer_cid,
+                peer_cid.is_string()
+            );
         } else {
-            console_log!("[P2P-WASM] REQUEST_ID={} peer_cid is MISSING from Message!", req_id);
+            console_log!(
+                "[P2P-WASM] REQUEST_ID={} peer_cid is MISSING from Message!",
+                req_id
+            );
         }
     }
 
@@ -93,10 +112,14 @@ fn deserialize_request_with_string_cids(
     convert_string_cids_to_numbers(&mut json_value);
 
     // DEBUG: Log peer_cid after conversion
-    if let Some(msg) = json_value.get("Message") {
-        if let Some(peer_cid) = msg.get("peer_cid") {
-            console_log!("[P2P-WASM] peer_cid AFTER conversion: {:?} (is_number={})", peer_cid, peer_cid.is_number());
-        }
+    if let Some(msg) = json_value.get("Message")
+        && let Some(peer_cid) = msg.get("peer_cid")
+    {
+        console_log!(
+            "[P2P-WASM] peer_cid AFTER conversion: {:?} (is_number={})",
+            peer_cid,
+            peer_cid.is_number()
+        );
     }
 
     // Convert to the final request type
@@ -104,7 +127,11 @@ fn deserialize_request_with_string_cids(
         Ok(request) => {
             // DEBUG: Log the final deserialized request for Message types
             if let InternalServiceRequest::Message { cid, peer_cid, .. } = &request {
-                console_log!("[P2P-WASM] Deserialized Message: cid={}, peer_cid={:?}", cid, peer_cid);
+                console_log!(
+                    "[P2P-WASM] Deserialized Message: cid={}, peer_cid={:?}",
+                    cid,
+                    peer_cid
+                );
             }
             Ok(request)
         }
@@ -119,7 +146,10 @@ fn deserialize_request_with_string_cids(
                 }
             }
 
-            Err(JsValue::from_str(&format!("Request deserialization error: {}", e)))
+            Err(JsValue::from_str(&format!(
+                "Request deserialization error: {}",
+                e
+            )))
         }
     }
 }
@@ -138,11 +168,15 @@ fn convert_large_numbers_to_strings(value: &mut serde_json::Value) {
         serde_json::Value::Object(map) => {
             // First, handle specific CID field names that should always be strings
             for (key, v) in map.iter_mut() {
-                if key == "cid" || key == "peer_cid" || key == "session_cid" || key.ends_with("_cid") {
-                    if let serde_json::Value::Number(n) = v {
-                        if let Some(u) = n.as_u64() {
-                            *v = serde_json::Value::String(u.to_string());
-                        }
+                if key == "cid"
+                    || key == "peer_cid"
+                    || key == "session_cid"
+                    || key.ends_with("_cid")
+                {
+                    if let serde_json::Value::Number(n) = v
+                        && let Some(u) = n.as_u64()
+                    {
+                        *v = serde_json::Value::String(u.to_string());
                     }
                 } else {
                     convert_large_numbers_to_strings(v);
@@ -165,10 +199,10 @@ fn convert_string_cids_to_numbers(value: &mut serde_json::Value) {
             // Handle specific CID field names
             for (key, v) in map.iter_mut() {
                 if (key == "cid" || key == "peer_cid" || key == "session_cid") && v.is_string() {
-                    if let Some(s) = v.as_str() {
-                        if let Ok(n) = s.parse::<u64>() {
-                            *v = serde_json::Value::Number(serde_json::Number::from(n));
-                        }
+                    if let Some(s) = v.as_str()
+                        && let Ok(n) = s.parse::<u64>()
+                    {
+                        *v = serde_json::Value::Number(serde_json::Number::from(n));
                     }
                 } else {
                     convert_string_cids_to_numbers(v);
@@ -288,7 +322,10 @@ static SINK_CHANNEL: OnceCell<mpsc::UnboundedSender<InternalServicePayload>> = O
 struct WorkspaceState {
     messenger: CitadelWorkspaceMessenger<CitadelWorkspaceBackend>,
     stream: Option<citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>>,
-    connections: Arc<DashMap<u64, MessengerTx<CitadelWorkspaceBackend>>>,
+    // Wrapped in Arc so we can clone handles and release the RwLock before long async operations
+    connections: Arc<DashMap<u64, Arc<MessengerTx<CitadelWorkspaceBackend>>>>,
+    // Track CIDs that are currently being opened to prevent duplicate multiplex calls
+    pending_opens: Arc<DashSet<u64>>,
     // On drop, this will kill the background task automatically (RAII pattern)
     #[allow(dead_code)]
     shutdown_tx: citadel_io::tokio::sync::oneshot::Sender<()>,
@@ -303,7 +340,32 @@ fn get_workspace_state() -> &'static Arc<RwLock<Option<WorkspaceState>>> {
 
 #[wasm_bindgen(start)]
 pub fn main() {
-    console_error_panic_hook::set_once();
+    // Set up a custom panic hook that:
+    // 1. Logs the panic to the console (via console_error_panic_hook)
+    // 2. Notifies JavaScript so the UI can show a retry modal
+    std::panic::set_hook(Box::new(|panic_info| {
+        // First, use the standard console error panic hook for logging
+        console_error_panic_hook::hook(panic_info);
+
+        // Then notify JavaScript about the panic so UI can show retry modal
+        let panic_message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            format!("WASM panic: {}", s)
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            format!("WASM panic: {}", s)
+        } else {
+            "WASM panic: Unknown error".to_string()
+        };
+
+        // Add location info if available
+        let message = if let Some(location) = panic_info.location() {
+            format!("{} at {}:{}", panic_message, location.file(), location.line())
+        } else {
+            panic_message
+        };
+
+        console_log!("[WASM] Panic detected, notifying JavaScript: {}", message);
+        on_websocket_disconnected(&message);
+    }));
 }
 
 #[wasm_bindgen]
@@ -324,11 +386,15 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
         }
         console_log!("Restarting WASM client with URL: {}", ws_url);
         close_connection().await?;
-
     } else {
         if is_initialized() {
-            return Err(JsValue::from_str("Already initialized. If required, call restart() instead followed by claiming any orphaned connections."));
+            return Err(JsValue::from_str(
+                "Already initialized. If required, call restart() instead followed by claiming any orphaned connections.",
+            ));
         }
+        // Initialize the Rust log crate to route to browser console
+        // This makes log::info!, log::warn!, etc. visible in DevTools
+        console_log::init_with_level(log::Level::Info).ok();
         console_log!("Initializing WASM client with URL: {}", ws_url);
     }
 
@@ -416,6 +482,10 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
         }
 
         console_log!("WebSocket communication task ended");
+
+        // Notify JavaScript that the WebSocket connection has died
+        // This allows the UI to show a retry modal
+        on_websocket_disconnected("WebSocket communication task ended");
     });
 
     // Create IO implementation with channels
@@ -427,11 +497,13 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
 
     let (messenger, stream) = CitadelWorkspaceMessenger::new(connector);
     let connections = Arc::new(DashMap::new());
+    let pending_opens = Arc::new(DashSet::new());
 
     let state = WorkspaceState {
         messenger,
         stream: Some(stream),
         connections,
+        pending_opens,
         shutdown_tx,
     };
 
@@ -454,26 +526,88 @@ pub async fn open_messenger_for(cid_str: String) -> Result<(), JsValue> {
 
     console_log!("Opening messenger handle for CID: {}", cid);
 
-    let workspace_state = get_workspace_state();
-    let guard = workspace_state.read().await;
+    // CRITICAL: Check if already open AND atomically mark as pending to prevent race conditions.
+    // Clone Arc refs for use outside lock.
+    let (already_open, is_pending, messenger, pending_opens, connections) = {
+        let workspace_state = get_workspace_state();
+        let guard = workspace_state.read().await;
 
-    if let Some(state) = guard.as_ref() {
-        let tx = state
-            .messenger
-            .multiplex(cid)
-            .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        if let Some(state) = guard.as_ref() {
+            // Check if messenger handle already exists for this CID
+            if state.connections.contains_key(&cid) {
+                (true, false, None, None, None)
+            } else {
+                // Try to atomically mark this CID as being opened
+                let was_inserted = state.pending_opens.insert(cid);
+                if !was_inserted {
+                    // Another task is already opening this CID
+                    (false, true, None, None, None)
+                } else {
+                    (
+                        false,
+                        false,
+                        Some(state.messenger.clone()),
+                        Some(state.pending_opens.clone()),
+                        Some(state.connections.clone()),
+                    )
+                }
+            }
+        } else {
+            return Err(JsValue::from_str("Workspace not initialized"));
+        }
+    }; // Lock released here
 
-        state.connections.insert(cid, tx);
-        console_log!("Messenger handle opened for CID: {}", cid);
-        Ok(())
+    if already_open {
+        console_log!("Messenger handle already open for CID: {}", cid);
+        return Ok(());
+    }
+
+    if is_pending {
+        // Another task is opening this CID - wait briefly and check if it completed
+        console_log!(
+            "Messenger handle for CID: {} is being opened by another task, waiting...",
+            cid
+        );
+        // Small delay then check if it's now in connections
+        citadel_io::tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let workspace_state = get_workspace_state();
+        let guard = workspace_state.read().await;
+        if let Some(state) = guard.as_ref() {
+            if state.connections.contains_key(&cid) {
+                console_log!("Messenger handle for CID: {} is now available", cid);
+                return Ok(());
+            }
+        }
+        return Err(JsValue::from_str(
+            "Messenger handle is being opened by another task",
+        ));
+    }
+
+    // Now do the long multiplex operation WITHOUT holding the lock
+    if let (Some(messenger), Some(pending_opens), Some(connections)) =
+        (messenger, pending_opens, connections)
+    {
+        let result = messenger.multiplex(cid).await;
+
+        match result {
+            Ok(tx) => {
+                connections.insert(cid, Arc::new(tx));
+                pending_opens.remove(&cid);
+                console_log!("Messenger handle opened for CID: {}", cid);
+                Ok(())
+            }
+            Err(e) => {
+                pending_opens.remove(&cid);
+                Err(JsValue::from_str(&e.to_string()))
+            }
+        }
     } else {
         Err(JsValue::from_str("Workspace not initialized"))
     }
 }
 
 /// Ensures a messenger handle is open for the given CID.
-/// Returns true if the messenger was just opened, false if already open.
+/// Returns true if the messenger was just opened, false if already open or being opened by another task.
 /// Use this for polling to maintain messenger handles across leader/follower tab transitions.
 #[wasm_bindgen]
 pub async fn ensure_messenger_open(cid_str: String) -> Result<bool, JsValue> {
@@ -481,27 +615,148 @@ pub async fn ensure_messenger_open(cid_str: String) -> Result<bool, JsValue> {
         .parse()
         .map_err(|e| JsValue::from_str(&format!("Invalid CID format: {}", e)))?;
 
-    let workspace_state = get_workspace_state();
-    let guard = workspace_state.read().await;
+    // CRITICAL: Check if already open AND atomically mark as pending to prevent race conditions.
+    // Two concurrent calls could both pass contains_key check before either inserts.
+    // The pending_opens set prevents duplicate multiplex calls.
+    let (already_open, is_pending, messenger, pending_opens, connections) = {
+        let workspace_state = get_workspace_state();
+        let guard = workspace_state.read().await;
 
-    if let Some(state) = guard.as_ref() {
-        // Check if messenger handle already exists for this CID
-        if state.connections.contains_key(&cid) {
-            // Already open, no action needed
-            return Ok(false);
+        if let Some(state) = guard.as_ref() {
+            // Check if messenger handle already exists for this CID
+            if state.connections.contains_key(&cid) {
+                // Already open, no action needed
+                (true, false, None, None, None)
+            } else {
+                // Try to atomically mark this CID as being opened
+                // insert() returns true if the value was newly inserted (not present before)
+                let was_inserted = state.pending_opens.insert(cid);
+                if !was_inserted {
+                    // Another task is already opening this CID - don't duplicate
+                    (false, true, None, None, None)
+                } else {
+                    // We successfully marked it as pending - we'll do the open
+                    // Clone Arc refs for use outside lock
+                    (
+                        false,
+                        false,
+                        Some(state.messenger.clone()),
+                        Some(state.pending_opens.clone()),
+                        Some(state.connections.clone()),
+                    )
+                }
+            }
+        } else {
+            return Err(JsValue::from_str("Workspace not initialized"));
+        }
+    }; // Lock released here
+
+    if already_open {
+        return Ok(false);
+    }
+
+    if is_pending {
+        // Another task is opening this CID - we need to WAIT for it to complete
+        // instead of returning immediately, otherwise the caller will try to send
+        // messages before the handle is ready.
+        console_log!(
+            "Waiting for pending messenger open for CID: {} (another task is opening)",
+            cid
+        );
+
+        // Poll until the handle is ready or the pending operation fails
+        // Max wait: 30 seconds (multiplex can take time due to batched requests)
+        let max_wait_ms = 30_000u64;
+        let poll_interval_ms = 100u64;
+        let max_iterations = max_wait_ms / poll_interval_ms;
+
+        for iteration in 0..max_iterations {
+            // Small delay before checking
+            citadel_internal_service_connector::messenger::sleep_internal(
+                std::time::Duration::from_millis(poll_interval_ms),
+            )
+            .await;
+
+            // Check if handle is now available or pending is done
+            let (is_ready, still_pending) = {
+                let workspace_state = get_workspace_state();
+                let guard = workspace_state.read().await;
+
+                if let Some(state) = guard.as_ref() {
+                    let ready = state.connections.contains_key(&cid);
+                    let pending = state.pending_opens.contains(&cid);
+                    (ready, pending)
+                } else {
+                    return Err(JsValue::from_str("Workspace not initialized"));
+                }
+            };
+
+            if is_ready {
+                console_log!(
+                    "Messenger handle became ready for CID: {} (waited {}ms)",
+                    cid,
+                    (iteration + 1) * poll_interval_ms
+                );
+                return Ok(false); // Handle was opened by another task
+            }
+
+            if !still_pending {
+                // Pending flag was cleared but handle not ready - the other task failed
+                // Try to open it ourselves by recursing (will set pending flag again)
+                console_log!(
+                    "Pending cleared but handle not ready for CID: {}, retrying ourselves",
+                    cid
+                );
+                return Box::pin(ensure_messenger_open(cid_str)).await;
+            }
+
+            // Still pending, continue waiting
+            if iteration > 0 && iteration % 50 == 0 {
+                console_log!(
+                    "Still waiting for messenger open for CID: {} ({}ms elapsed)",
+                    cid,
+                    (iteration + 1) * poll_interval_ms
+                );
+            }
         }
 
-        // Need to open messenger
-        console_log!("Opening messenger handle for CID: {} (was missing)", cid);
-        let tx = state
-            .messenger
-            .multiplex(cid)
-            .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        // Timeout - the other task is taking too long
+        console_log!(
+            "Timeout waiting for messenger open for CID: {} after {}ms",
+            cid,
+            max_wait_ms
+        );
+        return Err(JsValue::from_str(&format!(
+            "Timeout waiting for messenger handle for CID: {}",
+            cid
+        )));
+    }
 
-        state.connections.insert(cid, tx);
-        console_log!("Messenger handle opened for CID: {}", cid);
-        Ok(true) // Messenger was just opened
+    // Now do the long multiplex operation WITHOUT holding the lock
+    // We have exclusive responsibility for this CID (marked in pending_opens)
+    if let (Some(messenger), Some(pending_opens), Some(connections)) =
+        (messenger, pending_opens, connections)
+    {
+        console_log!("Opening messenger handle for CID: {} (was missing)", cid);
+
+        // Use a guard pattern to ensure we remove from pending_opens even on error
+        let result = messenger.multiplex(cid).await;
+
+        match result {
+            Ok(tx) => {
+                // Insert into connections
+                connections.insert(cid, Arc::new(tx));
+                // Remove from pending (we're done opening)
+                pending_opens.remove(&cid);
+                console_log!("Messenger handle opened for CID: {}", cid);
+                Ok(true) // Messenger was just opened
+            }
+            Err(e) => {
+                // Remove from pending on error so future attempts can retry
+                pending_opens.remove(&cid);
+                Err(JsValue::from_str(&e.to_string()))
+            }
+        }
     } else {
         Err(JsValue::from_str("Workspace not initialized"))
     }
@@ -519,14 +774,28 @@ pub async fn next_message() -> Result<JsValue, JsValue> {
             drop(guard); // drop the guard to unblock
             if let Some(response) = stream.recv().await {
                 // Convert to JsValue with custom BigInt handling for large CIDs
-                get_workspace_state().write().await.as_mut().expect("Workspace stream corrupted").stream.replace(stream);
+                get_workspace_state()
+                    .write()
+                    .await
+                    .as_mut()
+                    .expect("Workspace stream corrupted")
+                    .stream
+                    .replace(stream);
                 serialize_response_with_bigint(&response)
             } else {
-                get_workspace_state().write().await.as_mut().expect("Workspace stream corrupted").stream.replace(stream);
+                get_workspace_state()
+                    .write()
+                    .await
+                    .as_mut()
+                    .expect("Workspace stream corrupted")
+                    .stream
+                    .replace(stream);
                 Err(JsValue::from_str("Stream closed"))
             }
         } else {
-            Err(JsValue::from_str("next_message is already being called by another process"))
+            Err(JsValue::from_str(
+                "next_message is already being called by another process",
+            ))
         }
     } else {
         Err(JsValue::from_str("Workspace not initialized"))
@@ -568,32 +837,39 @@ pub async fn send_p2p_message_reliable(
         peer_cid
     );
 
-    let workspace_state = get_workspace_state();
-    let guard = workspace_state.read().await;
+    let sec_level = parse_security_level(security_level.as_deref());
 
-    if let Some(state) = guard.as_ref() {
-        if let Some(tx) = state.connections.get(&local_cid) {
-            let sec_level = parse_security_level(security_level.as_deref());
+    // CRITICAL: Clone the Arc handle and release the lock BEFORE the long async send.
+    // Holding a read lock across await blocks next_message() which needs a write lock,
+    // causing the JavaScript event loop to stall and the UI to freeze.
+    let tx: Option<Arc<MessengerTx<CitadelWorkspaceBackend>>> = {
+        let workspace_state = get_workspace_state();
+        let guard = workspace_state.read().await;
 
-            // Use ISM-routed send for reliability
-            tx.send_message_to_with_security_level(peer_cid, sec_level, message)
-                .await
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-            console_log!(
-                "Reliable P2P message sent from {} to {}",
-                local_cid,
-                peer_cid
-            );
-            Ok(())
+        if let Some(state) = guard.as_ref() {
+            state.connections.get(&local_cid).map(|r| r.value().clone())
         } else {
-            Err(JsValue::from_str(&format!(
-                "No messaging handle found for local CID: {}. Call open_p2p_connection first.",
-                local_cid
-            )))
+            return Err(JsValue::from_str("Workspace not initialized"));
         }
+    }; // Lock released here
+
+    if let Some(tx) = tx {
+        // Use ISM-routed send for reliability - lock is NOT held during this await
+        tx.send_message_to_with_security_level(peer_cid, sec_level, message)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        console_log!(
+            "Reliable P2P message sent from {} to {}",
+            local_cid,
+            peer_cid
+        );
+        Ok(())
     } else {
-        Err(JsValue::from_str("Workspace not initialized"))
+        Err(JsValue::from_str(&format!(
+            "No messaging handle found for local CID: {}. Call open_p2p_connection first.",
+            local_cid
+        )))
     }
 }
 

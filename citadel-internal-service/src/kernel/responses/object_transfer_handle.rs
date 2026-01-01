@@ -37,7 +37,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     {
         info!(target: "citadel", "Receiver Obtained ObjectTransferHandler");
 
-        let mut server_connection_map = this.server_connection_map.lock().await;
+        let mut server_connection_map = this.server_connection_map.write();
         if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
             let uuid = connection.associated_tcp_connection.load(Ordering::Relaxed);
 
@@ -69,13 +69,13 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
                 drop(server_connection_map);
 
-                send_response_to_tcp_client(&this.tcp_connection_map, response, uuid).await?;
+                send_response_to_tcp_client(&this.tcp_connection_map, response, uuid)?;
             }
         }
     } else {
         // Sender - Must spawn a task to relay status updates to TCP client. When receiving this handle,
         // we know the opposite node agreed to the connection thus we can spawn
-        let mut server_connection_map = this.server_connection_map.lock().await;
+        let mut server_connection_map = this.server_connection_map.write();
         info!(target: "citadel", "Sender Obtained ObjectTransferHandler");
         spawn_tick_updater(
             object_transfer_handler,

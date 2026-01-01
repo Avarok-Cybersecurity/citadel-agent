@@ -10,6 +10,11 @@ default = []
 vendored = ["citadel_sdk/vendored"]
 websockets = ["citadel-internal-service-connector/websockets"]
 js = ["uuid/js"]
+# Enable native file picker dialog support (for PickFile request)
+# Only enable when building for native desktop (not in Docker/server)
+native-dialogs = ["rfd"]
+# Enable parking_lot deadlock detection for debugging lock contention
+deadlock-detection = []
 
 [dependencies]
 citadel_sdk = { workspace = true, features=["multi-threaded"] }
@@ -25,6 +30,10 @@ uuid = { workspace = true, features = [
 ]}
 bytes = { workspace = true }
 async-recursion = { workspace = true }
+# Optional: native file picker dialog (requires desktop environment)
+rfd = { workspace = true, optional = true }
+# Synchronous RwLock to prevent holding locks across await points
+parking_lot = { workspace = true }
 
 [dev-dependencies]
 citadel_sdk = { workspace = true, features=["multi-threaded", "localhost-testing"] }

@@ -30,10 +30,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
 
-    info!(target: "citadel", "[PeerConnect] Received request: cid={}, peer_cid={}, request_id={:?}", cid, peer_cid, request_id);
+    info!(target: "citadel", "[PeerConnect] *** RECEIVED PeerConnect REQUEST *** cid={}, peer_cid={}, request_id={:?}", cid, peer_cid, request_id);
 
     let remote = this.remote();
-    info!(target: "citadel", "[PeerConnect] Got remote, checking if already connected...");
+    info!(target: "citadel", "[PeerConnect] Got remote, checking if already connected in internal service peers map...");
 
     let already_connected = this
         .server_connection_map

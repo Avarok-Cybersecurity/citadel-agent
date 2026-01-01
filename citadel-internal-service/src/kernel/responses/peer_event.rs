@@ -148,10 +148,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 udp_mode,
                 session_password: None,
             };
-            this.pending_peer_connect_signals
-                .write()
-                .insert((session_cid, peer_cid), pending_signal);
-            info!(target: "citadel", "Stored pending PeerConnect signal for ({}, {})", session_cid, peer_cid);
+            {
+                let mut signals = this.pending_peer_connect_signals.write();
+                signals.insert((session_cid, peer_cid), pending_signal);
+                info!(target: "citadel", "[PostConnect] Stored pending PeerConnect signal for (cid={}, peer_cid={}), total pending: {}", session_cid, peer_cid, signals.len());
+            }
 
             // Extract what we need from the lock, then drop it before any await
             let tcp_conn = {

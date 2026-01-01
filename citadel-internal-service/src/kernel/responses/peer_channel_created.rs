@@ -25,7 +25,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let session_cid = channel.get_session_cid();
     let peer_cid = channel.get_peer_cid();
 
-    info!(target: "citadel", "[PeerChannelCreated] Received channel: session_cid={}, peer_cid={}", session_cid, peer_cid);
+    info!(target: "citadel", "[PeerChannelCreated] *** RECEIVED P2P CHANNEL *** session_cid={}, peer_cid={}", session_cid, peer_cid);
+    info!(target: "citadel", "[PeerChannelCreated] This is the SDK event indicating successful P2P handshake");
 
     // Split the channel into send and receive halves
     let (sink, mut stream) = channel.split();

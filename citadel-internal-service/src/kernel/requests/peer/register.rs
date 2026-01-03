@@ -71,6 +71,16 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                             info!(target: "citadel", "[PeerRegister] find_target_information succeeded");
                             let (_, mutual_peer) = target_information.unwrap();
                             info!(target: "citadel", "[PeerRegister] mutual_peer.cid={}, connect_after_register={}", mutual_peer.cid, connect_after_register);
+
+                            // Cache the peer's username for later use in ListRegisteredPeers
+                            if let Some(ref username) = mutual_peer.username {
+                                if !username.is_empty() {
+                                    let mut cache = this.peer_username_cache.write();
+                                    cache.insert((cid, mutual_peer.cid), username.clone());
+                                    info!(target: "citadel", "[PeerRegister] Cached username '{}' for peer {} (session {})", username, mutual_peer.cid, cid);
+                                }
+                            }
+
                             match connect_after_register {
                                 true => {
                                     info!(target: "citadel", "[PeerRegister] connect_after_register=true, chaining to PeerConnect...");

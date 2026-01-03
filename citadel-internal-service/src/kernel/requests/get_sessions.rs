@@ -21,6 +21,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     };
     let server_connection_map = &this.server_connection_map;
     let lock = server_connection_map.read();
+    let username_cache = this.peer_username_cache.read();
     let mut sessions = Vec::new();
 
     info!(target: "citadel", "GetSessions: Found {} total sessions in server_connection_map", lock.len());
@@ -34,20 +35,25 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         let mut session = SessionInformation {
             cid: *cid,
             username: connection.username.clone(),
+            server_address: connection.server_address.clone(),
             peer_connections: HashMap::new(),
         };
         for (peer_cid, conn) in connection.peers.iter() {
+            // Try remote username first, then fall back to cached username
+            let peer_username = conn
+                .remote
+                .as_ref()
+                .and_then(|r| r.target_username())
+                .map(ToString::to_string)
+                .or_else(|| username_cache.get(&(*cid, *peer_cid)).cloned())
+                .unwrap_or_default();
+
             session.peer_connections.insert(
                 *peer_cid,
                 PeerSessionInformation {
                     cid: *cid,
                     peer_cid: *peer_cid,
-                    peer_username: conn
-                        .remote
-                        .as_ref()
-                        .and_then(|r| r.target_username())
-                        .map(ToString::to_string)
-                        .unwrap_or_default(),
+                    peer_username,
                 },
             );
         }

@@ -1336,6 +1336,7 @@ pub enum ConfigCommand {
 pub struct SessionInformation {
     pub cid: u64,
     pub username: String,
+    pub server_address: String,
     #[cfg_attr(
         feature = "typescript",
         ts(type = "Record<string, PeerSessionInformation>")

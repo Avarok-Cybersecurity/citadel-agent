@@ -100,6 +100,15 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             invitee_response: _,
         } => {
             info!(target: "citadel", "User {session_cid:?} received Register Request from {peer_cid:?}");
+
+            // Cache the peer's username for later use in ListRegisteredPeers
+            // The SDK's get_local_group_mutual_peers may not return usernames
+            if !inviter_username.is_empty() {
+                let mut cache = this.peer_username_cache.write();
+                cache.insert((session_cid, peer_cid), inviter_username.clone());
+                info!(target: "citadel", "Cached username '{}' for peer {} (session {})", inviter_username, peer_cid, session_cid);
+            }
+
             // Extract what we need from the lock, then drop it before any await
             let tcp_conn = {
                 let server_connection_map = this.server_connection_map.read();

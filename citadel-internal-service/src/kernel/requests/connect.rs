@@ -76,11 +76,23 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 .flatten()
                 .unwrap_or_else(|| "#INVALID_USERNAME".to_string());
 
+            // Get server address from the CNAC's connection info
+            let server_address = remote
+                .account_manager()
+                .get_persistence_handler()
+                .get_cnac_by_cid(cid)
+                .await
+                .ok()
+                .flatten()
+                .map(|cnac| cnac.get_connect_info().addr.to_string())
+                .unwrap_or_default();
+
             let connection_struct = Connection::new(
                 sink,
                 client_server_remote,
                 Arc::new(AtomicUuid::new(uuid)),
                 username,
+                server_address,
             );
             this.server_connection_map.write().insert(cid, connection_struct);
 

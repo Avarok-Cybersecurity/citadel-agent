@@ -42,6 +42,10 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     /// Stores pending PeerConnect signals awaiting UI acceptance.
     /// Key is (session_cid, peer_cid), value is the original PeerSignal for responding.
     pub pending_peer_connect_signals: Arc<RwLock<HashMap<(u64, u64), PeerSignal>>>,
+    /// Cache for peer usernames received from registration events.
+    /// Key is (session_cid, peer_cid), value is the peer's username.
+    /// Used as fallback when SDK's get_local_group_mutual_peers returns empty username.
+    pub peer_username_cache: Arc<RwLock<HashMap<(u64, u64), String>>>,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -53,6 +57,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             tcp_connection_map: self.tcp_connection_map.clone(),
             orphan_sessions: self.orphan_sessions.clone(),
             pending_peer_connect_signals: self.pending_peer_connect_signals.clone(),
+            peer_username_cache: self.peer_username_cache.clone(),
             io: self.io.clone(),
         }
     }
@@ -66,6 +71,7 @@ impl<T: IOInterface, R: Ratchet> From<T> for CitadelWorkspaceService<T, R> {
             tcp_connection_map: Arc::new(RwLock::new(Default::default())),
             orphan_sessions: Arc::new(RwLock::new(Default::default())),
             pending_peer_connect_signals: Arc::new(RwLock::new(Default::default())),
+            peer_username_cache: Arc::new(RwLock::new(Default::default())),
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -136,6 +142,7 @@ pub struct Connection<R: Ratchet> {
     pub c2s_file_transfer_handlers: HashMap<ObjectId, Option<ObjectTransferHandler>>,
     pub groups: HashMap<MessageGroupKey, GroupConnection>,
     pub username: String,
+    pub server_address: String,
 }
 
 #[allow(dead_code)]
@@ -161,6 +168,7 @@ impl<R: Ratchet> Connection<R> {
         client_server_remote: ClientServerRemote<R>,
         associated_tcp_connection: Arc<AtomicUuid>,
         username: String,
+        server_address: String,
     ) -> Self {
         Connection {
             peers: HashMap::new(),
@@ -170,6 +178,7 @@ impl<R: Ratchet> Connection<R> {
             c2s_file_transfer_handlers: HashMap::new(),
             username,
             groups: HashMap::new(),
+            server_address,
         }
     }
 

@@ -59,6 +59,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 peers.len(),
                 cid
             );
+
+            // Get cached usernames for fallback
+            let username_cache = this.peer_username_cache.read();
+
             let peers = ListRegisteredPeersResponse {
                 cid,
                 peers: peers
@@ -66,13 +70,17 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     .into_iter()
                     .filter(|peer| peer.cid != cid)
                     .map(|peer| {
+                        // Use SDK username, or fall back to cached username from registration
+                        let username = peer.username.clone().or_else(|| {
+                            username_cache.get(&(cid, peer.cid)).cloned()
+                        });
                         (
                             peer.cid,
                             PeerInformation {
-                                cid,
+                                cid: peer.cid,
                                 online_status: peer.is_online,
                                 name: peer.full_name,
-                                username: peer.username,
+                                username,
                             },
                         )
                     })

@@ -36,7 +36,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         cid,
                         Some(peer_cid),
                         &mut server_connection_map,
-                        this.tcp_connection_map.clone(),
+                        this.tx_to_localhost_clients.clone(),
                         Some(request_id),
                     );
 

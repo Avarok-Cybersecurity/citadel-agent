@@ -53,36 +53,32 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             }
             None => {
                 error!(target: "citadel","delete_virtual_file: server connection not found");
-                Err(NetworkError::msg("delete_virtual_file: Server Connection Not Found"))
+                Err(NetworkError::msg(
+                    "delete_virtual_file: Server Connection Not Found",
+                ))
             }
         }
     }; // Lock dropped here - BEFORE any await
 
     let response = match delete_request {
-        Ok(request) => {
-            match remote.send(request).await {
-                Ok(_) => {
-                    InternalServiceResponse::DeleteVirtualFileSuccess(DeleteVirtualFileSuccess {
-                        cid,
-                        request_id: Some(request_id),
-                    })
-                }
-                Err(err) => {
-                    InternalServiceResponse::DeleteVirtualFileFailure(DeleteVirtualFileFailure {
-                        cid,
-                        message: err.into_string(),
-                        request_id: Some(request_id),
-                    })
-                }
-            }
-        }
-        Err(err) => {
-            InternalServiceResponse::DeleteVirtualFileFailure(DeleteVirtualFileFailure {
+        Ok(request) => match remote.send(request).await {
+            Ok(_) => InternalServiceResponse::DeleteVirtualFileSuccess(DeleteVirtualFileSuccess {
                 cid,
-                message: err.into_string(),
                 request_id: Some(request_id),
-            })
-        }
+            }),
+            Err(err) => {
+                InternalServiceResponse::DeleteVirtualFileFailure(DeleteVirtualFileFailure {
+                    cid,
+                    message: err.into_string(),
+                    request_id: Some(request_id),
+                })
+            }
+        },
+        Err(err) => InternalServiceResponse::DeleteVirtualFileFailure(DeleteVirtualFileFailure {
+            cid,
+            message: err.into_string(),
+            request_id: Some(request_id),
+        }),
     };
 
     Some(HandledRequestResult { response, uuid })

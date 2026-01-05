@@ -16,7 +16,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let server_connection_map = &this.server_connection_map;
     let group_broadcast = group_event.event;
     let implicated_cid = group_event.session_cid;
-    let tcp_connection_map = &this.tcp_connection_map;
+    let tcp_connection_map = &this.tx_to_localhost_clients;
 
     let mut server_connection_map = server_connection_map.write();
     if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
@@ -190,8 +190,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         match response {
             Some(internal_service_response) => {
                 if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-                    let associated_tcp_connection =
-                        connection.associated_tcp_connection.load(Ordering::Relaxed);
+                    let associated_tcp_connection = connection
+                        .associated_localhost_connection
+                        .load(Ordering::Relaxed);
                     drop(server_connection_map);
                     send_response_to_tcp_client(
                         tcp_connection_map,

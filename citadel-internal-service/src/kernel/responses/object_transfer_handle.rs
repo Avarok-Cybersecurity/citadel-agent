@@ -39,7 +39,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
         let mut server_connection_map = this.server_connection_map.write();
         if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-            let uuid = connection.associated_tcp_connection.load(Ordering::Relaxed);
+            let uuid = connection
+                .associated_localhost_connection
+                .load(Ordering::Relaxed);
 
             if is_revfs_pull {
                 spawn_tick_updater(
@@ -47,7 +49,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     implicated_cid,
                     Some(peer_cid),
                     &mut server_connection_map,
-                    this.tcp_connection_map.clone(),
+                    this.tx_to_localhost_clients.clone(),
                     None,
                 );
             } else {
@@ -69,7 +71,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
                 drop(server_connection_map);
 
-                send_response_to_tcp_client(&this.tcp_connection_map, response, uuid)?;
+                send_response_to_tcp_client(&this.tx_to_localhost_clients, response, uuid)?;
             }
         }
     } else {
@@ -82,7 +84,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             implicated_cid,
             Some(peer_cid),
             &mut server_connection_map,
-            this.tcp_connection_map.clone(),
+            this.tx_to_localhost_clients.clone(),
             None,
         );
     }

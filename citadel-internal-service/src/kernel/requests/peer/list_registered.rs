@@ -71,9 +71,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     .filter(|peer| peer.cid != cid)
                     .map(|peer| {
                         // Use SDK username, or fall back to cached username from registration
-                        let username = peer.username.clone().or_else(|| {
-                            username_cache.get(&(cid, peer.cid)).cloned()
-                        });
+                        let username = peer
+                            .username
+                            .clone()
+                            .or_else(|| username_cache.get(&(cid, peer.cid)).cloned());
                         (
                             peer.cid,
                             PeerInformation {

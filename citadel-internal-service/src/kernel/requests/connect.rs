@@ -30,6 +30,57 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     };
     let remote = this.remote();
 
+    // GUARD: Session reuse check - prevent duplicate SDK sessions for same username
+    // This prevents the race condition where ClaimSession + second Connect resets ratchet
+    let existing_cid = {
+        let lock = this.server_connection_map.read();
+        lock.iter()
+            .find(|(_, conn)| conn.username == username)
+            .map(|(cid, _)| *cid)
+    };
+
+    if let Some(cid) = existing_cid {
+        citadel_sdk::logging::info!(target: "citadel", "[Connect] Found existing session {} for user {}, checking SDK...", cid, username);
+
+        // Query SDK to see if session is actually active
+        let sdk_active = match remote.sessions().await {
+            Ok(sessions) => sessions.sessions.iter().any(|sess| sess.cid == cid),
+            Err(e) => {
+                citadel_sdk::logging::warn!(target: "citadel", "[Connect] Failed to query SDK sessions: {:?}, assuming inactive", e);
+                false
+            }
+        };
+
+        if sdk_active {
+            // Session is active in both internal state and SDK - REUSE IT
+            citadel_sdk::logging::info!(target: "citadel", "[Connect] REUSING existing active session {} for user {} (preventing ratchet reset)", cid, username);
+
+            // Update TCP mapping to new connection
+            {
+                let lock = this.server_connection_map.read();
+                if let Some(conn) = lock.get(&cid) {
+                    conn.associated_localhost_connection
+                        .store(uuid, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+
+            // Return success with existing session
+            let response = InternalServiceResponse::ConnectSuccess(
+                citadel_internal_service_types::ConnectSuccess {
+                    cid,
+                    request_id: Some(request_id),
+                },
+            );
+
+            return Some(HandledRequestResult { response, uuid });
+        } else {
+            // Internal has session but SDK doesn't - clean up stale state
+            citadel_sdk::logging::info!(target: "citadel", "[Connect] Clearing stale session {} for user {} (SDK session disconnected)", cid, username);
+            this.server_connection_map.write().remove(&cid);
+        }
+    }
+
+    // Proceed with new connection (no existing session or stale session was cleaned)
     match remote
         .connect(
             AuthenticationRequest::credentialed(username, password),
@@ -94,9 +145,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 username,
                 server_address,
             );
-            this.server_connection_map.write().insert(cid, connection_struct);
+            this.server_connection_map
+                .write()
+                .insert(cid, connection_struct);
 
-            let hm_for_conn = this.tcp_connection_map.clone();
+            let hm_for_conn = this.tx_to_localhost_clients.clone();
             let server_conn_map = this.server_connection_map.clone();
 
             let response = InternalServiceResponse::ConnectSuccess(
@@ -121,7 +174,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     let current_tcp_uuid = server_lock
                         .get(&cid)
                         .map(|conn| {
-                            conn.associated_tcp_connection
+                            conn.associated_localhost_connection
                                 .load(std::sync::atomic::Ordering::Relaxed)
                         })
                         .unwrap_or(uuid);

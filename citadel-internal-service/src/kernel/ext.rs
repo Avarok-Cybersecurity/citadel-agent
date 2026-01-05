@@ -1,8 +1,7 @@
 use crate::kernel::{send_to_kernel, sink_send_payload, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
-    ServiceConnectionAccepted,
+    InternalServicePayload, InternalServiceResponse, ServiceConnectionAccepted,
 };
 use citadel_sdk::logging::{debug, error, info, warn};
 use citadel_sdk::prelude::Ratchet;
@@ -13,6 +12,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
+
+use citadel_internal_service_types::InternalServiceRequest;
 
 pub trait IOInterfaceExt: IOInterface {
     #[allow(clippy::too_many_arguments)]
@@ -28,10 +29,7 @@ pub trait IOInterfaceExt: IOInterface {
         orphan_sessions: Arc<RwLock<HashMap<Uuid, bool>>>,
     ) {
         tokio::task::spawn(async move {
-            // Clone to_kernel for use in orphan cleanup (original will be moved into read_task)
-            let to_kernel_for_cleanup = to_kernel.clone();
-
-            let write_task = async move {
+            let write_task = async {
                 let response =
                     InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
                         cid: 0,
@@ -52,7 +50,7 @@ pub trait IOInterfaceExt: IOInterface {
                 }
             };
 
-            let read_task = async move {
+            let read_task = async {
                 while let Some(message) = stream.next().await {
                     match message {
                         Ok(message) => {
@@ -86,84 +84,37 @@ pub trait IOInterfaceExt: IOInterface {
                 .unwrap_or(false);
 
             if is_orphan {
-                info!(target: "citadel", "Connection {conn_id:?} is in orphan mode, preserving sessions");
+                info!(target: "citadel", "Connection {conn_id:?} is in orphan mode, preserving sessions and peer connections");
 
-                // CRITICAL FIX: Even in orphan mode, P2P channels are broken when TCP drops.
-                // We must:
-                // 1. Notify the SDK about broken P2P connections (so it cleans up internal state)
-                // 2. Clear peer connections from the internal service's Connection structs
-                let server_connection_map_lock = server_connection_map.read();
+                // In orphan mode, we preserve EVERYTHING:
+                // - Sessions remain in server_connection_map
+                // - Peer connections remain intact (SDK P2P channels are still active)
+                // - When the user reconnects and claims the session, they can continue using existing P2P connections
+                //
+                // We do NOT disconnect SDK P2P connections or clear peer state because:
+                // 1. The SDK runs on the internal service, not the client browser
+                // 2. P2P connections in SDK are between sessions, not TCP connections
+                // 3. When client reconnects, they can resume using the same P2P channels
 
-                // Find all CIDs belonging to the disconnected TCP connection
-                let orphaned_cids: Vec<u64> = server_connection_map_lock
-                    .iter()
-                    .filter(|(_, conn)| conn.associated_tcp_connection.load(Ordering::Relaxed) == conn_id)
-                    .map(|(cid, _)| *cid)
-                    .collect();
+                let orphaned_session_count = {
+                    let lock = server_connection_map.read();
+                    lock.iter()
+                        .filter(|(_, conn)| {
+                            conn.associated_localhost_connection.load(Ordering::Relaxed) == conn_id
+                        })
+                        .count()
+                };
 
-                info!(target: "citadel", "Orphan disconnect: found {} sessions to process for peer cleanup: {:?}", orphaned_cids.len(), orphaned_cids);
+                info!(target: "citadel", "Orphan mode: preserved {} sessions with their peer connections for reconnection", orphaned_session_count);
 
-                // Collect all (active_session_cid, orphaned_peer_cid) pairs that need SDK disconnect
-                // These are active sessions that have orphaned sessions as peers
-                let mut sdk_disconnect_pairs: Vec<(u64, u64)> = Vec::new();
-                for (session_cid, conn) in server_connection_map_lock.iter() {
-                    let is_orphaned_session = orphaned_cids.contains(session_cid);
-                    if !is_orphaned_session {
-                        // Active session - collect orphaned peers for SDK disconnect
-                        for orphaned_cid in &orphaned_cids {
-                            if conn.peers.contains_key(orphaned_cid) {
-                                sdk_disconnect_pairs.push((*session_cid, *orphaned_cid));
-                            }
-                        }
-                    }
-                }
-                drop(server_connection_map_lock);
-
-                // Send PeerDisconnect requests to SDK for active sessions with orphaned peers
-                // This notifies the SDK to clean up its internal P2P state
-                // IMPORTANT: Do NOT clear the peer from the map here - let disconnect.rs do it
-                // after the SDK has been notified. If we clear it here, disconnect.rs will
-                // fail its peer existence check and never notify the SDK.
-                for (session_cid, peer_cid) in &sdk_disconnect_pairs {
-                    info!(target: "citadel", "Sending SDK PeerDisconnect for active session {} -> orphaned peer {}", session_cid, peer_cid);
-                    let disconnect_request = InternalServiceRequest::PeerDisconnect {
-                        request_id: Uuid::new_v4(),
-                        cid: *session_cid,
-                        peer_cid: *peer_cid,
-                    };
-                    if let Err(err) = to_kernel_for_cleanup.send((disconnect_request, conn_id)) {
-                        error!(target: "citadel", "Failed to send PeerDisconnect to kernel: {:?}", err);
-                    }
-                }
-
-                // Only clear peers from ORPHANED sessions (their P2P channels are definitely broken).
-                // For ACTIVE sessions, the PeerDisconnect handler (disconnect.rs) will clear the
-                // peer after notifying the SDK. This ensures the SDK cleans up its internal state.
-                let mut server_connection_map = server_connection_map.write();
-                for (session_cid, conn) in server_connection_map.iter_mut() {
-                    let is_orphaned_session = orphaned_cids.contains(session_cid);
-
-                    if is_orphaned_session {
-                        // This is an orphaned session - clear ALL its peers (channels are broken)
-                        let peer_count = conn.peers.len();
-                        if peer_count > 0 {
-                            conn.peers.clear();
-                            info!(target: "citadel", "Cleared {} peers from orphaned session {}", peer_count, session_cid);
-                        }
-                    }
-                    // NOTE: For active sessions, we do NOT clear orphaned peers here.
-                    // The PeerDisconnect handler will clear them after notifying the SDK.
-                }
-
-                drop(server_connection_map);
-                // Don't remove sessions, just remove the orphan flag
                 orphan_sessions.write().remove(&conn_id);
             } else {
                 let mut server_connection_map = server_connection_map.write();
                 // Remove all connections whose associated_tcp_connection is conn_id
                 let count_before = server_connection_map.len();
-                server_connection_map
-                    .retain(|_, v| v.associated_tcp_connection.load(Ordering::Relaxed) != conn_id);
+                server_connection_map.retain(|_, v| {
+                    v.associated_localhost_connection.load(Ordering::Relaxed) != conn_id
+                });
                 let count_after = server_connection_map.len();
                 debug!(target: "citadel", "Removed {} connections from server_connection_map for {conn_id:?}. Reconnection will be required", count_before - count_after);
             }

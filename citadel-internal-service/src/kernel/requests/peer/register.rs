@@ -33,6 +33,29 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
     let remote = this.remote();
 
+    // Check if peer is already registered before attempting registration
+    // This prevents "Ratchet does not exist" errors from stale registration requests
+    let already_registered = remote
+        .account_manager()
+        .get_hyperlan_peer_list(cid)
+        .await
+        .ok()
+        .flatten()
+        .map(|peers| peers.contains(&peer_cid))
+        .unwrap_or(false);
+
+    if already_registered {
+        info!(target: "citadel", "[PeerRegister] Peer {} is already registered to {}, returning error", peer_cid, cid);
+        return Some(HandledRequestResult {
+            response: InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
+                cid,
+                message: format!("Peer {} is already registered", peer_cid),
+                request_id: Some(request_id),
+            }),
+            uuid,
+        });
+    }
+
     let client_to_server_remote = ClientServerRemote::new(
         VirtualTargetType::LocalGroupServer { session_cid: cid },
         remote.clone(),

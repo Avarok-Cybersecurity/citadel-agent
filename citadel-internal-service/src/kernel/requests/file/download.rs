@@ -64,19 +64,17 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     }; // Lock dropped here - BEFORE any await
 
     let response = match pull_request {
-        Ok(request) => {
-            match remote.send(request).await {
-                Ok(_) => InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess {
-                    cid,
-                    request_id: Some(request_id),
-                }),
-                Err(err) => InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
-                    cid,
-                    message: err.into_string(),
-                    request_id: Some(request_id),
-                }),
-            }
-        }
+        Ok(request) => match remote.send(request).await {
+            Ok(_) => InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess {
+                cid,
+                request_id: Some(request_id),
+            }),
+            Err(err) => InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
+                cid,
+                message: err.into_string(),
+                request_id: Some(request_id),
+            }),
+        },
         Err(err) => InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
             cid,
             message: err.into_string(),

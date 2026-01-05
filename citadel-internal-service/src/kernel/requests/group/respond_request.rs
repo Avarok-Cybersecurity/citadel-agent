@@ -52,7 +52,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         let server_connection_map = this.server_connection_map.read();
         match server_connection_map.get(&cid) {
             Some(connection) => {
-                let uuid = connection.associated_tcp_connection.load(Ordering::Relaxed);
+                let uuid = connection
+                    .associated_localhost_connection
+                    .load(Ordering::Relaxed);
                 match connection.peers.get(&peer_cid) {
                     Some(peer_connection) => match &peer_connection.remote {
                         Some(peer_remote) => Ok((peer_remote.clone(), uuid)),
@@ -104,7 +106,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                                         cid,
                                         uuid,
                                         rx,
-                                        this.tcp_connection_map.clone(),
+                                        this.tx_to_localhost_clients.clone(),
                                     );
 
                                     result = true;
@@ -162,13 +164,13 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 ),
             }
         }
-        Err(message) => InternalServiceResponse::GroupRespondRequestFailure(
-            GroupRespondRequestFailure {
+        Err(message) => {
+            InternalServiceResponse::GroupRespondRequestFailure(GroupRespondRequestFailure {
                 cid,
                 message,
                 request_id: Some(request_id),
-            },
-        ),
+            })
+        }
     };
 
     Some(HandledRequestResult { response, uuid })

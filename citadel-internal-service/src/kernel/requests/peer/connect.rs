@@ -13,7 +13,7 @@ use citadel_sdk::prelude::{
 use futures::StreamExt;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
@@ -33,27 +33,57 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     info!(target: "citadel", "[PeerConnect] *** RECEIVED PeerConnect REQUEST *** cid={}, peer_cid={}, request_id={:?}", cid, peer_cid, request_id);
 
     let remote = this.remote();
-    info!(target: "citadel", "[PeerConnect] Got remote, checking if already connected in internal service peers map...");
+    info!(target: "citadel", "[PeerConnect] Got remote, checking boundary conditions...");
 
-    let already_connected = this
-        .server_connection_map
-        .read()
-        .get(&cid)
-        .map(|r| r.peers.contains_key(&peer_cid))
-        .unwrap_or(false);
+    // Boundary check: sync internal state with SDK before connecting
+    let peer_exists_in_internal = {
+        let lock = this.server_connection_map.read();
+        lock.get(&cid)
+            .map(|conn| conn.peers.contains_key(&peer_cid))
+            .unwrap_or(false)
+    };
 
-    if already_connected {
-        info!(target: "citadel", "[PeerConnect] Already connected to peer, returning success");
-        let response = InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
-            cid,
-            peer_cid,
-            request_id: Some(request_id),
-        });
+    if peer_exists_in_internal {
+        info!(target: "citadel", "[PeerConnect] Peer {} exists in internal state, checking SDK...", peer_cid);
 
-        return Some(HandledRequestResult { response, uuid });
+        // Query SDK to see if P2P connection actually exists
+        let sdk_has_peer = match remote.sessions().await {
+            Ok(sessions) => {
+                sessions.sessions
+                    .iter()
+                    .find(|s| s.cid == cid)
+                    .map(|s| s.connections.iter().any(|c| c.peer_cid == Some(peer_cid)))
+                    .unwrap_or(false)
+            }
+            Err(e) => {
+                info!(target: "citadel", "[PeerConnect] Failed to query SDK sessions: {:?}, assuming no peer", e);
+                false
+            }
+        };
+
+        if sdk_has_peer {
+            // Both internal and SDK have peer → Hard error
+            info!(target: "citadel", "[PeerConnect] BOUNDARY: Already connected to peer {} (both internal and SDK have it)", peer_cid);
+            return Some(HandledRequestResult {
+                response: InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
+                    cid,
+                    message: format!("Already connected to peer {}", peer_cid),
+                    request_id: Some(request_id),
+                }),
+                uuid,
+            });
+        } else {
+            // Internal has peer but SDK doesn't → Clear stale state
+            info!(target: "citadel", "[PeerConnect] BOUNDARY: Clearing stale peer {} from session {} (SDK ratchet cleared)", peer_cid, cid);
+            let mut lock = this.server_connection_map.write();
+            if let Some(conn) = lock.get_mut(&cid) {
+                conn.peers.remove(&peer_cid);
+            }
+            // Now proceed with fresh PeerConnect
+        }
     }
 
-    info!(target: "citadel", "[PeerConnect] Not yet connected, creating ClientServerRemote...");
+    info!(target: "citadel", "[PeerConnect] Creating fresh ClientServerRemote for peer {}...", peer_cid);
 
     let client_to_server_remote = ClientServerRemote::new(
         VirtualTargetType::LocalGroupPeer {
@@ -97,7 +127,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                             }
                         }
 
-                        let hm_for_conn = this.tcp_connection_map.clone();
+                        let hm_for_conn = this.tx_to_localhost_clients.clone();
                         let server_conn_map = this.server_connection_map.clone();
 
                         let connection_read_stream = async move {
@@ -119,7 +149,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                                 let current_tcp_uuid = server_lock
                                     .get(&cid)
                                     .map(|conn| {
-                                        conn.associated_tcp_connection
+                                        conn.associated_localhost_connection
                                             .load(std::sync::atomic::Ordering::Relaxed)
                                     })
                                     .unwrap_or(uuid);
@@ -155,6 +185,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     Err(err) => {
                         let err_str = err.into_string();
                         error!(target: "citadel", "[PeerConnect] connect_to_peer_custom FAILED: {}", err_str);
+
                         InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
                             cid,
                             message: err_str,

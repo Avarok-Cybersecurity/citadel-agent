@@ -358,7 +358,12 @@ pub fn main() {
 
         // Add location info if available
         let message = if let Some(location) = panic_info.location() {
-            format!("{} at {}:{}", panic_message, location.file(), location.line())
+            format!(
+                "{} at {}:{}",
+                panic_message,
+                location.file(),
+                location.line()
+            )
         } else {
             panic_message
         };

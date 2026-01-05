@@ -52,13 +52,13 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         },
                     );
 
-                    let uuid = conn.associated_tcp_connection.load(Ordering::Relaxed);
+                    let uuid = conn.associated_localhost_connection.load(Ordering::Relaxed);
                     spawn_group_channel_receiver(
                         key,
                         cid,
                         uuid,
                         rx,
-                        this.tcp_connection_map.clone(),
+                        this.tx_to_localhost_clients.clone(),
                     );
 
                     InternalServiceResponse::GroupCreateSuccess(GroupCreateSuccess {

@@ -18,7 +18,7 @@ async fn send_response_with_fallback<T: IOInterface, R: Ratchet>(
     response: InternalServiceResponse,
     target_uuid: uuid::Uuid,
 ) -> Result<(), NetworkError> {
-    let tcp_map = this.tcp_connection_map.read();
+    let tcp_map = this.tx_to_localhost_clients.read();
 
     // First, try the target connection directly
     if let Some(sender) = tcp_map.get(&target_uuid) {
@@ -72,7 +72,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 send_response_with_fallback(
                     this,
                     response,
-                    conn.associated_tcp_connection.load(Ordering::Relaxed),
+                    conn.associated_localhost_connection.load(Ordering::Relaxed),
                 )
                 .await?;
             }
@@ -114,7 +114,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 let server_connection_map = this.server_connection_map.read();
                 server_connection_map
                     .get(&session_cid)
-                    .map(|conn| conn.associated_tcp_connection.load(Ordering::Relaxed))
+                    .map(|conn| conn.associated_localhost_connection.load(Ordering::Relaxed))
             }; // Lock dropped here
 
             if let Some(associated_tcp_connection) = tcp_conn {
@@ -168,7 +168,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 let server_connection_map = this.server_connection_map.read();
                 server_connection_map
                     .get(&session_cid)
-                    .map(|conn| conn.associated_tcp_connection.load(Ordering::Relaxed))
+                    .map(|conn| conn.associated_localhost_connection.load(Ordering::Relaxed))
             }; // Lock dropped here
 
             if let Some(associated_tcp_connection) = tcp_conn {

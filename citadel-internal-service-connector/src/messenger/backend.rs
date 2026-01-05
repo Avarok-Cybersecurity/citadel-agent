@@ -237,9 +237,9 @@ impl CitadelWorkspaceBackend {
 
         if let Some(response) = self.wait_for_response(batch_request_id).await {
             match response {
-                InternalServiceResponse::BatchedResponse(BatchedResponseData { results, .. }) => {
-                    Ok(results)
-                }
+                InternalServiceResponse::BatchedResponse(BatchedResponseData {
+                    results, ..
+                }) => Ok(results),
                 other => {
                     citadel_logging::warn!(target: "citadel", "[SEND_BATCHED] Unexpected response type: {:?}", other);
                     Err(BackendError::StorageError(

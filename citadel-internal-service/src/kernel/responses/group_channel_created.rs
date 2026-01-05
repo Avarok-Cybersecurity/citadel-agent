@@ -19,14 +19,23 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     if let Some(connection) = server_connection_map.get_mut(&cid) {
         connection.add_group_channel(key, GroupConnection { key, tx, cid });
 
-        let uuid = connection.associated_tcp_connection.load(Ordering::Relaxed);
-        requests::spawn_group_channel_receiver(key, cid, uuid, rx, this.tcp_connection_map.clone());
+        let uuid = connection
+            .associated_localhost_connection
+            .load(Ordering::Relaxed);
+        requests::spawn_group_channel_receiver(
+            key,
+            cid,
+            uuid,
+            rx,
+            this.tx_to_localhost_clients.clone(),
+        );
 
-        let associated_tcp_connection =
-            connection.associated_tcp_connection.load(Ordering::Relaxed);
+        let associated_tcp_connection = connection
+            .associated_localhost_connection
+            .load(Ordering::Relaxed);
         drop(server_connection_map);
         send_response_to_tcp_client(
-            &this.tcp_connection_map,
+            &this.tx_to_localhost_clients,
             InternalServiceResponse::GroupChannelCreateSuccess(GroupChannelCreateSuccess {
                 cid,
                 group_key: key,

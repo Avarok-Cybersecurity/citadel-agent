@@ -31,7 +31,7 @@ mod connection_management;
 mod file;
 mod group;
 mod local_db;
-mod peer;
+pub(crate) mod peer;
 
 #[async_recursion]
 #[allow(clippy::multiple_bound_locations)]
@@ -174,15 +174,19 @@ where
                     handle_request(this, cmd_uuid, cmd)
                         .await
                         .map(|result| result.response)
-                }) as Pin<Box<dyn std::future::Future<Output = Option<InternalServiceResponse>> + Send>>;
+                })
+                    as Pin<
+                        Box<
+                            dyn std::future::Future<Output = Option<InternalServiceResponse>>
+                                + Send,
+                        >,
+                    >;
                 futures.push_back(fut);
             }
 
             // Collect all results in order
-            let results: Vec<InternalServiceResponse> = futures
-                .filter_map(|r| async { r })
-                .collect()
-                .await;
+            let results: Vec<InternalServiceResponse> =
+                futures.filter_map(|r| async { r }).collect().await;
 
             log::info!(target: "citadel", "[Batched] Completed batched request, returning {} results, request_id={}", results.len(), request_id);
             Some(HandledRequestResult {
@@ -202,7 +206,9 @@ pub(crate) fn spawn_group_channel_receiver(
     implicated_cid: u64,
     uuid: Uuid,
     mut rx: GroupChannelRecvHalf,
-    tcp_connection_map: Arc<parking_lot::RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+    tcp_connection_map: Arc<
+        parking_lot::RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>,
+    >,
 ) {
     // Handler/Receiver for Group Channel Broadcasts that aren't handled in on_node_event_received in Kernel
     let group_channel_receiver = async move {

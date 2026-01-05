@@ -1328,6 +1328,12 @@ pub enum ConfigCommand {
     DisconnectOrphan {
         session_cid: Option<u64>,
     },
+    /// Release a session, marking it as orphaned without disconnecting.
+    /// Called when the last browser tab with this CID closes.
+    /// The session stays in server_connection_map but becomes immediately claimable.
+    ReleaseSession {
+        session_cid: u64,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

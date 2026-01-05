@@ -36,7 +36,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                             peer_cid: None,
                             request_id: None,
                         }),
-                        conn.associated_tcp_connection.load(Ordering::Relaxed),
+                        conn.associated_localhost_connection.load(Ordering::Relaxed),
                     )
                 } else {
                     return Ok(());
@@ -53,7 +53,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                             peer_cid: Some(peer_cid),
                             request_id: None,
                         }),
-                        conn.associated_tcp_connection.load(Ordering::Relaxed),
+                        conn.associated_localhost_connection.load(Ordering::Relaxed),
                     )
                 } else {
                     return Ok(());
@@ -62,7 +62,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             _ => return Ok(()),
         };
 
-        return send_response_to_tcp_client(&this.tcp_connection_map, signal, conn_uuid);
+        return send_response_to_tcp_client(&this.tx_to_localhost_clients, signal, conn_uuid);
     } else {
         citadel_sdk::logging::warn!(target: "citadel", "The disconnect request does not contain a connection type")
     }

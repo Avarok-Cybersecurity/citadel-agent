@@ -367,10 +367,13 @@ where
                                         // Previously, ISM messages were ONLY routed to ISM, which caused
                                         // the leader tab to never receive P2P messages because ISM
                                         // delivery wasn't working correctly in multi-tab scenarios.
-                                        let forward_message = InternalServiceResponse::MessageNotification(
-                                            message.clone()
-                                        );
-                                        if let Err(err) = tx_to_local_user_clone.send(forward_message) {
+                                        let forward_message =
+                                            InternalServiceResponse::MessageNotification(
+                                                message.clone(),
+                                            );
+                                        if let Err(err) =
+                                            tx_to_local_user_clone.send(forward_message)
+                                        {
                                             log::error!(target: "citadel", "Error forwarding ISM MessageNotification to JS: {err:?}");
                                         } else {
                                             log::trace!(target: "citadel", "Forwarded ISM MessageNotification to JS (cid={}, peer_cid={})",
@@ -395,7 +398,8 @@ where
                                     stream_id: ISM_STREAM_ID,
                                 };
 
-                                let available_keys: Vec<StreamKey> = this.txs_to_inbound.iter().map(|r| *r.key()).collect();
+                                let available_keys: Vec<StreamKey> =
+                                    this.txs_to_inbound.iter().map(|r| *r.key()).collect();
                                 log::info!(target: "ism", "[MSG-ROUTE] Routing message: source={} dest={} msg_id={} | Looking for stream_key={:?} | Available: {:?}",
                                     ism_message.source_id(), ism_message.destination_id(),
                                     match &ism_message { InternalMessage::Message(m) => m.message_id, _ => 0 },

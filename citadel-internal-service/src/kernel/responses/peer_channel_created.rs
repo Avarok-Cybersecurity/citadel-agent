@@ -1,6 +1,8 @@
 use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
-use citadel_internal_service_types::{InternalServiceResponse, MessageNotification, PeerConnectSuccess};
+use citadel_internal_service_types::{
+    InternalServiceResponse, MessageNotification, PeerConnectSuccess,
+};
 use citadel_sdk::logging::{error, info};
 use citadel_sdk::prelude::{NetworkError, PeerChannelCreated, Ratchet};
 use futures::StreamExt;
@@ -54,8 +56,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             info!(target: "citadel", "[PeerChannelCreated] Added peer {} to session {} (channel only). Total peers: {}", peer_cid, session_cid, connection.peers.len());
         }
 
-        let associated_tcp_connection = connection.associated_tcp_connection.load(Ordering::Relaxed);
-        let tcp_connection_map = this.tcp_connection_map.clone();
+        let associated_tcp_connection = connection
+            .associated_localhost_connection
+            .load(Ordering::Relaxed);
+        let tcp_connection_map = this.tx_to_localhost_clients.clone();
         let server_conn_map = this.server_connection_map.clone();
 
         drop(server_connection_map);
@@ -68,20 +72,19 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             while let Some(message) = stream.next().await {
                 info!(target: "citadel", "[PeerChannelCreated] Received P2P message! session={}, peer_cid={}, msg_len={}", session_cid, peer_cid, message.len());
 
-                let notification = InternalServiceResponse::MessageNotification(
-                    MessageNotification {
+                let notification =
+                    InternalServiceResponse::MessageNotification(MessageNotification {
                         message: message.into_buffer(),
                         cid: session_cid,
                         peer_cid,
                         request_id: None,
-                    },
-                );
+                    });
 
                 // Get the current associated TCP connection (may have changed via ClaimSession)
                 let server_lock = server_conn_map.read();
                 let current_tcp_uuid = server_lock
                     .get(&session_cid)
-                    .map(|conn| conn.associated_tcp_connection.load(Ordering::Relaxed))
+                    .map(|conn| conn.associated_localhost_connection.load(Ordering::Relaxed))
                     .unwrap_or(associated_tcp_connection);
                 drop(server_lock);
 
@@ -103,7 +106,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
         // Notify the UI that the P2P connection is established
         send_response_to_tcp_client(
-            &this.tcp_connection_map,
+            &this.tx_to_localhost_clients,
             InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
                 cid: session_cid,
                 peer_cid,

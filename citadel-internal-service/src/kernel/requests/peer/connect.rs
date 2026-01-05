@@ -5,7 +5,7 @@ use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, MessageNotification, PeerConnectFailure,
     PeerConnectSuccess,
 };
-use citadel_sdk::logging::{error, info};
+use citadel_sdk::logging::{error, info, warn};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::{
     ProtocolRemoteExt, ProtocolRemoteTargetExt, Ratchet, VirtualTargetType,
@@ -156,19 +156,46 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                                 drop(server_lock);
 
                                 info!(target:"citadel","[P2P-RECV] Forwarding to TCP uuid: {current_tcp_uuid}");
-                                match hm_for_conn.read().get(&current_tcp_uuid) {
-                                    Some(entry) => {
-                                        info!(target:"citadel","[P2P-RECV] Found TCP entry, sending MessageNotification");
-                                        if let Err(err) = entry.send(message) {
-                                            error!(target:"citadel","[P2P-RECV] Error sending message to client: {err:?}");
-                                        } else {
-                                            info!(target:"citadel","[P2P-RECV] Successfully sent MessageNotification to client");
-                                        }
-                                    }
-                                    None => {
-                                        info!(target:"citadel","[P2P-RECV] Hash map connection not found for TCP uuid: {}", current_tcp_uuid)
+
+                                // First try the target connection directly
+                                let tcp_map = hm_for_conn.read();
+                                let mut sent_via_target = false;
+
+                                if let Some(sender) = tcp_map.get(&current_tcp_uuid) {
+                                    info!(target:"citadel","[P2P-RECV] Found TCP entry, sending MessageNotification");
+                                    if sender.send(message.clone()).is_ok() {
+                                        info!(target:"citadel","[P2P-RECV] Successfully sent MessageNotification to target client");
+                                        sent_via_target = true;
+                                    } else {
+                                        error!(target:"citadel","[P2P-RECV] Error sending message to target client, will try fallback");
                                     }
                                 }
+
+                                // FALLBACK: If target not found or send failed, broadcast to all active connections
+                                // This handles: TCP drop during send, race with ClaimSession, stale UUID
+                                if !sent_via_target {
+                                    warn!(target:"citadel","[P2P-RECV] Target TCP {} not found or send failed, broadcasting MessageNotification to all {} connections", current_tcp_uuid, tcp_map.len());
+
+                                    let mut sent_count = 0;
+                                    for (uuid, sender) in tcp_map.iter() {
+                                        // Skip the connection we already tried (if any)
+                                        if *uuid == current_tcp_uuid {
+                                            continue;
+                                        }
+                                        if sender.send(message.clone()).is_ok() {
+                                            sent_count += 1;
+                                            info!(target:"citadel","[P2P-RECV] Broadcast sent to {}", uuid);
+                                        }
+                                    }
+
+                                    if sent_count == 0 {
+                                        warn!(target:"citadel","[P2P-RECV] No active connections for MessageNotification - message may be queued in ILM");
+                                    } else {
+                                        info!(target:"citadel","[P2P-RECV] Successfully broadcast MessageNotification to {} connections", sent_count);
+                                    }
+                                }
+
+                                drop(tcp_map);
                             }
                             info!(target:"citadel","[P2P-RECV] P2P read stream ended for cid={cid} from peer={peer_cid}");
                         };

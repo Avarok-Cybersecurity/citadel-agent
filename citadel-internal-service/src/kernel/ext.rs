@@ -84,7 +84,7 @@ pub trait IOInterfaceExt: IOInterface {
                 .unwrap_or(false);
 
             if is_orphan {
-                info!(target: "citadel", "Connection {conn_id:?} is in orphan mode, preserving sessions and peer connections");
+                info!(target: "citadel", "[ORPHAN_DEBUG] Connection {conn_id:?} is in orphan mode, preserving sessions and peer connections");
 
                 // In orphan mode, we preserve EVERYTHING:
                 // - Sessions remain in server_connection_map
@@ -96,16 +96,23 @@ pub trait IOInterfaceExt: IOInterface {
                 // 2. P2P connections in SDK are between sessions, not TCP connections
                 // 3. When client reconnects, they can resume using the same P2P channels
 
-                let orphaned_session_count = {
+                let (orphaned_session_count, all_sessions, orphaned_sessions_info) = {
                     let lock = server_connection_map.read();
-                    lock.iter()
+                    let all: Vec<(u64, String)> = lock.iter()
+                        .map(|(cid, conn)| (*cid, conn.username.clone()))
+                        .collect();
+                    let orphaned: Vec<(u64, String)> = lock.iter()
                         .filter(|(_, conn)| {
                             conn.associated_localhost_connection.load(Ordering::Relaxed) == conn_id
                         })
-                        .count()
+                        .map(|(cid, conn)| (*cid, conn.username.clone()))
+                        .collect();
+                    (orphaned.len(), all, orphaned)
                 };
 
-                info!(target: "citadel", "Orphan mode: preserved {} sessions with their peer connections for reconnection", orphaned_session_count);
+                info!(target: "citadel", "[ORPHAN_DEBUG] Total sessions in map: {:?}", all_sessions);
+                info!(target: "citadel", "[ORPHAN_DEBUG] Sessions associated with THIS connection ({conn_id:?}): {:?}", orphaned_sessions_info);
+                info!(target: "citadel", "[ORPHAN_DEBUG] Preserved {} sessions with their peer connections for reconnection", orphaned_session_count);
 
                 orphan_sessions.write().remove(&conn_id);
             } else {

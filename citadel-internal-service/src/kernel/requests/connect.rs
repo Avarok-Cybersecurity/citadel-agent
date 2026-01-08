@@ -1,3 +1,25 @@
+//! C2S Connection Handler
+//!
+//! ## Protocol Semantics (CRITICAL)
+//!
+//! ### C2S (Client-to-Server)
+//! - **Registration**: ONE-TIME per user. Creates permanent CID. Persisted in backend.
+//! - **Connection**: Can happen MANY TIMES after registration. Reuses existing CID.
+//! - **No re-registration**: The protocol has NO notion of re-registering a user.
+//!
+//! ### P2P (Peer-to-Peer)
+//! - **Registration**: ONE-TIME per peer pair. Consent to communicate. Persisted.
+//! - **Connection**: Can happen MANY TIMES after P2P registration.
+//! - **No re-registration**: The protocol has NO notion of re-registering peers.
+//!
+//! ### Key Insight
+//! If a user gets a NEW CID after reconnection, it means a NEW ACCOUNT was registered.
+//! CID is PERMANENT per account - not per session.
+//!
+//! ### Connect vs Register
+//! - `register.rs` → `remote.register()` → Creates NEW account with NEW CID
+//! - `connect.rs` (this file) → `remote.connect()` → Connects to EXISTING account, SAME CID
+
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::{create_client_server_remote, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -30,7 +52,28 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     };
     let remote = this.remote();
 
-    // GUARD: Session reuse check - prevent duplicate SDK sessions for same username
+    // GUARD 1: Prevent duplicate concurrent connection attempts for same username
+    // This fixes TOCTOU race conditions where two Connect requests arrive simultaneously
+    {
+        let mut connecting = this.connecting_usernames.lock();
+        if connecting.contains(&username) {
+            citadel_sdk::logging::warn!(target: "citadel", "[Connect] BLOCKED: Connection already in progress for user {}", username);
+            let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                cid: 0,
+                message: format!("Connection already in progress for user {}", username),
+                request_id: Some(request_id),
+            });
+            return Some(HandledRequestResult { response, uuid });
+        }
+        connecting.insert(username.clone());
+    }
+
+    // Helper to cleanup connecting_usernames on function exit
+    let cleanup_username = |this: &CitadelWorkspaceService<T, R>, username: &str| {
+        this.connecting_usernames.lock().remove(username);
+    };
+
+    // GUARD 2: Session reuse check - prevent duplicate SDK sessions for same username
     // This prevents the race condition where ClaimSession + second Connect resets ratchet
     let existing_cid = {
         let lock = this.server_connection_map.read();
@@ -52,8 +95,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         };
 
         if sdk_active {
-            // Session is active in both internal state and SDK - REUSE IT
-            citadel_sdk::logging::info!(target: "citadel", "[Connect] REUSING existing active session {} for user {} (preventing ratchet reset)", cid, username);
+            // Session is active in both internal state and SDK - inform frontend
+            citadel_sdk::logging::info!(target: "citadel", "[Connect] Session {} already active for user {} - returning SessionAlreadyActive", cid, username);
 
             // Update TCP mapping to new connection
             {
@@ -64,14 +107,18 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 }
             }
 
-            // Return success with existing session
-            let response = InternalServiceResponse::ConnectSuccess(
-                citadel_internal_service_types::ConnectSuccess {
+            // Return SessionAlreadyActive to let frontend know the session was already connected
+            // This allows the frontend to gracefully handle the case (e.g., redirect to workspace)
+            let response = InternalServiceResponse::SessionAlreadyActive(
+                citadel_internal_service_types::SessionAlreadyActive {
                     cid,
+                    username: username.clone(),
+                    message: "Session already active. Use the navbar to switch sessions or proceed to workspace.".to_string(),
                     request_id: Some(request_id),
                 },
             );
 
+            cleanup_username(this, &username);
             return Some(HandledRequestResult { response, uuid });
         } else {
             // Internal has session but SDK doesn't - clean up stale state
@@ -79,6 +126,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             this.server_connection_map.write().remove(&cid);
         }
     }
+
+    // Save username for cleanup (will be moved into SDK connect)
+    let username_for_cleanup = username.clone();
 
     // Proceed with new connection (no existing session or stale session was cleaned)
     match remote
@@ -196,6 +246,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
             tokio::spawn(connection_read_stream);
 
+            cleanup_username(this, &username_for_cleanup);
             Some(HandledRequestResult { response, uuid })
         }
 
@@ -206,6 +257,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 request_id: Some(request_id),
             });
 
+            cleanup_username(this, &username_for_cleanup);
             Some(HandledRequestResult { response, uuid })
         }
     }

@@ -122,6 +122,19 @@ pub struct ConnectFailure {
     pub request_id: Option<Uuid>,
 }
 
+/// Returned when a Connect request is made for a session that is already active.
+/// This allows the frontend to gracefully handle the case where the user is already
+/// connected (e.g., from another tab or auto-reconnect) without treating it as an error.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct SessionAlreadyActive {
+    pub cid: u64,
+    pub username: String,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
@@ -930,6 +943,7 @@ pub struct FileTransferTickNotification {
 pub enum InternalServiceResponse {
     ConnectSuccess(ConnectSuccess),
     ConnectFailure(ConnectFailure),
+    SessionAlreadyActive(SessionAlreadyActive),
     RegisterSuccess(RegisterSuccess),
     RegisterFailure(RegisterFailure),
     ServiceConnectionAccepted(ServiceConnectionAccepted),

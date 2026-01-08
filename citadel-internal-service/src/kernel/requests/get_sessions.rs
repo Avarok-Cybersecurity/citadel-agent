@@ -1,4 +1,4 @@
-use crate::kernel::requests::peer::disconnect::disconnect_for_internal_service_state;
+use crate::kernel::requests::peer::cleanup_state;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -20,6 +20,15 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let InternalServiceRequest::GetSessions { request_id } = request else {
         unreachable!("Should never happen if programmed properly")
     };
+
+    // Log current state at request start
+    {
+        let lock = this.server_connection_map.read();
+        let session_cids: Vec<u64> = lock.keys().copied().collect();
+        let session_usernames: Vec<String> = lock.values().map(|c| c.username.clone()).collect();
+        info!(target: "citadel", "GetSessions: Request received. server_connection_map has {} sessions. CIDs: {:?}, Usernames: {:?}",
+            lock.len(), session_cids, session_usernames);
+    }
 
     // Step 1: Query SDK for authoritative C2S session state
     // NOTE: We only reconcile C2S sessions, not P2P connections. The SDK's sessions()
@@ -52,9 +61,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         info!(target: "citadel", "GetSessions: Cleaning up {} stale C2S sessions", stale_c2s_sessions.len());
         for cid in stale_c2s_sessions {
             info!(target: "citadel", "GetSessions: Removing stale C2S session {}", cid);
-            disconnect_for_internal_service_state(
+            cleanup_state(
                 &this.server_connection_map,
-                Uuid::new_v4(),
                 cid,
                 None, // Only clean C2S session, peers will be removed with it
             );

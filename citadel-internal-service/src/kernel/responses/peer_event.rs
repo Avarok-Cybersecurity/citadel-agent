@@ -1,3 +1,24 @@
+//! P2P (Peer-to-Peer) Event Handler
+//!
+//! This module handles SDK `NodeResult::PeerEvent` events, including:
+//! - `PeerSignal::Disconnect`: P2P connection terminated
+//! - `PeerSignal::PostRegister`: Peer registration request received
+//! - `PeerSignal::PostConnect`: Peer connection request received
+//! - `PeerSignal::BroadcastConnected`: Group broadcast event
+//!
+//! ## P2P Disconnect Flow (PeerSignal::Disconnect)
+//! 1. Either peer calls `remote.find_target(cid, peer_cid).disconnect()`
+//! 2. SDK sends `PeerSignal::Disconnect`, waits for `PeerEvent(PeerSignal::Disconnect)`
+//! 3. This handler cleans up internal service state (removes peer from session)
+//! 4. Notifies TCP client via `DisconnectNotification`
+//!
+//! ## Distinction from C2S Disconnect
+//! - C2S: `NodeResult::Disconnect` - entire session terminated
+//! - P2P: `PeerSignal::Disconnect` - single peer connection terminated
+//!
+//! Both use the shared `cleanup_state()` function for DRY state management.
+
+use crate::kernel::requests::peer::cleanup_state;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -61,7 +82,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 },
             disconnect_response: _,
         } => {
-            if let Some(conn) = this.clear_peer_connection(session_cid, peer_cid) {
+            // Use shared cleanup function (DRY)
+            if let Some(conn_uuid) =
+                cleanup_state(&this.server_connection_map, session_cid, Some(peer_cid))
+            {
                 let response =
                     InternalServiceResponse::DisconnectNotification(DisconnectNotification {
                         cid: session_cid,
@@ -69,12 +93,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         request_id: None,
                     });
                 // Use fallback function that broadcasts to all connections if target is stale
-                send_response_with_fallback(
-                    this,
-                    response,
-                    conn.associated_localhost_connection.load(Ordering::Relaxed),
-                )
-                .await?;
+                send_response_with_fallback(this, response, conn_uuid).await?;
             }
         }
         PeerSignal::BroadcastConnected {

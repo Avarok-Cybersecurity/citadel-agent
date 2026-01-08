@@ -18,8 +18,8 @@ use citadel_sdk::prelude::VirtualTargetType;
 use citadel_sdk::prelude::*;
 use futures::stream::StreamExt;
 use futures::{Sink, SinkExt};
-use parking_lot::RwLock;
-use std::collections::HashMap;
+use parking_lot::{Mutex, RwLock};
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -50,6 +50,9 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     /// Key is (session_cid, peer_cid), value is the peer's username.
     /// Used as fallback when SDK's get_local_group_mutual_peers returns empty username.
     pub peer_username_cache: Arc<RwLock<HashMap<(u64, u64), String>>>,
+    /// Tracks usernames currently being connected to prevent duplicate concurrent connection attempts.
+    /// This prevents TOCTOU race conditions where two Connect requests arrive simultaneously.
+    pub connecting_usernames: Arc<Mutex<HashSet<String>>>,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -62,6 +65,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             orphan_sessions: self.orphan_sessions.clone(),
             pending_peer_connect_signals: self.pending_peer_connect_signals.clone(),
             peer_username_cache: self.peer_username_cache.clone(),
+            connecting_usernames: self.connecting_usernames.clone(),
             io: self.io.clone(),
         }
     }
@@ -76,6 +80,7 @@ impl<T: IOInterface, R: Ratchet> From<T> for CitadelWorkspaceService<T, R> {
             orphan_sessions: Arc::new(RwLock::new(Default::default())),
             pending_peer_connect_signals: Arc::new(RwLock::new(Default::default())),
             peer_username_cache: Arc::new(RwLock::new(Default::default())),
+            connecting_usernames: Arc::new(Mutex::new(HashSet::new())),
             io: Arc::new(RwLock::new(Some(io))),
         }
     }

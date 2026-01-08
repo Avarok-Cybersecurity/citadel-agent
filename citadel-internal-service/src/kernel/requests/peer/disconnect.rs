@@ -11,13 +11,15 @@ use citadel_sdk::prelude::{
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
+
 use uuid::Uuid;
 
 /// Disconnects a peer or C2S connection at the SDK/protocol layer.
 ///
 /// On success, guarantees the peer/session has been disconnected from the network AND cleared from the SDK.
 /// This function does NOT clear the session from the InternalService's server_connection_map.
-/// The caller should call `disconnect_for_internal_service_state` after this succeeds.
+/// The caller should call `cleanup_state` after this succeeds.
 ///
 /// # Arguments
 /// * `remote` - NodeRemote for SDK operations
@@ -81,60 +83,72 @@ pub async fn disconnect_any<R: Ratchet>(
     ))
 }
 
-/// Clears the state for a P2P or C2S connection in the internal service's server_connection_map.
+/// Clears internal service state for a session or peer connection.
+/// SINGLE SOURCE OF TRUTH for state cleanup (DRY).
+///
+/// Called by:
+/// - Request handlers (after SDK disconnect)
+/// - Response handlers (on SDK disconnect events)
 ///
 /// This function only clears internal service state - it does NOT disconnect at the SDK layer.
-/// Call `disconnect_any` first to ensure the SDK has cleaned up.
+/// For request handlers, call `disconnect_any` first to ensure the SDK has cleaned up.
+/// For response handlers, the SDK has already disconnected, so just clean up state.
 ///
 /// # Arguments
 /// * `server_connection_map` - The internal service's session map
-/// * `request_id` - UUID for tracking the request
 /// * `cid` - Session CID
-/// * `peer_cid` - Some(peer_cid) for P2P state cleanup, None for C2S state cleanup
-pub fn disconnect_for_internal_service_state<R: Ratchet>(
+/// * `peer_cid` - Some(peer_cid) for P2P cleanup, None for C2S cleanup
+///
+/// # Returns
+/// The UUID of the TCP connection that was associated with this session/peer,
+/// or None if the session/peer was already removed.
+pub fn cleanup_state<R: Ratchet>(
     server_connection_map: &Arc<RwLock<HashMap<u64, Connection<R>>>>,
-    request_id: Uuid,
     cid: u64,
     peer_cid: Option<u64>,
-) -> InternalServiceResponse {
+) -> Option<Uuid> {
+    use std::sync::atomic::Ordering;
+
     if let Some(target_cid) = peer_cid {
+        // P2P cleanup
         let mut lock = server_connection_map.write();
         if let Some(sess) = lock.get_mut(&cid) {
-            if let Some(_peer_sess) = sess.peers.remove(&target_cid) {
+            if let Some(peer_sess) = sess.peers.remove(&target_cid) {
                 citadel_sdk::logging::info!(
-                    "disconnect: clear_state: Disconnected from peer session {target_cid}"
+                    "[cleanup_state] Removed peer {target_cid} from session {cid}"
                 );
-            } else {
-                // State cleared before this function had the chance to. Warning only, return success
-                citadel_sdk::logging::warn!(
-                    "disconnect: clear_state: Peer {target_cid} already removed from session {cid}"
-                );
+                return Some(peer_sess.associated_localhost_connection.load(Ordering::Relaxed));
             }
-        } else {
-            // State cleared before this function had the chance to. Warning only, return success
-            citadel_sdk::logging::warn!(
-                "disconnect: clear_state: Session {cid} already removed before peer cleanup"
-            );
         }
+        citadel_sdk::logging::warn!(
+            "[cleanup_state] Peer {target_cid} already removed from session {cid}"
+        );
+        None
     } else {
+        // C2S cleanup
         let mut lock = server_connection_map.write();
-        if let Some(_sess) = lock.remove(&cid) {
+        let count_before = lock.len();
+        let session_keys: Vec<u64> = lock.keys().copied().collect();
+        citadel_sdk::logging::info!(
+            "[cleanup_state] BEFORE removal: {} sessions in map, CIDs: {:?}",
+            count_before,
+            session_keys
+        );
+        if let Some(sess) = lock.remove(&cid) {
+            let count_after = lock.len();
+            let remaining_keys: Vec<u64> = lock.keys().copied().collect();
             citadel_sdk::logging::info!(
-                "disconnect: clear_state: Disconnected from c2s session {cid}"
+                "[cleanup_state] Removed C2S session {cid}. AFTER removal: {} sessions, remaining CIDs: {:?}",
+                count_after,
+                remaining_keys
             );
-        } else {
-            // State cleared before this function had the chance to. Warning only, return success
-            citadel_sdk::logging::warn!(
-                "disconnect: clear_state: Session {cid} already removed"
-            );
+            return Some(sess.associated_localhost_connection.load(Ordering::Relaxed));
         }
+        citadel_sdk::logging::warn!(
+            "[cleanup_state] Session {cid} already removed (not in map)"
+        );
+        None
     }
-
-    InternalServiceResponse::DisconnectNotification(DisconnectNotification {
-        cid,
-        peer_cid,
-        request_id: Some(request_id),
-    })
 }
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -190,6 +204,29 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         });
     }
 
+    // CRITICAL FIX: Clear orphan mode BEFORE disconnecting at SDK layer
+    // This prevents a race condition where the WebSocket drops during/after disconnect,
+    // causing the orphan handler to preserve the session that we're trying to remove.
+    // By clearing orphan mode first, the orphan handler in ext.rs will remove (not preserve)
+    // the session if the WebSocket drops before cleanup_state() runs.
+    if peer_cid.is_none() {
+        // Only for C2S disconnects (full session disconnect)
+        let conn_id = {
+            let conns = this.server_connection_map.read();
+            conns
+                .get(&cid)
+                .map(|conn| conn.associated_localhost_connection.load(Ordering::Relaxed))
+        };
+        if let Some(conn_id) = conn_id {
+            citadel_sdk::logging::info!(
+                "[Disconnect] Clearing orphan mode for connection {:?} before disconnecting CID {}",
+                conn_id,
+                cid
+            );
+            this.orphan_sessions.write().remove(&conn_id);
+        }
+    }
+
     // Stage 1: Disconnect at the protocol/SDK layer
     // On error, return immediately - do NOT proceed to state cleanup
     if let Err(err) = disconnect_any(this.remote(), request_id, cid, peer_cid).await {
@@ -204,8 +241,15 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     }
 
     // Stage 2: Clear the state in the internal service
-    let response =
-        disconnect_for_internal_service_state(&this.server_connection_map, request_id, cid, peer_cid);
+    cleanup_state(&this.server_connection_map, cid, peer_cid);
 
-    Some(HandledRequestResult { response, uuid })
+    // Return success notification
+    Some(HandledRequestResult {
+        response: InternalServiceResponse::DisconnectNotification(DisconnectNotification {
+            cid,
+            peer_cid,
+            request_id: Some(request_id),
+        }),
+        uuid,
+    })
 }

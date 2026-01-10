@@ -12,8 +12,15 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
+use tokio::time::timeout;
 
 use uuid::Uuid;
+
+/// Timeout for SDK disconnect operations.
+/// User-initiated disconnects should not hang indefinitely - if the SDK doesn't
+/// respond within this time, we proceed with internal state cleanup anyway.
+const SDK_DISCONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Disconnects a peer or C2S connection at the SDK/protocol layer.
 ///
@@ -227,23 +234,56 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         }
     }
 
-    // Stage 1: Disconnect at the protocol/SDK layer
-    // On error, return immediately - do NOT proceed to state cleanup
-    if let Err(err) = disconnect_any(this.remote(), request_id, cid, peer_cid).await {
-        return Some(HandledRequestResult {
-            response: InternalServiceResponse::PeerDisconnectFailure(PeerDisconnectFailure {
-                cid,
-                message: format!("disconnect: Failed to disconnect at SDK layer: {err:?}"),
-                request_id: Some(request_id),
-            }),
-            uuid,
-        });
-    }
+    // Stage 1: Disconnect at the protocol/SDK layer with timeout
+    // The user explicitly requested disconnect - we honor that intent even if SDK has issues.
+    // After timeout or error, we STILL proceed with internal state cleanup to avoid orphaned sessions.
+    let sdk_disconnect_result =
+        timeout(SDK_DISCONNECT_TIMEOUT, disconnect_any(this.remote(), request_id, cid, peer_cid)).await;
 
-    // Stage 2: Clear the state in the internal service
+    let sdk_warning = match sdk_disconnect_result {
+        Ok(Ok(_)) => {
+            citadel_sdk::logging::info!(
+                "[Disconnect] SDK disconnect succeeded for CID {} peer_cid {:?}",
+                cid,
+                peer_cid
+            );
+            None
+        }
+        Ok(Err(err)) => {
+            citadel_sdk::logging::warn!(
+                "[Disconnect] SDK disconnect failed for CID {} peer_cid {:?}: {:?}. Proceeding with state cleanup.",
+                cid,
+                peer_cid,
+                err
+            );
+            Some(format!("SDK disconnect failed: {err:?}"))
+        }
+        Err(_elapsed) => {
+            citadel_sdk::logging::warn!(
+                "[Disconnect] SDK disconnect timed out after {:?} for CID {} peer_cid {:?}. Proceeding with state cleanup.",
+                SDK_DISCONNECT_TIMEOUT,
+                cid,
+                peer_cid
+            );
+            Some(format!("SDK disconnect timed out after {:?}", SDK_DISCONNECT_TIMEOUT))
+        }
+    };
+
+    // Stage 2: ALWAYS clear the internal service state
+    // This ensures the session is removed even if SDK disconnect failed/timed out.
+    // The user explicitly requested disconnect - we must honor that intent.
     cleanup_state(&this.server_connection_map, cid, peer_cid);
 
-    // Return success notification
+    // Log warning if SDK disconnect had issues
+    if let Some(warning) = sdk_warning {
+        citadel_sdk::logging::info!(
+            "[Disconnect] Completed with warning for CID {}: {}",
+            cid,
+            warning
+        );
+    }
+
+    // Return success notification - the session is disconnected from internal service's perspective
     Some(HandledRequestResult {
         response: InternalServiceResponse::DisconnectNotification(DisconnectNotification {
             cid,

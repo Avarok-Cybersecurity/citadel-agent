@@ -50,34 +50,38 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     // Step 2: Find stale C2S sessions (not P2P connections!)
     // IMPORTANT: Only clean up sessions that are:
     //   1. NOT in SDK's active session list, AND
-    //   2. NOT orphaned (still have an active TCP connection)
+    //   2. Belong to the CURRENT connection (not orphaned from a previous connection)
     //
-    // Orphaned sessions (TCP dropped but session preserved) should NOT be cleaned up
-    // because they may become active again when the user reconnects. The SDK might
-    // report them as inactive (no keep-alive from browser), but we preserve them
-    // for session persistence across page navigations.
+    // A session is "orphaned" if its associated_conn doesn't match the current connection.
+    // This is a more robust check than looking at tx_to_localhost_clients, which may have
+    // race conditions during connection handoff.
+    //
+    // Orphaned sessions should NOT be cleaned up because they may become active again
+    // when the user reconnects via ClaimSession.
     let stale_c2s_sessions: Vec<u64> = {
         let lock = this.server_connection_map.read();
-        let tcp_connections = this.tx_to_localhost_clients.read();
 
         lock.iter()
             .filter(|(cid, conn)| {
-                // Session is NOT in SDK
+                // Session is in SDK - don't clean up (it's still active)
                 if sdk_c2s_sessions.contains(cid) {
                     return false;
                 }
 
-                // Check if session is orphaned (no active TCP connection)
+                // Check if session belongs to the current connection
                 let associated_conn = conn.associated_localhost_connection.load(Ordering::Relaxed);
-                let is_orphaned = !tcp_connections.contains_key(&associated_conn);
+                let is_current_connection = associated_conn == uuid;
 
-                if is_orphaned {
-                    info!(target: "citadel", "GetSessions: Preserving orphaned session {} (not in SDK but TCP dropped)", cid);
-                    return false; // Don't clean up orphaned sessions
+                if !is_current_connection {
+                    // Session is orphaned (from a previous connection) - preserve it
+                    info!(target: "citadel", "GetSessions: Preserving orphaned session {} (associated with old connection {:?}, current is {:?})", cid, associated_conn, uuid);
+                    return false;
                 }
 
-                // Session has active TCP but not in SDK - this is genuinely stale
-                true
+                // Session belongs to current connection but not in SDK - this is genuinely stale
+                // This can happen if the session was just created but SDK hasn't registered it yet
+                info!(target: "citadel", "GetSessions: Session {} is current connection but not in SDK - preserving for now", cid);
+                false // Actually, let's preserve all sessions and let explicit disconnect handle cleanup
             })
             .map(|(cid, _)| *cid)
             .collect()

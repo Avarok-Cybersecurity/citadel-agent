@@ -3,24 +3,24 @@
 //! This module handles SDK `NodeResult::Disconnect` events - inbound notifications
 //! that a C2S connection has been terminated.
 //!
-//! ## SDK Event Flow
-//! 1. SDK sends `DisconnectFromHypernode` to server
-//! 2. Server terminates session, SDK receives `NodeResult::Disconnect`
-//! 3. This handler checks if session is orphaned (no active TCP connection)
-//! 4. If orphaned: preserve session for potential reconnection via ClaimSession
-//! 5. If active: clean up internal service state and notify TCP client
+//! ## SDK Event Flow (v0.13.1+)
+//! - C2S disconnects: `NodeResult::Disconnect { conn_type: ClientConnectionType::Server }`
+//! - P2P disconnects: `NodeResult::PeerEvent { PeerSignal::Disconnect }` (handled in peer_event.rs)
+//!
+//! ## Design: SDK is Source of Truth
+//! The SDK is the authoritative source for session state. When the SDK reports a disconnect,
+//! we MUST clean up our internal state to mirror it. This ensures consistency between
+//! the internal service layer and the underlying protocol layer.
 //!
 //! ## Distinction from Request Handler
 //! - `requests/peer/disconnect.rs`: User-initiated (outbound) disconnect - calls SDK then cleans state
-//! - `responses/disconnect.rs` (this file): SDK-initiated (inbound) event - preserves orphans, cleans active
-//!
-//! Both use the shared `cleanup_state()` function for DRY state management.
+//! - `responses/disconnect.rs` (this file): SDK-initiated (inbound) C2S disconnect event
 
-use crate::kernel::requests::peer::cleanup_state;
+use crate::kernel::requests::peer::{cleanup_state, DisconnectedConnection};
 use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{DisconnectNotification, InternalServiceResponse};
-use citadel_sdk::prelude::{Disconnect, NetworkError, Ratchet, VirtualTargetType};
+use citadel_sdk::prelude::{ClientConnectionType, Disconnect, NetworkError, Ratchet};
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
@@ -43,42 +43,38 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         }
     }
 
-    if let Some(conn) = disconnect.v_conn_type {
-        let (cid, peer_cid) = match conn {
-            VirtualTargetType::LocalGroupServer { session_cid } => (session_cid, None),
-            VirtualTargetType::LocalGroupPeer {
-                session_cid,
-                peer_cid,
-            } => (session_cid, Some(peer_cid)),
-            _ => return Ok(()),
+    // In SDK v0.13.1+, NodeResult::Disconnect only carries C2S connection types.
+    // P2P disconnects are now handled via NodeResult::PeerEvent { PeerSignal::Disconnect }.
+    if let Some(conn) = disconnect.conn_type {
+        let cid = match conn {
+            ClientConnectionType::Server { session_cid } => session_cid,
+            ClientConnectionType::Extended { session_cid, .. } => session_cid,
         };
 
-        // NEVER clean up C2S sessions via SDK disconnect events.
-        // C2S sessions should only be cleaned up via:
-        // 1. Explicit Disconnect request (user-initiated logout)
-        // 2. Deregister request (account deletion)
-        //
-        // This ensures sessions persist across page navigations, browser refreshes,
-        // and network reconnections. Users can reconnect via ClaimSession.
-        //
-        // P2P peer disconnects (peer_cid.is_some()) still get cleaned up.
-        if peer_cid.is_none() {
-            citadel_sdk::logging::info!(
-                target: "citadel",
-                "[Disconnect Response] Preserving C2S session {} - cleanup only via explicit Disconnect request",
-                cid
-            );
-            return Ok(());
-        }
+        citadel_sdk::logging::info!(
+            target: "citadel",
+            "[Disconnect Response] SDK reports C2S session {} disconnected - cleaning up internal state. Reason: {}",
+            cid,
+            disconnect.message
+        );
 
-        // P2P peer disconnect - proceed with cleanup
-        if let Some(conn_uuid) = cleanup_state(&this.server_connection_map, cid, peer_cid) {
+        // SDK is source of truth - clean up session to mirror SDK state
+        // NOTE: SDK has already disconnected, so we don't call disconnect_removed.
+        // We just remove from our map and let the struct drop.
+        if let Some(disconnected) = cleanup_state(&this.server_connection_map, cid, None) {
+            let tcp_uuid = match &disconnected {
+                DisconnectedConnection::C2S { tcp_uuid, .. } => *tcp_uuid,
+                DisconnectedConnection::P2P { tcp_uuid, .. } => *tcp_uuid,
+            };
+            // Let the struct drop - SDK already disconnected so RAII is harmless
+            drop(disconnected);
+
             let response = InternalServiceResponse::DisconnectNotification(DisconnectNotification {
                 cid,
-                peer_cid,
+                peer_cid: None,
                 request_id: None,
             });
-            return send_response_to_tcp_client(&this.tx_to_localhost_clients, response, conn_uuid);
+            return send_response_to_tcp_client(&this.tx_to_localhost_clients, response, tcp_uuid);
         }
     } else {
         citadel_sdk::logging::warn!(target: "citadel", "The disconnect request does not contain a connection type")

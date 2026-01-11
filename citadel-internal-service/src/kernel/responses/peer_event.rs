@@ -18,7 +18,7 @@
 //!
 //! Both use the shared `cleanup_state()` function for DRY state management.
 
-use crate::kernel::requests::peer::cleanup_state;
+use crate::kernel::requests::peer::{cleanup_state, DisconnectedConnection};
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -82,10 +82,27 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 },
             disconnect_response: _,
         } => {
+            // SDK is source of truth - clean up P2P peer state to mirror SDK
+            info!(
+                target: "citadel",
+                "[P2P Disconnect] SDK reports peer {} disconnected from session {} - cleaning up internal state",
+                peer_cid,
+                session_cid
+            );
+
             // Use shared cleanup function (DRY)
-            if let Some(conn_uuid) =
+            // NOTE: For SDK-initiated P2P disconnect events, the SDK has already disconnected.
+            // We just remove from our map and let the struct drop (RAII is harmless).
+            if let Some(disconnected) =
                 cleanup_state(&this.server_connection_map, session_cid, Some(peer_cid))
             {
+                let tcp_uuid = match &disconnected {
+                    DisconnectedConnection::C2S { tcp_uuid, .. } => *tcp_uuid,
+                    DisconnectedConnection::P2P { tcp_uuid, .. } => *tcp_uuid,
+                };
+                // Let the struct drop - SDK already disconnected so RAII is harmless
+                drop(disconnected);
+
                 let response =
                     InternalServiceResponse::DisconnectNotification(DisconnectNotification {
                         cid: session_cid,
@@ -93,7 +110,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         request_id: None,
                     });
                 // Use fallback function that broadcasts to all connections if target is stale
-                send_response_with_fallback(this, response, conn_uuid).await?;
+                send_response_with_fallback(this, response, tcp_uuid).await?;
             }
         }
         PeerSignal::BroadcastConnected {

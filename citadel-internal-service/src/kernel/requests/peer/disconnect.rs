@@ -1,13 +1,14 @@
 use crate::kernel::requests::HandledRequestResult;
-use crate::kernel::{CitadelWorkspaceService, Connection};
+use crate::kernel::{CitadelWorkspaceService, Connection, PeerConnection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     DisconnectNotification, InternalServiceRequest, InternalServiceResponse, PeerDisconnectFailure,
 };
 use citadel_sdk::prelude::{
-    ClientServerRemote, NetworkError, NodeRemote, ProtocolRemoteExt, ProtocolRemoteTargetExt,
-    Ratchet, VirtualTargetType,
+    NetworkError, NodeRemote, ProtocolRemoteExt, ProtocolRemoteTargetExt, Ratchet,
+    VirtualTargetType,
 };
+use citadel_sdk::prefabs::ClientServerRemote;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,6 +22,32 @@ use uuid::Uuid;
 /// User-initiated disconnects should not hang indefinitely - if the SDK doesn't
 /// respond within this time, we proceed with internal state cleanup anyway.
 const SDK_DISCONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Represents a connection removed from internal state, pending SDK disconnect.
+///
+/// CRITICAL: This enum holds the connection struct ALIVE until SDK disconnect completes.
+/// This prevents the RAII Drop impl from firing a redundant disconnect signal while
+/// the SDK disconnect is still in progress.
+///
+/// Flow:
+/// 1. `cleanup_state()` removes from map, returns this enum (struct stays alive)
+/// 2. `disconnect_removed()` calls SDK disconnect on the target-locked remote
+/// 3. Enum drops AFTER disconnect completes (RAII Drop is now harmless)
+pub enum DisconnectedConnection<R: Ratchet> {
+    /// C2S session - the Connection contains the target-locked ClientServerRemote
+    C2S {
+        connection: Connection<R>,
+        cid: u64,
+        tcp_uuid: Uuid,
+    },
+    /// P2P peer connection
+    P2P {
+        peer_connection: PeerConnection<R>,
+        cid: u64,
+        peer_cid: u64,
+        tcp_uuid: Uuid,
+    },
+}
 
 /// Disconnects a peer or C2S connection at the SDK/protocol layer.
 ///
@@ -90,16 +117,11 @@ pub async fn disconnect_any<R: Ratchet>(
     ))
 }
 
-/// Clears internal service state for a session or peer connection.
-/// SINGLE SOURCE OF TRUTH for state cleanup (DRY).
+/// Removes a session or peer from internal state and returns it for SDK disconnect.
 ///
-/// Called by:
-/// - Request handlers (after SDK disconnect)
-/// - Response handlers (on SDK disconnect events)
-///
-/// This function only clears internal service state - it does NOT disconnect at the SDK layer.
-/// For request handlers, call `disconnect_any` first to ensure the SDK has cleaned up.
-/// For response handlers, the SDK has already disconnected, so just clean up state.
+/// CRITICAL: Returns the removed struct wrapped in `DisconnectedConnection` so it stays
+/// alive until SDK disconnect completes. This prevents RAII Drop from triggering a
+/// redundant disconnect signal.
 ///
 /// # Arguments
 /// * `server_connection_map` - The internal service's session map
@@ -107,24 +129,27 @@ pub async fn disconnect_any<R: Ratchet>(
 /// * `peer_cid` - Some(peer_cid) for P2P cleanup, None for C2S cleanup
 ///
 /// # Returns
-/// The UUID of the TCP connection that was associated with this session/peer,
-/// or None if the session/peer was already removed.
+/// The removed connection wrapped in enum, or None if already removed.
 pub fn cleanup_state<R: Ratchet>(
     server_connection_map: &Arc<RwLock<HashMap<u64, Connection<R>>>>,
     cid: u64,
     peer_cid: Option<u64>,
-) -> Option<Uuid> {
-    use std::sync::atomic::Ordering;
-
+) -> Option<DisconnectedConnection<R>> {
     if let Some(target_cid) = peer_cid {
-        // P2P cleanup
+        // P2P cleanup - remove peer from session
         let mut lock = server_connection_map.write();
         if let Some(sess) = lock.get_mut(&cid) {
-            if let Some(peer_sess) = sess.peers.remove(&target_cid) {
+            if let Some(peer_conn) = sess.peers.remove(&target_cid) {
+                let tcp_uuid = peer_conn.associated_localhost_connection.load(Ordering::Relaxed);
                 citadel_sdk::logging::info!(
                     "[cleanup_state] Removed peer {target_cid} from session {cid}"
                 );
-                return Some(peer_sess.associated_localhost_connection.load(Ordering::Relaxed));
+                return Some(DisconnectedConnection::P2P {
+                    peer_connection: peer_conn,
+                    cid,
+                    peer_cid: target_cid,
+                    tcp_uuid,
+                });
             }
         }
         citadel_sdk::logging::warn!(
@@ -132,7 +157,7 @@ pub fn cleanup_state<R: Ratchet>(
         );
         None
     } else {
-        // C2S cleanup
+        // C2S cleanup - remove entire session
         let mut lock = server_connection_map.write();
         let count_before = lock.len();
         let session_keys: Vec<u64> = lock.keys().copied().collect();
@@ -141,7 +166,8 @@ pub fn cleanup_state<R: Ratchet>(
             count_before,
             session_keys
         );
-        if let Some(sess) = lock.remove(&cid) {
+        if let Some(conn) = lock.remove(&cid) {
+            let tcp_uuid = conn.associated_localhost_connection.load(Ordering::Relaxed);
             let count_after = lock.len();
             let remaining_keys: Vec<u64> = lock.keys().copied().collect();
             citadel_sdk::logging::info!(
@@ -149,12 +175,78 @@ pub fn cleanup_state<R: Ratchet>(
                 count_after,
                 remaining_keys
             );
-            return Some(sess.associated_localhost_connection.load(Ordering::Relaxed));
+            return Some(DisconnectedConnection::C2S {
+                connection: conn,
+                cid,
+                tcp_uuid,
+            });
         }
         citadel_sdk::logging::warn!(
             "[cleanup_state] Session {cid} already removed (not in map)"
         );
         None
+    }
+}
+
+/// Disconnects a removed connection at the SDK layer.
+///
+/// CRITICAL: The `disconnected` enum holds the struct alive until this function completes,
+/// preventing RAII Drop from triggering a redundant disconnect signal.
+///
+/// After this function returns (success or failure), the enum drops and RAII cleanup
+/// is harmless since SDK disconnect has already completed or failed.
+pub async fn disconnect_removed<R: Ratchet>(
+    remote: &NodeRemote<R>,
+    disconnected: &DisconnectedConnection<R>,
+) -> Result<(), NetworkError> {
+    match disconnected {
+        DisconnectedConnection::C2S { connection, cid, .. } => {
+            citadel_sdk::logging::info!(
+                "[disconnect_removed] Calling SDK disconnect on C2S session {} via target-locked ClientServerRemote",
+                cid
+            );
+            connection.client_server_remote.disconnect().await?;
+
+            // Sanity check: verify session is no longer in SDK
+            let still_in_protocol = remote.sessions().await.map(|sessions| {
+                sessions.sessions.iter().any(|sess| sess.cid == *cid)
+            })?;
+
+            if still_in_protocol {
+                return Err(NetworkError::msg(format!(
+                    "C2S session {} still in protocol after disconnect", cid
+                )));
+            }
+            Ok(())
+        }
+        DisconnectedConnection::P2P { cid, peer_cid, .. } => {
+            citadel_sdk::logging::info!(
+                "[disconnect_removed] Calling SDK disconnect on P2P peer {} from session {}",
+                peer_cid,
+                cid
+            );
+            remote
+                .find_target(*cid, *peer_cid)
+                .await?
+                .disconnect()
+                .await?;
+
+            // Sanity check: verify peer is no longer in SDK
+            let still_in_protocol = remote.sessions().await.map(|sessions| {
+                if let Some(sess) = sessions.sessions.iter().find(|s| s.cid == *cid) {
+                    sess.connections.iter().any(|c| c.peer_cid == Some(*peer_cid))
+                } else {
+                    false
+                }
+            })?;
+
+            if still_in_protocol {
+                return Err(NetworkError::msg(format!(
+                    "P2P peer {} still in protocol after disconnect", peer_cid
+                )));
+            }
+            Ok(())
+        }
     }
 }
 
@@ -211,11 +303,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         });
     }
 
-    // CRITICAL FIX: Clear orphan mode BEFORE disconnecting at SDK layer
+    // Clear orphan mode BEFORE any cleanup
     // This prevents a race condition where the WebSocket drops during/after disconnect,
     // causing the orphan handler to preserve the session that we're trying to remove.
-    // By clearing orphan mode first, the orphan handler in ext.rs will remove (not preserve)
-    // the session if the WebSocket drops before cleanup_state() runs.
     if peer_cid.is_none() {
         // Only for C2S disconnects (full session disconnect)
         let conn_id = {
@@ -234,54 +324,73 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         }
     }
 
-    // Stage 1: Disconnect at the protocol/SDK layer with timeout
-    // The user explicitly requested disconnect - we honor that intent even if SDK has issues.
-    // After timeout or error, we STILL proceed with internal state cleanup to avoid orphaned sessions.
-    let sdk_disconnect_result =
-        timeout(SDK_DISCONNECT_TIMEOUT, disconnect_any(this.remote(), request_id, cid, peer_cid)).await;
+    // STEP 1: Remove from internal state FIRST, get back the struct
+    // The struct stays alive in the enum, preventing RAII Drop from firing during SDK disconnect
+    let Some(disconnected) = cleanup_state(&this.server_connection_map, cid, peer_cid) else {
+        // Already removed - shouldn't happen due to earlier checks, but handle gracefully
+        citadel_sdk::logging::warn!(
+            "[Disconnect] Session/peer already removed during disconnect for CID {} peer {:?}",
+            cid,
+            peer_cid
+        );
+        return Some(HandledRequestResult {
+            response: InternalServiceResponse::DisconnectNotification(DisconnectNotification {
+                cid,
+                peer_cid,
+                request_id: Some(request_id),
+            }),
+            uuid,
+        });
+    };
 
-    let sdk_warning = match sdk_disconnect_result {
-        Ok(Ok(_)) => {
+    // STEP 2: Call SDK disconnect while holding the struct alive
+    // This uses the target-locked ClientServerRemote (for C2S) or find_target (for P2P)
+    let sdk_result = timeout(
+        SDK_DISCONNECT_TIMEOUT,
+        disconnect_removed(this.remote(), &disconnected)
+    ).await;
+
+    match sdk_result {
+        Ok(Ok(())) => {
             citadel_sdk::logging::info!(
-                "[Disconnect] SDK disconnect succeeded for CID {} peer_cid {:?}",
+                "[Disconnect] SDK disconnect succeeded for CID {} peer {:?}",
                 cid,
                 peer_cid
             );
-            None
         }
         Ok(Err(err)) => {
             citadel_sdk::logging::warn!(
-                "[Disconnect] SDK disconnect failed for CID {} peer_cid {:?}: {:?}. Proceeding with state cleanup.",
+                "[Disconnect] SDK disconnect failed for CID {} peer {:?}: {:?}. Proceeding anyway.",
                 cid,
                 peer_cid,
                 err
             );
-            Some(format!("SDK disconnect failed: {err:?}"))
         }
         Err(_elapsed) => {
             citadel_sdk::logging::warn!(
-                "[Disconnect] SDK disconnect timed out after {:?} for CID {} peer_cid {:?}. Proceeding with state cleanup.",
+                "[Disconnect] SDK disconnect timed out after {:?} for CID {} peer {:?}. Proceeding anyway.",
                 SDK_DISCONNECT_TIMEOUT,
                 cid,
                 peer_cid
             );
-            Some(format!("SDK disconnect timed out after {:?}", SDK_DISCONNECT_TIMEOUT))
         }
+    }
+
+    // STEP 3: Get the TCP UUID from the enum before dropping
+    let tcp_uuid = match &disconnected {
+        DisconnectedConnection::C2S { tcp_uuid, .. } => *tcp_uuid,
+        DisconnectedConnection::P2P { tcp_uuid, .. } => *tcp_uuid,
     };
 
-    // Stage 2: ALWAYS clear the internal service state
-    // This ensures the session is removed even if SDK disconnect failed/timed out.
-    // The user explicitly requested disconnect - we must honor that intent.
-    cleanup_state(&this.server_connection_map, cid, peer_cid);
+    // STEP 4: Enum drops here (end of scope) - RAII cleanup is now safe since SDK disconnect completed
+    drop(disconnected);
 
-    // Log warning if SDK disconnect had issues
-    if let Some(warning) = sdk_warning {
-        citadel_sdk::logging::info!(
-            "[Disconnect] Completed with warning for CID {}: {}",
-            cid,
-            warning
-        );
-    }
+    citadel_sdk::logging::info!(
+        "[Disconnect] Completed for CID {} peer {:?}, notifying TCP client {:?}",
+        cid,
+        peer_cid,
+        tcp_uuid
+    );
 
     // Return success notification - the session is disconnected from internal service's perspective
     Some(HandledRequestResult {

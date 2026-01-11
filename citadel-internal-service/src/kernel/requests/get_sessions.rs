@@ -48,17 +48,44 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     };
 
     // Step 2: Find stale C2S sessions (not P2P connections!)
+    // IMPORTANT: Only clean up sessions that are:
+    //   1. NOT in SDK's active session list, AND
+    //   2. NOT orphaned (still have an active TCP connection)
+    //
+    // Orphaned sessions (TCP dropped but session preserved) should NOT be cleaned up
+    // because they may become active again when the user reconnects. The SDK might
+    // report them as inactive (no keep-alive from browser), but we preserve them
+    // for session persistence across page navigations.
     let stale_c2s_sessions: Vec<u64> = {
         let lock = this.server_connection_map.read();
-        lock.keys()
-            .filter(|cid| !sdk_c2s_sessions.contains(cid))
-            .copied()
+        let tcp_connections = this.tx_to_localhost_clients.read();
+
+        lock.iter()
+            .filter(|(cid, conn)| {
+                // Session is NOT in SDK
+                if sdk_c2s_sessions.contains(cid) {
+                    return false;
+                }
+
+                // Check if session is orphaned (no active TCP connection)
+                let associated_conn = conn.associated_localhost_connection.load(Ordering::Relaxed);
+                let is_orphaned = !tcp_connections.contains_key(&associated_conn);
+
+                if is_orphaned {
+                    info!(target: "citadel", "GetSessions: Preserving orphaned session {} (not in SDK but TCP dropped)", cid);
+                    return false; // Don't clean up orphaned sessions
+                }
+
+                // Session has active TCP but not in SDK - this is genuinely stale
+                true
+            })
+            .map(|(cid, _)| *cid)
             .collect()
     };
 
-    // Step 3: Clean up stale C2S sessions only
+    // Step 3: Clean up stale C2S sessions only (sessions with active TCP but not in SDK)
     if !stale_c2s_sessions.is_empty() {
-        info!(target: "citadel", "GetSessions: Cleaning up {} stale C2S sessions", stale_c2s_sessions.len());
+        info!(target: "citadel", "GetSessions: Cleaning up {} stale C2S sessions (active TCP but not in SDK)", stale_c2s_sessions.len());
         for cid in stale_c2s_sessions {
             info!(target: "citadel", "GetSessions: Removing stale C2S session {}", cid);
             cleanup_state(

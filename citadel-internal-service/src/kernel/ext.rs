@@ -76,55 +76,43 @@ pub trait IOInterfaceExt: IOInterface {
 
             tcp_connection_map.write().remove(&conn_id);
 
-            // Check if this connection is in orphan mode
-            let is_orphan = orphan_sessions
-                .read()
-                .get(&conn_id)
-                .copied()
-                .unwrap_or(false);
+            // ALWAYS preserve sessions when TCP drops.
+            //
+            // Sessions should persist across page navigations and reconnections.
+            // This is the default behavior for modern web apps where users can:
+            // - Navigate between pages
+            // - Refresh the page
+            // - Have multiple tabs open
+            //
+            // Sessions are only explicitly cleaned up via:
+            // 1. Disconnect request (user-initiated logout)
+            // 2. Deregister request (account deletion)
+            // 3. GetSessions reconciliation (sync with SDK state)
+            //
+            // The orphan_sessions map is no longer used for cleanup decisions.
+            // We preserve ALL sessions regardless of orphan mode setting.
 
-            if is_orphan {
-                info!(target: "citadel", "[ORPHAN_DEBUG] Connection {conn_id:?} is in orphan mode, preserving sessions and peer connections");
+            let (preserved_session_count, all_sessions, preserved_sessions_info) = {
+                let lock = server_connection_map.read();
+                let all: Vec<(u64, String)> = lock.iter()
+                    .map(|(cid, conn)| (*cid, conn.username.clone()))
+                    .collect();
+                let preserved: Vec<(u64, String)> = lock.iter()
+                    .filter(|(_, conn)| {
+                        conn.associated_localhost_connection.load(Ordering::Relaxed) == conn_id
+                    })
+                    .map(|(cid, conn)| (*cid, conn.username.clone()))
+                    .collect();
+                (preserved.len(), all, preserved)
+            };
 
-                // In orphan mode, we preserve EVERYTHING:
-                // - Sessions remain in server_connection_map
-                // - Peer connections remain intact (SDK P2P channels are still active)
-                // - When the user reconnects and claims the session, they can continue using existing P2P connections
-                //
-                // We do NOT disconnect SDK P2P connections or clear peer state because:
-                // 1. The SDK runs on the internal service, not the client browser
-                // 2. P2P connections in SDK are between sessions, not TCP connections
-                // 3. When client reconnects, they can resume using the same P2P channels
+            info!(target: "citadel", "[TCP_DISCONNECT] Connection {conn_id:?} closed. Preserving all sessions.");
+            info!(target: "citadel", "[TCP_DISCONNECT] Total sessions in map: {:?}", all_sessions);
+            info!(target: "citadel", "[TCP_DISCONNECT] Sessions associated with THIS connection ({conn_id:?}): {:?}", preserved_sessions_info);
+            info!(target: "citadel", "[TCP_DISCONNECT] Preserved {} sessions for reconnection", preserved_session_count);
 
-                let (orphaned_session_count, all_sessions, orphaned_sessions_info) = {
-                    let lock = server_connection_map.read();
-                    let all: Vec<(u64, String)> = lock.iter()
-                        .map(|(cid, conn)| (*cid, conn.username.clone()))
-                        .collect();
-                    let orphaned: Vec<(u64, String)> = lock.iter()
-                        .filter(|(_, conn)| {
-                            conn.associated_localhost_connection.load(Ordering::Relaxed) == conn_id
-                        })
-                        .map(|(cid, conn)| (*cid, conn.username.clone()))
-                        .collect();
-                    (orphaned.len(), all, orphaned)
-                };
-
-                info!(target: "citadel", "[ORPHAN_DEBUG] Total sessions in map: {:?}", all_sessions);
-                info!(target: "citadel", "[ORPHAN_DEBUG] Sessions associated with THIS connection ({conn_id:?}): {:?}", orphaned_sessions_info);
-                info!(target: "citadel", "[ORPHAN_DEBUG] Preserved {} sessions with their peer connections for reconnection", orphaned_session_count);
-
-                orphan_sessions.write().remove(&conn_id);
-            } else {
-                let mut server_connection_map = server_connection_map.write();
-                // Remove all connections whose associated_tcp_connection is conn_id
-                let count_before = server_connection_map.len();
-                server_connection_map.retain(|_, v| {
-                    v.associated_localhost_connection.load(Ordering::Relaxed) != conn_id
-                });
-                let count_after = server_connection_map.len();
-                debug!(target: "citadel", "Removed {} connections from server_connection_map for {conn_id:?}. Reconnection will be required", count_before - count_after);
-            }
+            // Clean up the orphan_sessions entry if it exists (no longer used for decisions)
+            orphan_sessions.write().remove(&conn_id);
         });
     }
 }

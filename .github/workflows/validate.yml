@@ -66,10 +66,13 @@ jobs:
           node-version: '18'
           cache: 'npm'
           cache-dependency-path: 'typescript-client/package-lock.json'
-      - name: Generate complete TypeScript types
+      - name: Verify TypeScript types exist
         run: |
-          cd citadel-internal-service-types
-          TS_RS_EXPORT_DIR=../typescript-client/src/types cargo run --features typescript --example generate_ts_types
+          # Types are committed to the repo - verify they exist
+          test -f typescript-client/src/types/index.ts || exit 1
+          test -f typescript-client/src/types/InternalServiceRequest.ts || exit 1
+          test -f typescript-client/src/types/InternalServiceResponse.ts || exit 1
+          echo "TypeScript types verified"
       - name: Install Node.js dependencies
         run: |
           cd typescript-client

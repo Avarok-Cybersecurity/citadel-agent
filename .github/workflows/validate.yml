@@ -69,7 +69,7 @@ jobs:
       - name: Generate complete TypeScript types
         run: |
           cd citadel-internal-service-types
-          cargo run --features typescript --example generate_ts_types
+          TS_RS_EXPORT_DIR=../typescript-client/src/types cargo run --features typescript --example generate_ts_types
       - name: Install Node.js dependencies
         run: |
           cd typescript-client

@@ -4,8 +4,10 @@ import { MessageNotification } from './types';
 async function runTests() {
     console.log('🚀 Starting Citadel WebSocket TypeScript Tests...\n');
 
-    // Test configuration
-    const serverUrl = 'ws://127.0.0.1:8081';
+    // Test configuration - support environment variable for Docker
+    const serverUrl = process.env.WEBSOCKET_URL || 'ws://127.0.0.1:8081';
+    console.log(`   Server URL: ${serverUrl}\n`);
+
     const client = new CitadelClient({
         url: serverUrl,
         username: 'typescript_user',

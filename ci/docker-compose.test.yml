@@ -1,0 +1,36 @@
+# Docker Compose for CI integration tests
+version: "3.8"
+
+services:
+  websocket-server:
+    build:
+      context: ..
+      dockerfile: ci/Dockerfile.websocket-server
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8081"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - test-network
+
+  typescript-tests:
+    image: node:18-slim
+    working_dir: /app
+    volumes:
+      - ../typescript-client:/app
+    depends_on:
+      websocket-server:
+        condition: service_healthy
+    environment:
+      - WEBSOCKET_URL=ws://websocket-server:8081
+    command: sh -c "npm install && npm run build && npm run test"
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge

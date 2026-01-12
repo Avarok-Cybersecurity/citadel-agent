@@ -55,17 +55,11 @@ jobs:
 
   typescript-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - uses: Avarok-Cybersecurity/gh-actions-deps@master
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: 'typescript-client/package-lock.json'
       - name: Verify TypeScript types exist
         run: |
           # Types are committed to the repo - verify they exist
@@ -73,26 +67,12 @@ jobs:
           test -f typescript-client/src/types/InternalServiceRequest.ts || exit 1
           test -f typescript-client/src/types/InternalServiceResponse.ts || exit 1
           echo "TypeScript types verified"
-      - name: Install Node.js dependencies
+      - name: Run integration tests via Docker Compose
         run: |
-          cd typescript-client
-          npm install
-      - name: Build TypeScript client
+          cd ci
+          docker compose -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from typescript-tests
+      - name: Cleanup Docker resources
+        if: always()
         run: |
-          cd typescript-client
-          npm run build
-      - name: Run WebSocket integration tests
-        run: |
-          # Start WebSocket server in background from connector crate
-          cargo run -p citadel-internal-service-connector --features websockets --example websocket_server &
-          SERVER_PID=$!
-
-          # Wait for server to start
-          sleep 5
-
-          # Run TypeScript integration tests
-          cd typescript-client
-          npm run test
-
-          # Clean up
-          kill $SERVER_PID || true
+          cd ci
+          docker compose -f docker-compose.test.yml down -v --remove-orphans

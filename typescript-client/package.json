@@ -22,7 +22,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "node dist/test.js"
   },
   "sideEffects": [
     "./snippets/*"

@@ -41,20 +41,23 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         let peer_existed = connection.peers.contains_key(&peer_cid);
 
         if peer_existed {
-            info!(target: "citadel", "[PeerChannelCreated] Peer {} already in peers map for session {} (initiator path)", peer_cid, session_cid);
-            // CRITICAL: Do NOT return early! Even if the peer exists, this channel's receive
-            // stream must be spawned. In SIMULTANEOUS_CONNECT, both sides call PeerConnect.
-            // The initiator's connect.rs sets up one stream, but this PeerChannelCreated event
-            // may carry a DIFFERENT channel from the SDK that also needs its stream consumed.
+            info!(target: "citadel", "[PeerChannelCreated] Peer {} already in peers map for session {} - updating with new channel", peer_cid, session_cid);
+            // CRITICAL FIX: Always update the sink with the new channel.
+            // In reconnection scenarios (e.g., hard disconnect then reconnect), the old sink
+            // becomes stale but the peer entry still exists. Without updating, messages
+            // sent through the old sink will fail.
             //
-            // Without spawning this task, the acceptor's incoming messages are lost because
-            // the stream is dropped when this function returns.
-            info!(target: "citadel", "[PeerChannelCreated] STILL spawning receive stream task to prevent message loss");
-        } else {
-            // Add the peer connection (acceptor side - no PeerRemote available)
-            connection.add_peer_connection_channel_only(peer_cid, sink);
-            info!(target: "citadel", "[PeerChannelCreated] Added peer {} to session {} (channel only). Total peers: {}", peer_cid, session_cid, connection.peers.len());
+            // Also: Do NOT return early! The receive stream must be spawned even if
+            // peer exists. In SIMULTANEOUS_CONNECT, both sides call PeerConnect.
+            // The initiator's connect.rs sets up one stream, but this PeerChannelCreated event
+            // may carry a DIFFERENT channel that also needs its stream consumed.
         }
+
+        // Always add/update the peer connection - insert() replaces existing entries
+        connection.add_peer_connection_channel_only(peer_cid, sink);
+        info!(target: "citadel", "[PeerChannelCreated] {} peer {} to session {} (channel only). Total peers: {}",
+            if peer_existed { "Updated" } else { "Added" },
+            peer_cid, session_cid, connection.peers.len());
 
         let associated_tcp_connection = connection
             .associated_localhost_connection

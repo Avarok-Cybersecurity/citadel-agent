@@ -69,11 +69,12 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             // Let the struct drop - SDK already disconnected so RAII is harmless
             drop(disconnected);
 
-            let response = InternalServiceResponse::DisconnectNotification(DisconnectNotification {
-                cid,
-                peer_cid: None,
-                request_id: None,
-            });
+            let response =
+                InternalServiceResponse::DisconnectNotification(DisconnectNotification {
+                    cid,
+                    peer_cid: None,
+                    request_id: None,
+                });
             return send_response_to_tcp_client(&this.tx_to_localhost_clients, response, tcp_uuid);
         }
     } else {

@@ -94,10 +94,12 @@ pub trait IOInterfaceExt: IOInterface {
 
             let (preserved_session_count, all_sessions, preserved_sessions_info) = {
                 let lock = server_connection_map.read();
-                let all: Vec<(u64, String)> = lock.iter()
+                let all: Vec<(u64, String)> = lock
+                    .iter()
                     .map(|(cid, conn)| (*cid, conn.username.clone()))
                     .collect();
-                let preserved: Vec<(u64, String)> = lock.iter()
+                let preserved: Vec<(u64, String)> = lock
+                    .iter()
                     .filter(|(_, conn)| {
                         conn.associated_localhost_connection.load(Ordering::Relaxed) == conn_id
                     })

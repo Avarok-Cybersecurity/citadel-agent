@@ -87,13 +87,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
                 // Step 3: Verify session is active in SDK before allowing claim
                 let remote = this.remote();
-                let sdk_active_cids: Vec<u64> = match remote
-                    .sessions()
-                    .await
-                {
-                    Ok(conns) => {
-                        conns.sessions.into_iter().map(|s| s.cid).collect()
-                    }
+                let sdk_active_cids: Vec<u64> = match remote.sessions().await {
+                    Ok(conns) => conns.sessions.into_iter().map(|s| s.cid).collect(),
                     Err(e) => {
                         warn!(target: "citadel", "ClaimSession: Failed to query SDK sessions: {:?}", e);
                         vec![]

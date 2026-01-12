@@ -225,6 +225,7 @@ impl<R: Ratchet> Connection<R> {
         );
     }
 
+    #[allow(dead_code)]
     fn clear_peer_connection(&mut self, peer_cid: u64) -> Option<PeerConnection<R>> {
         self.peers.remove(&peer_cid)
     }
@@ -279,12 +280,7 @@ impl<R: Ratchet> Drop for Connection<R> {
     fn drop(&mut self) {
         let remote = self.client_server_remote.clone();
         // Filter out peers without remotes (acceptor-side connections)
-        let peers: Vec<_> = self
-            .peers
-            .drain()
-            .into_iter()
-            .filter_map(|(_k, v)| v.remote)
-            .collect();
+        let peers: Vec<_> = self.peers.drain().filter_map(|(_k, v)| v.remote).collect();
         drop(tokio::spawn(async move {
             for peer in peers {
                 let _ = peer.disconnect().await;
@@ -320,6 +316,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
         })
     }
 
+    #[allow(dead_code)]
     fn clear_peer_connection(
         &self,
         implicated_cid: u64,

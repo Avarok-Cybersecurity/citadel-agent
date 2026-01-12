@@ -189,7 +189,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 },
                 ticket_opt: Some(event.ticket),
                 invitee_response: None,
-                session_security_settings: session_security_settings.clone(),
+                session_security_settings,
                 udp_mode,
                 session_password: None,
             };

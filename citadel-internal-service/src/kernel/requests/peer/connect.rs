@@ -48,13 +48,12 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
         // Query SDK to see if P2P connection actually exists
         let sdk_has_peer = match remote.sessions().await {
-            Ok(sessions) => {
-                sessions.sessions
-                    .iter()
-                    .find(|s| s.cid == cid)
-                    .map(|s| s.connections.iter().any(|c| c.peer_cid == Some(peer_cid)))
-                    .unwrap_or(false)
-            }
+            Ok(sessions) => sessions
+                .sessions
+                .iter()
+                .find(|s| s.cid == cid)
+                .map(|s| s.connections.iter().any(|c| c.peer_cid == Some(peer_cid)))
+                .unwrap_or(false),
             Err(e) => {
                 info!(target: "citadel", "[PeerConnect] Failed to query SDK sessions: {:?}, assuming no peer", e);
                 false

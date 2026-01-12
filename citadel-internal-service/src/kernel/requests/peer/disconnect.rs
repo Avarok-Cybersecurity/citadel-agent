@@ -4,15 +4,15 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     DisconnectNotification, InternalServiceRequest, InternalServiceResponse, PeerDisconnectFailure,
 };
+use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::{
     NetworkError, NodeRemote, ProtocolRemoteExt, ProtocolRemoteTargetExt, Ratchet,
     VirtualTargetType,
 };
-use citadel_sdk::prefabs::ClientServerRemote;
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -42,6 +42,7 @@ pub enum DisconnectedConnection<R: Ratchet> {
     },
     /// P2P peer connection
     P2P {
+        #[allow(dead_code)] // Kept alive for RAII - prevents Drop during SDK disconnect
         peer_connection: PeerConnection<R>,
         cid: u64,
         peer_cid: u64,
@@ -60,6 +61,7 @@ pub enum DisconnectedConnection<R: Ratchet> {
 /// * `request_id` - UUID for tracking the request
 /// * `cid` - Session CID
 /// * `peer_cid` - Some(peer_cid) for P2P disconnect, None for C2S disconnect
+#[allow(dead_code)] // Kept for potential future use - currently using cleanup_state + disconnect_removed pattern
 pub async fn disconnect_any<R: Ratchet>(
     remote: &NodeRemote<R>,
     request_id: Uuid,
@@ -140,7 +142,9 @@ pub fn cleanup_state<R: Ratchet>(
         let mut lock = server_connection_map.write();
         if let Some(sess) = lock.get_mut(&cid) {
             if let Some(peer_conn) = sess.peers.remove(&target_cid) {
-                let tcp_uuid = peer_conn.associated_localhost_connection.load(Ordering::Relaxed);
+                let tcp_uuid = peer_conn
+                    .associated_localhost_connection
+                    .load(Ordering::Relaxed);
                 citadel_sdk::logging::info!(
                     "[cleanup_state] Removed peer {target_cid} from session {cid}"
                 );
@@ -181,9 +185,7 @@ pub fn cleanup_state<R: Ratchet>(
                 tcp_uuid,
             });
         }
-        citadel_sdk::logging::warn!(
-            "[cleanup_state] Session {cid} already removed (not in map)"
-        );
+        citadel_sdk::logging::warn!("[cleanup_state] Session {cid} already removed (not in map)");
         None
     }
 }
@@ -200,7 +202,9 @@ pub async fn disconnect_removed<R: Ratchet>(
     disconnected: &DisconnectedConnection<R>,
 ) -> Result<(), NetworkError> {
     match disconnected {
-        DisconnectedConnection::C2S { connection, cid, .. } => {
+        DisconnectedConnection::C2S {
+            connection, cid, ..
+        } => {
             citadel_sdk::logging::info!(
                 "[disconnect_removed] Calling SDK disconnect on C2S session {} via target-locked ClientServerRemote",
                 cid
@@ -208,13 +212,15 @@ pub async fn disconnect_removed<R: Ratchet>(
             connection.client_server_remote.disconnect().await?;
 
             // Sanity check: verify session is no longer in SDK
-            let still_in_protocol = remote.sessions().await.map(|sessions| {
-                sessions.sessions.iter().any(|sess| sess.cid == *cid)
-            })?;
+            let still_in_protocol = remote
+                .sessions()
+                .await
+                .map(|sessions| sessions.sessions.iter().any(|sess| sess.cid == *cid))?;
 
             if still_in_protocol {
                 return Err(NetworkError::msg(format!(
-                    "C2S session {} still in protocol after disconnect", cid
+                    "C2S session {} still in protocol after disconnect",
+                    cid
                 )));
             }
             Ok(())
@@ -234,7 +240,9 @@ pub async fn disconnect_removed<R: Ratchet>(
             // Sanity check: verify peer is no longer in SDK
             let still_in_protocol = remote.sessions().await.map(|sessions| {
                 if let Some(sess) = sessions.sessions.iter().find(|s| s.cid == *cid) {
-                    sess.connections.iter().any(|c| c.peer_cid == Some(*peer_cid))
+                    sess.connections
+                        .iter()
+                        .any(|c| c.peer_cid == Some(*peer_cid))
                 } else {
                     false
                 }
@@ -242,7 +250,8 @@ pub async fn disconnect_removed<R: Ratchet>(
 
             if still_in_protocol {
                 return Err(NetworkError::msg(format!(
-                    "P2P peer {} still in protocol after disconnect", peer_cid
+                    "P2P peer {} still in protocol after disconnect",
+                    peer_cid
                 )));
             }
             Ok(())
@@ -347,8 +356,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     // This uses the target-locked ClientServerRemote (for C2S) or find_target (for P2P)
     let sdk_result = timeout(
         SDK_DISCONNECT_TIMEOUT,
-        disconnect_removed(this.remote(), &disconnected)
-    ).await;
+        disconnect_removed(this.remote(), &disconnected),
+    )
+    .await;
 
     match sdk_result {
         Ok(Ok(())) => {

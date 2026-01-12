@@ -577,11 +577,11 @@ pub async fn open_messenger_for(cid_str: String) -> Result<(), JsValue> {
         citadel_io::tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let workspace_state = get_workspace_state();
         let guard = workspace_state.read().await;
-        if let Some(state) = guard.as_ref() {
-            if state.connections.contains_key(&cid) {
-                console_log!("Messenger handle for CID: {} is now available", cid);
-                return Ok(());
-            }
+        if let Some(state) = guard.as_ref()
+            && state.connections.contains_key(&cid)
+        {
+            console_log!("Messenger handle for CID: {} is now available", cid);
+            return Ok(());
         }
         return Err(JsValue::from_str(
             "Messenger handle is being opened by another task",

@@ -11,7 +11,9 @@ use std::net::SocketAddr;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 Starting Citadel WebSocket Test Server...");
 
-    let addr: SocketAddr = "127.0.0.1:8081".parse()?;
+    // Use 0.0.0.0 to allow connections from Docker containers
+    let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8081".to_string());
+    let addr: SocketAddr = bind_addr.parse()?;
     let mut interface = WebSocketInterface::new(addr).await?;
 
     println!("✅ WebSocket server listening on {}", addr);

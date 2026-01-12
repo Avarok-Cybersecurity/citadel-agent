@@ -1,5 +1,5 @@
-import { CitadelClient } from './CitadelClient';
-import { MessageNotification } from './types';
+import { CitadelClient } from './CitadelClient.js';
+import { MessageNotification } from './types/index.js';
 
 async function runTests() {
     console.log('🚀 Starting Citadel WebSocket TypeScript Tests...\n');
@@ -83,12 +83,10 @@ function setupEventHandlers(client: CitadelClient) {
     });
 }
 
-// Main execution
-if (require.main === module) {
-    runTests().catch((error) => {
-        console.error('❌ Fatal error:', error);
-        process.exit(1);
-    });
-}
+// Main execution - run tests when this module is executed directly
+runTests().catch((error) => {
+    console.error('❌ Fatal error:', error);
+    process.exit(1);
+});
 
 export { runTests, setupEventHandlers }; 

@@ -1,5 +1,6 @@
 # Dockerfile for WebSocket test server
-FROM rust:1.83-slim-bookworm AS builder
+# Using nightly for edition 2024 and unstable features
+FROM rustlang/rust:nightly-slim AS builder
 
 WORKDIR /app
 
@@ -17,6 +18,7 @@ COPY citadel-internal-service-macros ./citadel-internal-service-macros
 COPY citadel-internal-service-types ./citadel-internal-service-types
 COPY citadel-internal-service-wasm-client ./citadel-internal-service-wasm-client
 COPY intersession-layer-messaging ./intersession-layer-messaging
+COPY service ./service
 
 # Build the websocket server example
 RUN cargo build --release -p citadel-internal-service-connector --features websockets --example websocket_server

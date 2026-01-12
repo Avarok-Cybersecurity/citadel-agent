@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
 COPY Cargo.toml Cargo.lock ./
 COPY citadel-internal-service ./citadel-internal-service
 COPY citadel-internal-service-connector ./citadel-internal-service-connector
+COPY citadel-internal-service-macros ./citadel-internal-service-macros
 COPY citadel-internal-service-types ./citadel-internal-service-types
 COPY citadel-internal-service-wasm-client ./citadel-internal-service-wasm-client
 COPY intersession-layer-messaging ./intersession-layer-messaging

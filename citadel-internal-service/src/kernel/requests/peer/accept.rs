@@ -44,6 +44,28 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
     info!(target: "citadel", "[PeerConnectAccept] Received request: cid={}, peer_cid={}, accept={}", cid, peer_cid, accept);
 
+    // IDEMPOTENCY CHECK: If peer is already connected, return success immediately.
+    // This prevents duplicate PeerConnectAccept requests (from race conditions in
+    // multi-tab scenarios) from failing after the first one succeeds.
+    {
+        let conns = this.server_connection_map.read();
+        if let Some(conn) = conns.get(&cid) {
+            if conn.peers.contains_key(&peer_cid) {
+                info!(target: "citadel", "[PeerConnectAccept] Peer {} already connected to {} - idempotent success", peer_cid, cid);
+                return Some(HandledRequestResult {
+                    response: InternalServiceResponse::PeerConnectAcceptSuccess(
+                        PeerConnectAcceptSuccess {
+                            cid,
+                            peer_cid,
+                            request_id: Some(request_id),
+                        },
+                    ),
+                    uuid,
+                });
+            }
+        }
+    }
+
     // Log current pending signals for debugging
     {
         let pending = this.pending_peer_connect_signals.read();

@@ -1,3 +1,4 @@
 [submodule "intersession-layer-messaging"]
 	path = intersession-layer-messaging
 	url = https://github.com/tbraun96/intersession-layer-messaging
+	branch = master

@@ -1,11 +1,11 @@
 use crate::kernel::requests::HandledRequestResult;
-use crate::kernel::CitadelWorkspaceService;
+use crate::kernel::{AsyncSink, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, MessageSendFailure, MessageSendSuccess,
 };
-use citadel_logging::info;
-use citadel_sdk::prelude::Ratchet;
+use citadel_sdk::logging::info;
+use citadel_sdk::prelude::{Ratchet, SecurityLevel};
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -24,62 +24,66 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
 
-    let mut server_connection_map = this.server_connection_map.lock().await;
-    match server_connection_map.get_mut(&cid) {
-        Some(conn) => {
-            let sink = if let Some(peer_cid) = peer_cid {
-                // send to peer
-                if let Some(peer_conn) = conn.peers.get_mut(&peer_cid) {
-                    peer_conn.sink.set_security_level(security_level);
-                    &mut peer_conn.sink
+    // Clone the sink Arc BEFORE dropping the lock - this is the async-safe pattern
+    // that avoids holding the RwLock across await points
+    let sink_result: Result<(AsyncSink<R>, SecurityLevel), String> = {
+        let server_connection_map = this.server_connection_map.read();
+        match server_connection_map.get(&cid) {
+            Some(conn) => {
+                if let Some(peer_cid) = peer_cid {
+                    // send to peer
+                    info!(target: "citadel", "[P2P-MSG] Sending message from {cid} to peer {peer_cid}");
+                    info!(target: "citadel", "[P2P-MSG] Available peers in conn.peers: {:?}", conn.peers.keys().collect::<Vec<_>>());
+                    if let Some(peer_conn) = conn.peers.get(&peer_cid) {
+                        info!(target: "citadel", "[P2P-MSG] Found peer connection, cloning sink Arc");
+                        Ok((peer_conn.sink.clone(), security_level))
+                    } else {
+                        citadel_sdk::logging::error!(target: "citadel","[P2P-MSG] Peer connection not found for peer_cid={peer_cid}");
+                        Err(format!("Peer connection for {peer_cid} not found"))
+                    }
                 } else {
-                    // TODO: refactor all connection not found messages, we have too many duplicates
-                    citadel_logging::error!(target: "citadel","connection not found");
-                    let response =
-                        InternalServiceResponse::MessageSendFailure(MessageSendFailure {
-                            cid,
-                            message: format!("Connection for {cid} not found"),
-                            request_id: Some(request_id),
-                        });
-
-                    return Some(HandledRequestResult { response, uuid });
+                    // send to server
+                    info!(target: "citadel", "[P2P-MSG] Sending message from {cid} to SERVER (no peer_cid)");
+                    Ok((conn.sink_to_server.clone(), security_level))
                 }
-            } else {
-                // send to server
-                conn.sink_to_server.set_security_level(security_level);
-                &mut conn.sink_to_server
-            };
+            }
+            None => {
+                info!(target: "citadel", "connection not found");
+                Err(format!("Connection for {cid} not found"))
+            }
+        }
+    }; // RwLock dropped here - BEFORE any await
 
-            // Note: not dropping the lock should not hold up the conn map for long
-            // if it does, we can always use a tx/rx pair
-            // drop(server_connection_map);
+    match sink_result {
+        Ok((sink, security_level)) => {
+            // Now lock the sink's inner Mutex (can hold across await)
+            let mut sink_guard = sink.lock().await;
+            sink_guard.set_security_level(security_level);
 
-            if let Err(err) = sink.send(message).await {
+            info!(target: "citadel", "[P2P-MSG] About to call sink.send() for message from {} to {:?}", cid, peer_cid);
+            if let Err(err) = sink_guard.send(message).await {
                 let response = InternalServiceResponse::MessageSendFailure(MessageSendFailure {
                     cid,
                     message: format!("Error sending message: {err:?}"),
                     request_id: Some(request_id),
                 });
-
                 Some(HandledRequestResult { response, uuid })
             } else {
+                info!(target: "citadel", "[P2P-MSG] sink.send() SUCCEEDED for message from {} to {:?}", cid, peer_cid);
                 let response = InternalServiceResponse::MessageSendSuccess(MessageSendSuccess {
                     cid,
                     peer_cid,
                     request_id: Some(request_id),
                 });
-
                 Some(HandledRequestResult { response, uuid })
             }
         }
-        None => {
-            info!(target: "citadel","connection not found");
+        Err(error_msg) => {
             let response = InternalServiceResponse::MessageSendFailure(MessageSendFailure {
                 cid,
-                message: format!("Connection for {cid} not found"),
+                message: error_msg,
                 request_id: Some(request_id),
             });
-
             Some(HandledRequestResult { response, uuid })
         }
     }

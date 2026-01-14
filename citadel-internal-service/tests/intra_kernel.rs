@@ -71,7 +71,7 @@ mod tests {
             None::<PreSharedKey>,
         )
         .await?;
-        citadel_logging::info!(target: "citadel", "P2P Register complete");
+        citadel_sdk::logging::info!(target: "citadel", "P2P Register complete");
         crate::common::connect_p2p(
             &mut peer_0_tx,
             &mut peer_0_rx,
@@ -141,7 +141,7 @@ mod tests {
             None::<PreSharedKey>,
         )
         .await?;
-        citadel_logging::info!(target: "citadel", "P2P Register complete");
+        citadel_sdk::logging::info!(target: "citadel", "P2P Register complete");
         crate::common::connect_p2p(
             &mut peer_0_tx,
             &mut peer_0_rx,
@@ -163,7 +163,7 @@ mod tests {
         peer_0_tx.send(message_request)?;
         match peer_0_rx.recv().await.unwrap() {
             InternalServiceResponse::MessageSendSuccess(MessageSendSuccess { .. }) => {
-                citadel_logging::info!(target: "citadel", "Message Successfully Sent from Peer 0 to Peer 1.");
+                citadel_sdk::logging::info!(target: "citadel", "Message Successfully Sent from Peer 0 to Peer 1.");
             }
             InternalServiceResponse::MessageSendFailure(MessageSendFailure {
                 cid: _,
@@ -183,7 +183,7 @@ mod tests {
                 peer_cid: _,
                 request_id: _,
             }) => {
-                citadel_logging::info!(target: "citadel", "Message from Peer 0 Successfully Received at Peer 1: {message:?}");
+                citadel_sdk::logging::info!(target: "citadel", "Message from Peer 0 Successfully Received at Peer 1: {message:?}");
             }
             _ => {
                 panic!("Received Unexpected Response When Expecting MessageSend Response.")
@@ -247,7 +247,7 @@ mod tests {
             None::<PreSharedKey>,
         )
         .await?;
-        citadel_logging::info!(target: "citadel", "P2P Register complete");
+        citadel_sdk::logging::info!(target: "citadel", "P2P Register complete");
         crate::common::connect_p2p(
             &mut peer_0_tx,
             &mut peer_0_rx,
@@ -271,15 +271,15 @@ mod tests {
             chunk_size: None,
         };
         peer_0_tx.send(send_file_to_service_1_payload).unwrap();
-        citadel_logging::info!(target:"citadel", "File Transfer Request Sent from {peer_0_cid:?}");
+        citadel_sdk::logging::info!(target:"citadel", "File Transfer Request Sent from {peer_0_cid:?}");
 
-        citadel_logging::info!(target:"citadel", "File Transfer Request Sent Successfully {peer_0_cid:?}");
+        citadel_sdk::logging::info!(target:"citadel", "File Transfer Request Sent Successfully {peer_0_cid:?}");
         let deserialized_service_1_payload_response = peer_1_rx.recv().await.unwrap();
         if let InternalServiceResponse::FileTransferRequestNotification(
             FileTransferRequestNotification { metadata, .. },
         ) = deserialized_service_1_payload_response
         {
-            citadel_logging::info!(target:"citadel", "File Transfer Request {peer_1_cid:?}");
+            citadel_sdk::logging::info!(target:"citadel", "File Transfer Request {peer_1_cid:?}");
 
             let file_transfer_accept = InternalServiceRequest::RespondFileTransfer {
                 cid: peer_1_cid,
@@ -290,7 +290,7 @@ mod tests {
                 request_id: Uuid::new_v4(),
             };
             peer_1_tx.send(file_transfer_accept).unwrap();
-            citadel_logging::info!(target:"citadel", "Accepted File Transfer {peer_1_cid:?}");
+            citadel_sdk::logging::info!(target:"citadel", "Accepted File Transfer {peer_1_cid:?}");
 
             let file_transfer_accept = peer_1_rx.recv().await.unwrap();
             if let InternalServiceResponse::FileTransferStatusNotification(
@@ -305,7 +305,7 @@ mod tests {
             ) = file_transfer_accept
             {
                 if success && response {
-                    citadel_logging::info!(target:"citadel", "File Transfer Accept Success {peer_1_cid:?}");
+                    citadel_sdk::logging::info!(target:"citadel", "File Transfer Accept Success {peer_1_cid:?}");
                     // continue to status ticks
                 } else {
                     panic!("Service 1 Accept Response Failure - Success: {success:?} Response {response:?}")
@@ -388,7 +388,7 @@ mod tests {
             None::<PreSharedKey>,
         )
         .await?;
-        citadel_logging::info!(target: "citadel", "P2P Register complete");
+        citadel_sdk::logging::info!(target: "citadel", "P2P Register complete");
         crate::common::connect_p2p(
             &mut peer_0_tx,
             &mut peer_0_rx,
@@ -417,12 +417,12 @@ mod tests {
         };
         peer_0_tx.send(send_file_peer_1_tx_payload).unwrap();
         let deserialized_service_a_payload_response = peer_0_rx.recv().await.unwrap();
-        citadel_logging::info!(target: "citadel","{deserialized_service_a_payload_response:?}");
+        citadel_sdk::logging::info!(target: "citadel","{deserialized_service_a_payload_response:?}");
 
         if let InternalServiceResponse::SendFileRequestSuccess(SendFileRequestSuccess { .. }) =
             &deserialized_service_a_payload_response
         {
-            citadel_logging::info!(target:"citadel", "File Transfer Request {peer_1_cid}");
+            citadel_sdk::logging::info!(target:"citadel", "File Transfer Request {peer_1_cid}");
             let deserialized_service_a_payload_response = peer_1_rx.recv().await.unwrap();
             if let InternalServiceResponse::FileTransferRequestNotification(
                 FileTransferRequestNotification { metadata, .. },
@@ -437,7 +437,7 @@ mod tests {
                     request_id: Uuid::new_v4(),
                 };
                 peer_1_tx.send(file_transfer_accept_payload).unwrap();
-                citadel_logging::info!(target:"citadel", "Accepted File Transfer {peer_1_cid}");
+                citadel_sdk::logging::info!(target:"citadel", "Accepted File Transfer {peer_1_cid}");
             } else {
                 panic!("File Transfer P2P Failure");
             }
@@ -448,7 +448,7 @@ mod tests {
         exhaust_stream_to_file_completion(file_to_send.clone(), &mut peer_1_rx).await;
         exhaust_stream_to_file_completion(file_to_send.clone(), &mut peer_0_rx).await;
 
-        citadel_logging::info!(target: "citadel", "Peer 0 Requesting to Download File");
+        citadel_sdk::logging::info!(target: "citadel", "Peer 0 Requesting to Download File");
 
         // Download P2P REVFS file - without delete on pull
         let download_file_command = InternalServiceRequest::DownloadFile {
@@ -460,7 +460,7 @@ mod tests {
             request_id: Uuid::new_v4(),
         };
         peer_0_tx.send(download_file_command).unwrap();
-        citadel_logging::info!(target: "citadel", "Peer 0 Waiting for DownloadFileSuccess Response");
+        citadel_sdk::logging::info!(target: "citadel", "Peer 0 Waiting for DownloadFileSuccess Response");
         let download_file_response = peer_0_rx.recv().await.unwrap();
         match download_file_response {
             InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess {
@@ -477,7 +477,7 @@ mod tests {
         exhaust_stream_to_file_completion(file_to_send.clone(), &mut peer_1_rx).await;
         exhaust_stream_to_file_completion(file_to_send.clone(), &mut peer_0_rx).await;
 
-        citadel_logging::info!(target: "citadel", "Peer 0 Requesting to Delete File");
+        citadel_sdk::logging::info!(target: "citadel", "Peer 0 Requesting to Delete File");
 
         // Delete file on Peer REVFS
         let delete_file_command = InternalServiceRequest::DeleteVirtualFile {
@@ -499,7 +499,7 @@ mod tests {
                 panic!("Didn't get the REVFS DeleteVirtualFileSuccess - instead got {delete_file_response:?}");
             }
         }
-        citadel_logging::info!(target: "citadel","{delete_file_response:?}");
+        citadel_sdk::logging::info!(target: "citadel","{delete_file_response:?}");
 
         Ok(())
     }

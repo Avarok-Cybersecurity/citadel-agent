@@ -24,7 +24,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     else {
         unreachable!("Should never happen if programmed properly")
     };
-    let mut server_connection_map = this.server_connection_map.lock().await;
+    let mut server_connection_map = this.server_connection_map.write();
 
     let response = if let Some(connection) = server_connection_map.get_mut(&cid) {
         if let Some(mut handler) = connection.take_file_transfer_handle(peer_cid, object_id) {
@@ -36,7 +36,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         cid,
                         Some(peer_cid),
                         &mut server_connection_map,
-                        this.tcp_connection_map.clone(),
+                        this.tx_to_localhost_clients.clone(),
                         Some(request_id),
                     );
 

@@ -1,12 +1,34 @@
+//! C2S Registration Handler
+//!
+//! ## Protocol Semantics (CRITICAL)
+//!
+//! ### C2S (Client-to-Server)
+//! - **Registration**: ONE-TIME per user. Creates permanent CID. Persisted in backend.
+//! - **Connection**: Can happen MANY TIMES after registration. Reuses existing CID.
+//! - **No re-registration**: The protocol has NO notion of re-registering a user.
+//!
+//! ### P2P (Peer-to-Peer)
+//! - **Registration**: ONE-TIME per peer pair. Consent to communicate. Persisted.
+//! - **Connection**: Can happen MANY TIMES after P2P registration.
+//! - **No re-registration**: The protocol has NO notion of re-registering peers.
+//!
+//! ### Key Insight
+//! If a user gets a NEW CID after reconnection, it means a NEW ACCOUNT was registered.
+//! CID is PERMANENT per account - not per session.
+//!
+//! ### Register vs Connect
+//! - `register.rs` (this file) → `remote.register()` → Creates NEW account with NEW CID
+//! - `connect.rs` → `remote.connect()` → Connects to EXISTING account, SAME CID
+
 use crate::kernel::requests::{handle_request, HandledRequestResult};
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
-use citadel_logging::info;
+use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{ProtocolRemoteExt, Ratchet};
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
@@ -38,11 +60,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         )
         .await
     {
-        Ok(_res) => match connect_after_register {
+        Ok(res) => match connect_after_register {
             false => {
                 let response = InternalServiceResponse::RegisterSuccess(
                     citadel_internal_service_types::RegisterSuccess {
-                        cid: 0,
+                        cid: res.cid,
                         request_id: Some(request_id),
                     },
                 );

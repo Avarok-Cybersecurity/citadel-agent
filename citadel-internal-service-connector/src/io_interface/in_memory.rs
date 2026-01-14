@@ -3,25 +3,25 @@ use async_trait::async_trait;
 use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
 };
-use citadel_logging::tracing::log;
+use citadel_logging as log;
 use futures::Sink;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 pub struct InMemoryInterface {
-    pub sink: Option<tokio::sync::mpsc::UnboundedSender<InternalServicePayload>>,
-    pub stream: Option<tokio::sync::mpsc::UnboundedReceiver<InternalServicePayload>>,
+    pub sink: Option<citadel_io::tokio::sync::mpsc::UnboundedSender<InternalServicePayload>>,
+    pub stream: Option<citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServicePayload>>,
 }
 
 impl InMemoryInterface {
     pub fn from_request_response_pair(
-        sink: tokio::sync::mpsc::UnboundedSender<InternalServiceRequest>,
-        mut stream: tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
+        sink: citadel_io::tokio::sync::mpsc::UnboundedSender<InternalServiceRequest>,
+        mut stream: citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
     ) -> Self {
         let (tx_to_sink, mut rx_for_sink) =
-            tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
+            citadel_io::tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
         let (tx_for_stream, rx_for_stream) =
-            tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
+            citadel_io::tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
         let sink_mapped_task = async move {
             while let Some(InternalServicePayload::Request(outbound)) = rx_for_sink.recv().await {
                 if let Err(err) = sink.send(outbound) {
@@ -45,13 +45,13 @@ impl InMemoryInterface {
         };
 
         let task = async move {
-            tokio::select! {
+            citadel_io::tokio::select! {
                 _ = sink_mapped_task => {},
                 _ = stream_mapped_task => {}
             }
         };
 
-        drop(tokio::spawn(task));
+        drop(citadel_io::tokio::spawn(task));
 
         Self {
             sink: Some(tx_to_sink),
@@ -75,7 +75,7 @@ impl IOInterface for InMemoryInterface {
     }
 }
 
-pub struct InMemorySink(pub tokio::sync::mpsc::UnboundedSender<InternalServicePayload>);
+pub struct InMemorySink(pub citadel_io::tokio::sync::mpsc::UnboundedSender<InternalServicePayload>);
 
 impl Sink<InternalServicePayload> for InMemorySink {
     type Error = std::io::Error;
@@ -87,7 +87,7 @@ impl Sink<InternalServicePayload> for InMemorySink {
     fn start_send(self: Pin<&mut Self>, item: InternalServicePayload) -> Result<(), Self::Error> {
         self.0
             .send(item)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
+            .map_err(|err| std::io::Error::other(err.to_string()))
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -99,7 +99,9 @@ impl Sink<InternalServicePayload> for InMemorySink {
     }
 }
 
-pub struct InMemoryStream(pub tokio::sync::mpsc::UnboundedReceiver<InternalServicePayload>);
+pub struct InMemoryStream(
+    pub citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServicePayload>,
+);
 
 impl futures::Stream for InMemoryStream {
     type Item = std::io::Result<InternalServicePayload>;

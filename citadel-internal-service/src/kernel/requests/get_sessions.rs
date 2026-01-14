@@ -1,3 +1,4 @@
+use crate::kernel::requests::peer::cleanup_state;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -5,8 +6,10 @@ use citadel_internal_service_types::{
     GetSessionsResponse, InternalServiceRequest, InternalServiceResponse, PeerSessionInformation,
     SessionInformation,
 };
-use citadel_sdk::prelude::{Ratchet, TargetLockedRemote};
-use std::collections::HashMap;
+use citadel_sdk::logging::{info, warn};
+use citadel_sdk::prelude::{ProtocolRemoteExt, Ratchet, TargetLockedRemote};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::Ordering;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -17,31 +20,135 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let InternalServiceRequest::GetSessions { request_id } = request else {
         unreachable!("Should never happen if programmed properly")
     };
-    let server_connection_map = &this.server_connection_map;
-    let lock = server_connection_map.lock().await;
-    let mut sessions = Vec::new();
-    for (cid, connection) in lock.iter() {
-        if connection.associated_tcp_connection == uuid {
-            let mut session = SessionInformation {
-                cid: *cid,
-                peer_connections: HashMap::new(),
-            };
-            for (peer_cid, conn) in connection.peers.iter() {
-                session.peer_connections.insert(
-                    *peer_cid,
-                    PeerSessionInformation {
-                        cid: *cid,
-                        peer_cid: *peer_cid,
-                        peer_username: conn
-                            .remote
-                            .target_username()
-                            .map(ToString::to_string)
-                            .unwrap_or_default(),
-                    },
-                );
-            }
-            sessions.push(session);
+
+    // Log current state at request start
+    {
+        let lock = this.server_connection_map.read();
+        let session_cids: Vec<u64> = lock.keys().copied().collect();
+        let session_usernames: Vec<String> = lock.values().map(|c| c.username.clone()).collect();
+        info!(target: "citadel", "GetSessions: Request received. server_connection_map has {} sessions. CIDs: {:?}, Usernames: {:?}",
+            lock.len(), session_cids, session_usernames);
+    }
+
+    // Step 1: Query SDK for authoritative C2S session state
+    // NOTE: We only reconcile C2S sessions, not P2P connections. The SDK's sessions()
+    // returns active C2S sessions, but P2P connections in the internal service are
+    // tracked separately and may persist across reconnections (orphan mode).
+    let sdk_c2s_sessions: HashSet<u64> = match this.remote().sessions().await {
+        Ok(sdk_sessions) => {
+            let sessions: HashSet<u64> = sdk_sessions.sessions.iter().map(|s| s.cid).collect();
+            info!(target: "citadel", "GetSessions: SDK reports {} C2S sessions", sessions.len());
+            sessions
         }
+        Err(e) => {
+            warn!(target: "citadel", "GetSessions: Failed to query SDK sessions: {:?}. Skipping reconciliation.", e);
+            // Fallback to returning internal state without reconciliation
+            return Some(build_response_from_internal_state(this, uuid, request_id));
+        }
+    };
+
+    // Step 2: Find stale C2S sessions (not P2P connections!)
+    // IMPORTANT: Only clean up sessions that are:
+    //   1. NOT in SDK's active session list, AND
+    //   2. Belong to the CURRENT connection (not orphaned from a previous connection)
+    //
+    // A session is "orphaned" if its associated_conn doesn't match the current connection.
+    // This is a more robust check than looking at tx_to_localhost_clients, which may have
+    // race conditions during connection handoff.
+    //
+    // Orphaned sessions should NOT be cleaned up because they may become active again
+    // when the user reconnects via ClaimSession.
+    let stale_c2s_sessions: Vec<u64> = {
+        let lock = this.server_connection_map.read();
+
+        lock.iter()
+            .filter(|(cid, conn)| {
+                // Session is in SDK - don't clean up (it's still active)
+                if sdk_c2s_sessions.contains(cid) {
+                    return false;
+                }
+
+                // Check if session belongs to the current connection
+                let associated_conn = conn.associated_localhost_connection.load(Ordering::Relaxed);
+                let is_current_connection = associated_conn == uuid;
+
+                if !is_current_connection {
+                    // Session is orphaned (from a previous connection) - preserve it
+                    info!(target: "citadel", "GetSessions: Preserving orphaned session {} (associated with old connection {:?}, current is {:?})", cid, associated_conn, uuid);
+                    return false;
+                }
+
+                // Session belongs to current connection but not in SDK - this is genuinely stale
+                // This can happen if the session was just created but SDK hasn't registered it yet
+                info!(target: "citadel", "GetSessions: Session {} is current connection but not in SDK - preserving for now", cid);
+                false // Actually, let's preserve all sessions and let explicit disconnect handle cleanup
+            })
+            .map(|(cid, _)| *cid)
+            .collect()
+    };
+
+    // Step 3: Clean up stale C2S sessions only (sessions with active TCP but not in SDK)
+    if !stale_c2s_sessions.is_empty() {
+        info!(target: "citadel", "GetSessions: Cleaning up {} stale C2S sessions (active TCP but not in SDK)", stale_c2s_sessions.len());
+        for cid in stale_c2s_sessions {
+            info!(target: "citadel", "GetSessions: Removing stale C2S session {}", cid);
+            cleanup_state(
+                &this.server_connection_map,
+                cid,
+                None, // Only clean C2S session, peers will be removed with it
+            );
+        }
+    }
+
+    // Step 4: Build and return response from reconciled state
+    Some(build_response_from_internal_state(this, uuid, request_id))
+}
+
+/// Helper function to build GetSessionsResponse from current internal state
+fn build_response_from_internal_state<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    uuid: Uuid,
+    request_id: Uuid,
+) -> HandledRequestResult {
+    let lock = this.server_connection_map.read();
+    let username_cache = this.peer_username_cache.read();
+    let mut sessions = Vec::new();
+
+    info!(target: "citadel", "GetSessions: Found {} total sessions in server_connection_map", lock.len());
+
+    for (cid, connection) in lock.iter() {
+        let conn_id = connection
+            .associated_localhost_connection
+            .load(Ordering::Relaxed);
+        info!(target: "citadel", "GetSessions: Session {} for user {} associated with connection {}", cid, connection.username, conn_id);
+
+        let mut session = SessionInformation {
+            cid: *cid,
+            username: connection.username.clone(),
+            server_address: connection.server_address.clone(),
+            peer_connections: HashMap::new(),
+        };
+
+        for (peer_cid, conn) in connection.peers.iter() {
+            // Try remote username first, then fall back to cached username
+            let peer_username = conn
+                .remote
+                .as_ref()
+                .and_then(|r| r.target_username())
+                .map(ToString::to_string)
+                .or_else(|| username_cache.get(&(*cid, *peer_cid)).cloned())
+                .unwrap_or_default();
+
+            session.peer_connections.insert(
+                *peer_cid,
+                PeerSessionInformation {
+                    cid: *cid,
+                    peer_cid: *peer_cid,
+                    peer_username,
+                },
+            );
+        }
+        sessions.push(session);
     }
 
     let response = InternalServiceResponse::GetSessionsResponse(GetSessionsResponse {
@@ -50,5 +157,5 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         request_id: Some(request_id),
     });
 
-    Some(HandledRequestResult { response, uuid })
+    HandledRequestResult { response, uuid }
 }

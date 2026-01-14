@@ -24,43 +24,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
 
-    let mut lock = this.server_connection_map.lock().await;
-    let response = match lock.get_mut(&cid) {
-        None => InternalServiceResponse::LocalDBSetKVFailure(LocalDBSetKVFailure {
-            cid,
-            peer_cid,
-            message: "Server connection not found".to_string(),
-            request_id: Some(request_id),
-        }),
-        Some(conn) => {
-            if let Some(peer_cid) = peer_cid {
-                if let Some(peer) = conn.peers.get_mut(&peer_cid) {
-                    let peer_remote = peer.remote.clone();
-                    drop(lock);
-                    backend_handler_set(
-                        &peer_remote,
-                        cid,
-                        Some(peer_cid),
-                        key,
-                        value,
-                        Some(request_id),
-                    )
-                    .await
-                } else {
-                    InternalServiceResponse::LocalDBSetKVFailure(LocalDBSetKVFailure {
-                        cid,
-                        peer_cid: Some(peer_cid),
-                        message: "Peer connection not found".to_string(),
-                        request_id: Some(request_id),
-                    })
-                }
-            } else {
-                let remote = conn.client_server_remote.clone();
-                drop(lock);
-                backend_handler_set(&remote, cid, peer_cid, key, value, Some(request_id)).await
-            }
-        }
-    };
+    let remote = super::generate_remote(this.remote(), cid, peer_cid).await;
+    let response = backend_handler_set(&remote, cid, peer_cid, key, value, Some(request_id)).await;
 
     Some(HandledRequestResult { response, uuid })
 }

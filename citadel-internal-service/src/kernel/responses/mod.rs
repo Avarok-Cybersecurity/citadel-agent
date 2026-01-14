@@ -1,11 +1,12 @@
 use crate::kernel::CitadelWorkspaceService;
 
 use citadel_internal_service_connector::io_interface::IOInterface;
-use citadel_logging::info;
+use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{NetworkError, NodeResult, Ratchet};
 
 mod disconnect;
 mod object_transfer_handle;
+mod peer_channel_created;
 
 mod group_channel_created;
 pub(crate) mod group_event;
@@ -24,12 +25,15 @@ pub async fn handle_node_result<T: IOInterface, R: Ratchet>(
         NodeResult::GroupChannelCreated(group_channel_created) => {
             return group_channel_created::handle(this, group_channel_created).await
         }
+        NodeResult::PeerChannelCreated(peer_channel_created) => {
+            return peer_channel_created::handle(this, peer_channel_created).await
+        }
         NodeResult::PeerEvent(event) => return peer_event::handle(this, event).await,
 
         NodeResult::GroupEvent(group_event) => return group_event::handle(this, group_event).await,
 
         evt => {
-            citadel_logging::warn!(target: "citadel", "Unhandled node result: {evt:?}")
+            citadel_sdk::logging::warn!(target: "citadel", "Unhandled node result: {evt:?}")
         }
     }
 

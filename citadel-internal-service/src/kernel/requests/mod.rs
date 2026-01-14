@@ -1,16 +1,17 @@
 use crate::kernel::CitadelWorkspaceService;
 use async_recursion::async_recursion;
 use citadel_internal_service_types::*;
-use citadel_logging::info;
-use citadel_logging::tracing::log;
+use citadel_sdk::logging::info;
+use citadel_sdk::logging::tracing::log;
 
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_sdk::prelude::*;
+use futures::stream::FuturesOrdered;
 use futures::StreamExt;
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::Mutex;
 use uuid::Uuid;
 
 pub(crate) struct HandledRequestResult {
@@ -19,16 +20,18 @@ pub(crate) struct HandledRequestResult {
 }
 
 mod connect;
+mod deregister;
 mod disconnect;
 mod get_account_information;
 mod get_sessions;
 mod message;
 mod register;
 
+mod connection_management;
 mod file;
 mod group;
 mod local_db;
-mod peer;
+pub(crate) mod peer;
 
 #[async_recursion]
 #[allow(clippy::multiple_bound_locations)]
@@ -38,7 +41,7 @@ pub async fn handle_request<T, R: Ratchet>(
     command: InternalServiceRequest,
 ) -> Option<HandledRequestResult>
 where
-    T: IOInterface,
+    T: IOInterface + Sync,
 {
     match &command {
         InternalServiceRequest::GetAccountInformation { .. } => {
@@ -53,6 +56,8 @@ where
 
         InternalServiceRequest::Disconnect { .. } => disconnect::handle(this, uuid, command).await,
 
+        InternalServiceRequest::Deregister { .. } => deregister::handle(this, uuid, command).await,
+
         InternalServiceRequest::SendFile { .. } => file::upload::handle(this, uuid, command).await,
 
         InternalServiceRequest::RespondFileTransfer { .. } => {
@@ -65,6 +70,10 @@ where
 
         InternalServiceRequest::DeleteVirtualFile { .. } => {
             file::delete_virtual_file::handle(this, uuid, command).await
+        }
+
+        InternalServiceRequest::PickFile { .. } => {
+            file::pick_file::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::ListRegisteredPeers { .. } => {
@@ -81,6 +90,10 @@ where
 
         InternalServiceRequest::PeerConnect { .. } => {
             peer::connect::handle(this, uuid, command).await
+        }
+
+        InternalServiceRequest::PeerConnectAccept { .. } => {
+            peer::accept::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::PeerDisconnect { .. } => {
@@ -138,6 +151,53 @@ where
         InternalServiceRequest::GroupRequestJoin { .. } => {
             group::request_join::handle(this, uuid, command).await
         }
+
+        InternalServiceRequest::ConnectionManagement { .. } => {
+            connection_management::handle(this, uuid, command).await
+        }
+
+        InternalServiceRequest::Batched {
+            request_id,
+            commands,
+        } => {
+            log::info!(target: "citadel", "[Batched] Received batched request with {} commands, request_id={}", commands.len(), request_id);
+            // Execute all commands in parallel using FuturesOrdered to preserve order
+            let mut futures: FuturesOrdered<
+                Pin<Box<dyn std::future::Future<Output = Option<InternalServiceResponse>> + Send>>,
+            > = FuturesOrdered::new();
+
+            for cmd in commands.clone() {
+                // Get the request_id from the inner command for the recursive call
+                let cmd_uuid = cmd.request_id().copied().unwrap_or_else(Uuid::new_v4);
+                let fut = Box::pin(async move {
+                    // Recursive call to handle each command
+                    handle_request(this, cmd_uuid, cmd)
+                        .await
+                        .map(|result| result.response)
+                })
+                    as Pin<
+                        Box<
+                            dyn std::future::Future<Output = Option<InternalServiceResponse>>
+                                + Send,
+                        >,
+                    >;
+                futures.push_back(fut);
+            }
+
+            // Collect all results in order
+            let results: Vec<InternalServiceResponse> =
+                futures.filter_map(|r| async { r }).collect().await;
+
+            log::info!(target: "citadel", "[Batched] Completed batched request, returning {} results, request_id={}", results.len(), request_id);
+            Some(HandledRequestResult {
+                response: InternalServiceResponse::BatchedResponse(BatchedResponseData {
+                    cid: 0, // Batched requests are not tied to a single session
+                    request_id: Some(*request_id),
+                    results,
+                }),
+                uuid,
+            })
+        }
     }
 }
 
@@ -146,13 +206,15 @@ pub(crate) fn spawn_group_channel_receiver(
     implicated_cid: u64,
     uuid: Uuid,
     mut rx: GroupChannelRecvHalf,
-    tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+    tcp_connection_map: Arc<
+        parking_lot::RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>,
+    >,
 ) {
     // Handler/Receiver for Group Channel Broadcasts that aren't handled in on_node_event_received in Kernel
     let group_channel_receiver = async move {
         while let Some(inbound_group_broadcast) = rx.next().await {
             // Gets UnboundedSender to the TCP client to forward Broadcasts
-            match tcp_connection_map.lock().await.get(&uuid) {
+            match tcp_connection_map.read().get(&uuid) {
                 Some(entry) => {
                     log::trace!(target:"citadel", "User {implicated_cid:?} Received Group Broadcast: {inbound_group_broadcast:?}");
                     let message = match inbound_group_broadcast {

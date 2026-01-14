@@ -10,6 +10,7 @@ use citadel_sdk::prelude::{
     NodeResult, Ratchet, TargetLockedRemote,
 };
 use futures::StreamExt;
+use std::sync::atomic::Ordering;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -46,14 +47,28 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         command: group_request,
     });
 
-    let mut server_connection_map = this.server_connection_map.lock().await;
+    // Extract peer_remote and uuid inside lock block, then drop before await
+    let remote_result = {
+        let server_connection_map = this.server_connection_map.read();
+        match server_connection_map.get(&cid) {
+            Some(connection) => {
+                let uuid = connection
+                    .associated_localhost_connection
+                    .load(Ordering::Relaxed);
+                match connection.peers.get(&peer_cid) {
+                    Some(peer_connection) => match &peer_connection.remote {
+                        Some(peer_remote) => Ok((peer_remote.clone(), uuid)),
+                        None => Err("Could Not Respond to Group Request - Peer connection missing remote (acceptor-only connection)".to_string()),
+                    },
+                    None => Err("Could Not Respond to Group Request - Peer Connection not found".to_string()),
+                }
+            }
+            None => Err("Could Not Respond to Group Request - Connection not found".to_string()),
+        }
+    }; // Lock dropped here - BEFORE any await
 
-    let response = if let Some(connection) = server_connection_map.get_mut(&cid) {
-        let uuid = connection.associated_tcp_connection;
-        if let Some(peer_connection) = connection.peers.get_mut(&peer_cid) {
-            let peer_remote = peer_connection.remote.clone();
-            drop(server_connection_map);
-
+    let response = match remote_result {
+        Ok((peer_remote, uuid)) => {
             match peer_remote
                 .remote()
                 .send_callback_subscription(request)
@@ -74,8 +89,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                                     let group_cid = channel.cid();
                                     let (tx, rx) = channel.split();
                                     this.server_connection_map
-                                        .lock()
-                                        .await
+                                        .write()
                                         .get_mut(&cid)
                                         .unwrap()
                                         .add_group_channel(
@@ -92,7 +106,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                                         cid,
                                         uuid,
                                         rx,
-                                        this.tcp_connection_map.clone(),
+                                        this.tx_to_localhost_clients.clone(),
                                     );
 
                                     result = true;
@@ -149,20 +163,14 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     },
                 ),
             }
-        } else {
+        }
+        Err(message) => {
             InternalServiceResponse::GroupRespondRequestFailure(GroupRespondRequestFailure {
                 cid,
-                message: "Could Not Respond to Group Request - Peer Connection not found"
-                    .to_string(),
+                message,
                 request_id: Some(request_id),
             })
         }
-    } else {
-        InternalServiceResponse::GroupRespondRequestFailure(GroupRespondRequestFailure {
-            cid,
-            message: "Could Not Respond to Group Request - Connection not found".to_string(),
-            request_id: Some(request_id),
-        })
     };
 
     Some(HandledRequestResult { response, uuid })

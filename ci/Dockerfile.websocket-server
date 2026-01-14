@@ -1,0 +1,41 @@
+# Dockerfile for WebSocket test server
+# Using nightly for edition 2024 and unstable features
+FROM rustlang/rust:nightly-slim AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy workspace files
+COPY Cargo.toml Cargo.lock ./
+COPY citadel-internal-service ./citadel-internal-service
+COPY citadel-internal-service-connector ./citadel-internal-service-connector
+COPY citadel-internal-service-macros ./citadel-internal-service-macros
+COPY citadel-internal-service-types ./citadel-internal-service-types
+COPY citadel-internal-service-wasm-client ./citadel-internal-service-wasm-client
+COPY intersession-layer-messaging ./intersession-layer-messaging
+COPY service ./service
+
+# Build the websocket server example
+RUN cargo build --release -p citadel-internal-service-connector --features websockets --example websocket_server
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/examples/websocket_server /usr/local/bin/
+
+EXPOSE 8081
+
+# Healthcheck - verify server is accepting TCP connections
+HEALTHCHECK --interval=2s --timeout=3s --start-period=5s --retries=10 \
+    CMD bash -c 'echo > /dev/tcp/localhost/8081' || exit 1
+
+CMD ["websocket_server"]

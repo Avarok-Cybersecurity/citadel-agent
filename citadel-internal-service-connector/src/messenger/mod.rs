@@ -7,7 +7,9 @@ use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse, SecurityLevel,
     SessionInformation,
 };
-use citadel_logging::tracing::log;
+use citadel_io::tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use citadel_io::tokio::sync::Mutex;
+use citadel_logging as log;
 use dashmap::DashMap;
 use futures::future::Either;
 use futures::{SinkExt, StreamExt};
@@ -19,14 +21,52 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::Mutex;
 use uuid::Uuid;
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_futures;
+
 pub mod backend;
+
+/// Platform-agnostic async sleep function
+/// - Native: Uses tokio::time::sleep
+/// - WASM: Uses wasmtimer::tokio::sleep
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn sleep_internal(duration: Duration) {
+    citadel_io::tokio::time::sleep(duration).await;
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn sleep_internal(duration: Duration) {
+    wasmtimer::tokio::sleep(duration).await;
+}
+
+/// Platform-agnostic async timeout function
+/// - Native: Uses tokio::time::timeout
+/// - WASM: Uses wasmtimer::tokio::timeout
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn timeout_internal<F, T>(duration: Duration, future: F) -> Result<T, ()>
+where
+    F: Future<Output = T>,
+{
+    citadel_io::tokio::time::timeout(duration, future)
+        .await
+        .map_err(|_| ())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn timeout_internal<F, T>(duration: Duration, future: F) -> Result<T, ()>
+where
+    F: Future<Output = T>,
+{
+    wasmtimer::tokio::timeout(duration, future)
+        .await
+        .map_err(|_| ())
+}
 
 /// A multiplexer for the InternalServiceConnector that allows for multiple handles
 pub struct CitadelWorkspaceMessenger<B>
@@ -44,6 +84,9 @@ where
     is_running: Arc<AtomicBool>,
     backends: Arc<DashMap<u64, B>>,
     final_tx: UnboundedSender<InternalServiceResponse>,
+    /// Pending inbound messages for CIDs that don't have ILM handles yet.
+    /// This fixes the race condition where messages arrive before multiplex() is called.
+    pending_inbound_messages: Arc<DashMap<u64, Vec<InternalMessage>>>,
 }
 
 impl<B> Clone for CitadelWorkspaceMessenger<B>
@@ -59,6 +102,7 @@ where
             is_running: self.is_running.clone(),
             final_tx: self.final_tx.clone(),
             backends: self.backends.clone(),
+            pending_inbound_messages: self.pending_inbound_messages.clone(),
         }
     }
 }
@@ -83,6 +127,40 @@ impl StreamKey {
     }
 }
 
+#[derive(Clone)]
+pub struct BypasserTx {
+    tx: UnboundedSender<(StreamKey, InternalMessage)>,
+    stream_key: StreamKey,
+}
+
+impl BypasserTx {
+    /// Sends an arbitrary request to the internal service. Not processed by the ISM layer.
+    pub async fn send(
+        &self,
+        request: impl Into<InternalServicePayload>,
+    ) -> Result<(), MessengerError> {
+        let payload = Payload::Message(WrappedMessage {
+            source_id: self.stream_key.cid,
+            destination_id: LOOPBACK_ONLY,
+            message_id: 0, // Does not matter since this will bypass ISM
+            contents: request.into(),
+        });
+
+        let bypass_key = StreamKey::bypass_ism();
+
+        self.tx.send((bypass_key, payload)).map_err(|err| {
+            let reason = err.to_string();
+            match err.0 .1 {
+                Payload::Message(message) => MessengerError::SendError {
+                    reason,
+                    message: Either::Right(message.contents),
+                },
+                _ => MessengerError::OtherError { reason },
+            }
+        })
+    }
+}
+
 type CitadelWorkspaceISM<B> = ILM<WrappedMessage, B, LocalDeliveryTx, ISMHandle<B>>;
 
 pub struct LocalDeliveryTx {
@@ -104,6 +182,19 @@ impl intersession_layer_messaging::local_delivery::LocalDelivery<WrappedMessage>
     }
 }
 
+#[derive(Serialize, Deserialize)]
+pub enum WireWrapper {
+    Message {
+        source: u64,
+        destination: u64,
+        message_id: u64,
+        contents: Vec<u8>,
+    },
+    ISMAux {
+        signal: Box<InternalMessage>,
+    },
+}
+
 impl<B> CitadelWorkspaceMessenger<B>
 where
     B: CitadelBackendExt,
@@ -111,9 +202,10 @@ where
     pub fn new<T: IOInterface>(
         connector: InternalServiceConnector<T>,
     ) -> (Self, UnboundedReceiver<InternalServiceResponse>) {
-        let (final_tx, final_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (final_tx, final_rx) = citadel_io::tokio::sync::mpsc::unbounded_channel();
         // background layer
-        let (bypass_ism_tx_to_outbound, rx_to_outbound) = tokio::sync::mpsc::unbounded_channel();
+        let (bypass_ism_tx_to_outbound, rx_to_outbound) =
+            citadel_io::tokio::sync::mpsc::unbounded_channel();
         let this = Self {
             backends: Arc::new(Default::default()),
             txs_to_inbound: Arc::new(Default::default()),
@@ -122,11 +214,19 @@ where
             background_invoked_requests: Arc::new(parking_lot::Mutex::new(Default::default())),
             bypass_ism_tx_to_outbound,
             final_tx,
+            pending_inbound_messages: Arc::new(Default::default()),
         };
 
         this.spawn_background_tasks(connector, rx_to_outbound);
 
         (this, final_rx)
+    }
+
+    pub fn bypasser(&self) -> BypasserTx {
+        BypasserTx {
+            tx: self.bypass_ism_tx_to_outbound.clone(),
+            stream_key: StreamKey::bypass_ism(),
+        }
     }
 
     /// Multiplexes the messenger, creating a unique handle for the specified local client, `cid`
@@ -135,6 +235,8 @@ where
             cid,
             stream_id: ISM_STREAM_ID,
         };
+        log::info!(target: "ism", "[MULTIPLEX] Creating ILM handle for CID {} with stream_key={:?}", cid, stream_key);
+
         let (ism_handle, background_handle) = create_ipc_handles(self.clone(), stream_key);
         let local_delivery_wrapper = LocalDeliveryTx {
             final_tx: self.final_tx.clone(),
@@ -145,10 +247,29 @@ where
             background_to_ism_inbound,
         } = background_handle;
         self.txs_to_inbound
-            .insert(stream_key, background_to_ism_inbound);
+            .insert(stream_key, background_to_ism_inbound.clone());
+
+        let all_keys: Vec<StreamKey> = self.txs_to_inbound.iter().map(|r| *r.key()).collect();
+        log::info!(target: "ism", "[MULTIPLEX] Registered ILM for CID {}. All registered stream_keys: {:?}", cid, all_keys);
+
+        // Process any pending messages that arrived before the ILM was ready.
+        // This fixes the race condition where messages/ACKs arrive before multiplex() is called.
+        if let Some((_, pending_messages)) = self.pending_inbound_messages.remove(&cid) {
+            let count = pending_messages.len();
+            log::info!(target: "ism", "[MULTIPLEX] Processing {} pending messages for CID {}", count, cid);
+            for msg in pending_messages {
+                if let Err(err) = background_to_ism_inbound.send(msg) {
+                    log::error!(target: "ism", "[MULTIPLEX] Failed to deliver pending message: {err:?}");
+                }
+            }
+            log::info!(target: "ism", "[MULTIPLEX] Delivered {} pending messages for CID {}", count, cid);
+        }
 
         let mut handle = MessengerTx {
-            bypass_ism_outbound_tx: self.bypass_ism_tx_to_outbound.clone(),
+            bypass_ism_outbound_tx: BypasserTx {
+                tx: self.bypass_ism_tx_to_outbound.clone(),
+                stream_key,
+            },
             messenger: self.clone(),
             stream_key,
             ism: None,
@@ -186,7 +307,11 @@ where
             }
         };
 
-        drop(tokio::task::spawn(task));
+        #[cfg(not(target_arch = "wasm32"))]
+        drop(citadel_io::tokio::task::spawn(task));
+
+        #[cfg(target_arch = "wasm32")]
+        drop(wasm_bindgen_futures::spawn_local(task));
 
         Ok(handle)
     }
@@ -200,19 +325,6 @@ where
             mut sink,
             mut stream,
         } = connector;
-
-        #[derive(Serialize, Deserialize)]
-        enum WireWrapper {
-            Message {
-                source: u64,
-                destination: u64,
-                message_id: u64,
-                contents: Vec<u8>,
-            },
-            ISMAux {
-                signal: Box<InternalMessage>,
-            },
-        }
 
         let bypass_key = StreamKey::bypass_ism();
 
@@ -231,7 +343,7 @@ where
                         // deserialize and relay to ISM
                         match bincode2::deserialize::<WireWrapper>(&message.message) {
                             Ok(ism_message) => {
-                                // Assume this is an ISM message
+                                // ISM message processing
 
                                 let ism_message = match ism_message {
                                     WireWrapper::ISMAux { signal } => *signal,
@@ -241,10 +353,33 @@ where
                                         destination,
                                         message_id,
                                     } => {
+                                        // Replace message bytes with unwrapped content
                                         let _ = std::mem::replace(
                                             &mut message.message,
                                             BytesMut::from(Bytes::from(contents)),
                                         );
+
+                                        // CRITICAL FIX: Forward UNWRAPPED MessageNotification to JavaScript.
+                                        // This ensures the frontend receives messages immediately with:
+                                        // 1. Correct peer_cid (from original MessageNotification)
+                                        // 2. Unwrapped message bytes (deserializable as P2PCommand)
+                                        //
+                                        // Previously, ISM messages were ONLY routed to ISM, which caused
+                                        // the leader tab to never receive P2P messages because ISM
+                                        // delivery wasn't working correctly in multi-tab scenarios.
+                                        let forward_message =
+                                            InternalServiceResponse::MessageNotification(
+                                                message.clone(),
+                                            );
+                                        if let Err(err) =
+                                            tx_to_local_user_clone.send(forward_message)
+                                        {
+                                            log::error!(target: "citadel", "Error forwarding ISM MessageNotification to JS: {err:?}");
+                                        } else {
+                                            log::trace!(target: "citadel", "Forwarded ISM MessageNotification to JS (cid={}, peer_cid={})",
+                                                message.cid, message.peer_cid);
+                                        }
+
                                         InternalMessage::Message(WrappedMessage {
                                             source_id: source,
                                             destination_id: destination,
@@ -263,17 +398,41 @@ where
                                     stream_id: ISM_STREAM_ID,
                                 };
 
+                                let available_keys: Vec<StreamKey> =
+                                    this.txs_to_inbound.iter().map(|r| *r.key()).collect();
+                                log::info!(target: "ism", "[MSG-ROUTE] Routing message: source={} dest={} msg_id={} | Looking for stream_key={:?} | Available: {:?}",
+                                    ism_message.source_id(), ism_message.destination_id(),
+                                    match &ism_message { InternalMessage::Message(m) => m.message_id, _ => 0 },
+                                    stream_key, available_keys);
+
                                 if let Some(tx) = this.txs_to_inbound.get(&stream_key) {
                                     if let Err(err) = tx.send(ism_message) {
-                                        log::error!(target: "citadel", "Error while sending message to ISM: {err:?}");
+                                        log::error!(target: "citadel", "[MSG-ROUTE] FAILED to send to ISM channel: {err:?}");
+                                    } else {
+                                        log::info!(target: "ism", "[MSG-ROUTE] SUCCESS - sent to ILM for dest={}", stream_key.cid);
                                     }
                                 } else {
-                                    // TODO: enqueue for later use; though, this should not happen due to pre-send checks in ISM
-                                    log::warn!(target: "citadel", "Received message for unknown stream key: {stream_key:?} | Available: {:?}", this.txs_to_inbound.iter().map(|r| *r.key()).collect::<Vec<_>>());
+                                    // Queue message for later delivery when multiplex() is called.
+                                    // This fixes the race condition where messages arrive before ILM is ready.
+                                    log::warn!(target: "ism", "[MSG-ROUTE] QUEUED - No ILM registered for CID {}. Queuing for later delivery. Available: {:?}",
+                                        stream_key.cid, available_keys);
+                                    this.pending_inbound_messages
+                                        .entry(stream_key.cid)
+                                        .or_default()
+                                        .push(ism_message);
                                 }
                             }
                             Err(err) => {
-                                log::error!(target: "citadel", "Error while deserializing ISM message: {err:?}");
+                                log::warn!(target: "citadel", "Error while deserializing ISM (?) message: {err:?}");
+                                // Forward as is. Likely sent by a non-ISM peer
+                                // Send to default direct handle
+                                // TODO: Consider having the bypasser send directly to underlying stream
+                                let other_message_type =
+                                    InternalServiceResponse::MessageNotification(message);
+                                if let Err(err) = tx_to_local_user_clone.send(other_message_type) {
+                                    log::error!(target: "citadel", "Error while sending message to local user: {err:?}");
+                                    return;
+                                }
                             }
                         }
                     }
@@ -325,6 +484,7 @@ where
                         // Pass through backend inspection
                         let uncaught_non_ism_message =
                             if let Some(backend) = this.backends.get(&non_ism_message.cid()) {
+                                // Found backend by CID - use it
                                 let backend = backend.value();
                                 if let Some(value) = backend
                                     .inspect_received_payload(non_ism_message)
@@ -336,6 +496,28 @@ where
                                 } else {
                                     continue;
                                 }
+                            } else if non_ism_message.request_id().is_some() {
+                                // No backend for CID - check ALL backends for this request_id
+                                // This handles BatchedResponse and other CID-0 responses
+                                let mut consumed = false;
+                                for entry in this.backends.iter() {
+                                    let backend = entry.value();
+                                    if backend
+                                        .inspect_received_payload(non_ism_message.clone())
+                                        .await
+                                        .ok()
+                                        .flatten()
+                                        .is_none()
+                                    {
+                                        // Backend consumed the message (it was waiting for this request_id)
+                                        consumed = true;
+                                        break;
+                                    }
+                                }
+                                if consumed {
+                                    continue;
+                                }
+                                non_ism_message
                             } else {
                                 non_ism_message
                             };
@@ -446,36 +628,39 @@ where
             }
         };
 
-        let this = self.clone();
-        let periodic_session_status_poller = async move {
-            let mut ticker = tokio::time::interval(POLL_CONNECTED_PEERS_REFRESH_PERIOD);
-            loop {
-                if !this.is_running() {
-                    return;
-                }
-
-                ticker.tick().await;
-                let mut background_invoked_requests = this.background_invoked_requests.lock();
-                // Update the state for each client that has a running ISM instance
-                let local_cids: Vec<u64> =
-                    this.txs_to_inbound.iter().map(|r| r.key().cid).collect();
-                for source_cid in local_cids {
-                    let request_id = Uuid::new_v4();
-                    background_invoked_requests.insert(request_id);
-                    // The inbound network task will automatically update the state. All this task has to do
-                    // is send the request
-                    let request = InternalMessage::Message(WrappedMessage {
-                        source_id: source_cid,
-                        destination_id: LOOPBACK_ONLY,
-                        message_id: 0,
-                        contents: InternalServicePayload::Request(
-                            InternalServiceRequest::GetSessions { request_id },
-                        ),
-                    });
-                    log::trace!(target: "citadel", "[POLL] Sending session status poller request {bypass_key:?}: {request:?}");
-                    if let Err(err) = this.bypass_ism_tx_to_outbound.send((bypass_key, request)) {
-                        log::error!(target: "citadel", "Error while sending session status poller request: {err:?}");
+        let periodic_session_status_poller = {
+            let this = self.clone();
+            async move {
+                loop {
+                    if !this.is_running() {
                         return;
+                    }
+
+                    sleep_internal(POLL_CONNECTED_PEERS_REFRESH_PERIOD).await;
+                    let mut background_invoked_requests = this.background_invoked_requests.lock();
+                    // Update the state for each client that has a running ISM instance
+                    let local_cids: Vec<u64> =
+                        this.txs_to_inbound.iter().map(|r| r.key().cid).collect();
+                    for source_cid in local_cids {
+                        let request_id = Uuid::new_v4();
+                        background_invoked_requests.insert(request_id);
+                        // The inbound network task will automatically update the state. All this task has to do
+                        // is send the request
+                        let request = InternalMessage::Message(WrappedMessage {
+                            source_id: source_cid,
+                            destination_id: LOOPBACK_ONLY,
+                            message_id: 0,
+                            contents: InternalServicePayload::Request(
+                                InternalServiceRequest::GetSessions { request_id },
+                            ),
+                        });
+
+                        log::trace!(target: "citadel", "[POLL] Sending session status poller request {bypass_key:?}: {request:?}");
+                        if let Err(err) = this.bypass_ism_tx_to_outbound.send((bypass_key, request))
+                        {
+                            log::error!(target: "citadel", "Error while sending session status poller request: {err:?}");
+                            return;
+                        }
                     }
                 }
             }
@@ -483,7 +668,7 @@ where
 
         let this = self.clone();
         let task = async move {
-            tokio::select! {
+            citadel_io::tokio::select! {
                 _ = network_inbound_task => {
                     log::error!(target: "citadel", "Network inbound task ended. Messenger is shutting down")
                 },
@@ -500,7 +685,11 @@ where
             this.is_running.store(false, Ordering::SeqCst);
         };
 
-        drop(tokio::task::spawn(task));
+        #[cfg(not(target_arch = "wasm32"))]
+        drop(citadel_io::tokio::task::spawn(task));
+
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(task);
     }
 
     pub fn is_running(&self) -> bool {
@@ -512,7 +701,7 @@ pub struct MessengerTx<B>
 where
     B: CitadelBackendExt,
 {
-    bypass_ism_outbound_tx: UnboundedSender<(StreamKey, InternalMessage)>,
+    bypass_ism_outbound_tx: BypasserTx,
     messenger: CitadelWorkspaceMessenger<B>,
     stream_key: StreamKey,
     ism: Option<CitadelWorkspaceISM<B>>,
@@ -525,6 +714,21 @@ where
     fn drop(&mut self) {
         // Remove the handle from the list of active handles
         self.messenger.txs_to_inbound.remove(&self.stream_key);
+    }
+}
+
+pub fn send_from_non_ism_source_to_ism_destination(
+    cid: u64,
+    payload: impl Into<InternalServicePayload>,
+) -> WireWrapper {
+    // In order for the receiver to decode the response, we must make the response ISM-compatible
+    WireWrapper::ISMAux {
+        signal: Box::new(InternalMessage::Message(WrappedMessage {
+            source_id: cid,
+            destination_id: LOOPBACK_ONLY,
+            message_id: 0, // Does not matter since this isn't tracked
+            contents: payload.into(),
+        })),
     }
 }
 
@@ -608,12 +812,13 @@ where
 {
     /// Waits for a peer to connect to the local client
     pub async fn wait_for_peer_to_connect(&self, peer_cid: u64) -> Result<(), MessengerError> {
-        let mut interval = tokio::time::interval(Duration::from_millis(100));
+        let interval = Duration::from_millis(300);
         loop {
             if !self.messenger.is_running() {
                 return Err(MessengerError::Shutdown);
             }
-            let _ = interval.tick().await;
+
+            sleep_internal(interval).await;
 
             if self.get_connected_peers().await.contains(&peer_cid) {
                 return Ok(());
@@ -645,8 +850,24 @@ where
         security_level: SecurityLevel,
         message: impl Into<Vec<u8>>,
     ) -> Result<(), MessengerError> {
+        self.send_message_to_with_security_level_and_req_id(
+            peer_cid,
+            security_level,
+            Uuid::new_v4(),
+            message,
+        )
+        .await
+    }
+
+    pub async fn send_message_to_with_security_level_and_req_id(
+        &self,
+        peer_cid: u64,
+        security_level: SecurityLevel,
+        request_id: Uuid,
+        message: impl Into<Vec<u8>>,
+    ) -> Result<(), MessengerError> {
         let payload = InternalServicePayload::Request(InternalServiceRequest::Message {
-            request_id: Uuid::new_v4(),
+            request_id,
             message: message.into(),
             cid: self.stream_key.cid,
             peer_cid: Some(peer_cid),
@@ -662,27 +883,7 @@ where
         &self,
         request: impl Into<InternalServicePayload>,
     ) -> Result<(), MessengerError> {
-        let payload = Payload::Message(WrappedMessage {
-            source_id: self.stream_key.cid,
-            destination_id: LOOPBACK_ONLY,
-            message_id: 0, // Does not matter since this will bypass ISM
-            contents: request.into(),
-        });
-
-        let bypass_key = StreamKey::bypass_ism();
-
-        self.bypass_ism_outbound_tx
-            .send((bypass_key, payload))
-            .map_err(|err| {
-                let reason = err.to_string();
-                match err.0 .1 {
-                    Payload::Message(message) => MessengerError::SendError {
-                        reason,
-                        message: Either::Right(message.contents),
-                    },
-                    _ => MessengerError::OtherError { reason },
-                }
-            })
+        self.bypass_ism_outbound_tx.send(request).await
     }
 
     async fn send_message_to_ism(
@@ -745,9 +946,9 @@ where
     B: CitadelBackendExt,
 {
     let (ism_to_background_outbound, background_from_ism_outbound) =
-        tokio::sync::mpsc::unbounded_channel();
+        citadel_io::tokio::sync::mpsc::unbounded_channel();
     let (background_to_ism_inbound, ism_from_background_inbound) =
-        tokio::sync::mpsc::unbounded_channel();
+        citadel_io::tokio::sync::mpsc::unbounded_channel();
 
     (
         ISMHandle {
@@ -790,6 +991,38 @@ where
             })
     }
 
+    /// Returns the list of connected peer CIDs for this session.
+    ///
+    /// For WASM target: Calls JavaScript callback `window.__citadel_get_peers_for_session(local_cid)`
+    /// which queries the TypeScript P2PAutoConnectService (single source of truth).
+    ///
+    /// For native target: Uses internal connected_peers map from GetSessionsResponse polling.
+    #[cfg(target_arch = "wasm32")]
+    async fn connected_peers(&self) -> Vec<<Self::Message as MessageMetadata>::PeerId> {
+        use wasm_bindgen::prelude::*;
+
+        #[wasm_bindgen]
+        extern "C" {
+            #[wasm_bindgen(js_namespace = window, js_name = __citadel_get_peers_for_session)]
+            fn get_peers_for_session(local_cid: u64) -> js_sys::BigUint64Array;
+        }
+
+        let cid = self.local_id();
+        let js_array = get_peers_for_session(cid);
+
+        // Convert BigUint64Array to Vec<u64>
+        let length = js_array.length() as usize;
+        let mut result = Vec::with_capacity(length);
+        for i in 0..length {
+            result.push(js_array.get_index(i as u32));
+        }
+
+        log::trace!(target: "citadel", "[WASM] connected_peers({cid}) -> {} peers from TypeScript", result.len());
+        result
+    }
+
+    /// Native implementation: Uses internal connected_peers map from GetSessionsResponse polling.
+    #[cfg(not(target_arch = "wasm32"))]
     async fn connected_peers(&self) -> Vec<<Self::Message as MessageMetadata>::PeerId> {
         let cid = self.local_id();
         if let Some(sess) = self.messenger_ptr.connected_peers.read().get(&cid) {

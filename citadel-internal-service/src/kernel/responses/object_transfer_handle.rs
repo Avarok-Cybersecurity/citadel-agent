@@ -1,10 +1,11 @@
 use crate::kernel::{send_response_to_tcp_client, spawn_tick_updater, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{FileTransferRequestNotification, InternalServiceResponse};
-use citadel_logging::info;
+use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{
     NetworkError, ObjectTransferHandle, ObjectTransferOrientation, Ratchet,
 };
+use std::sync::atomic::Ordering;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
@@ -20,8 +21,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     };
     let object_transfer_handler = object_transfer_handle.handle;
 
-    citadel_logging::info!(target: "citadel", "Orientation: {:?}", object_transfer_handler.orientation);
-    citadel_logging::info!(target: "citadel", "ObjectTransferHandle has implicated_cid: {implicated_cid:?} and peer_cid {peer_cid:?}");
+    citadel_sdk::logging::info!(target: "citadel", "Orientation: {:?}", object_transfer_handler.orientation);
+    citadel_sdk::logging::info!(target: "citadel", "ObjectTransferHandle has implicated_cid: {implicated_cid:?} and peer_cid {peer_cid:?}");
 
     // When we receive a handle, there are two possibilities:
     // A: We are the sender of the file transfer, in which case we can assume the adjacent node
@@ -36,9 +37,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     {
         info!(target: "citadel", "Receiver Obtained ObjectTransferHandler");
 
-        let mut server_connection_map = this.server_connection_map.lock().await;
+        let mut server_connection_map = this.server_connection_map.write();
         if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-            let uuid = connection.associated_tcp_connection;
+            let uuid = connection
+                .associated_localhost_connection
+                .load(Ordering::Relaxed);
 
             if is_revfs_pull {
                 spawn_tick_updater(
@@ -46,7 +49,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     implicated_cid,
                     Some(peer_cid),
                     &mut server_connection_map,
-                    this.tcp_connection_map.clone(),
+                    this.tx_to_localhost_clients.clone(),
                     None,
                 );
             } else {
@@ -68,20 +71,20 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
                 drop(server_connection_map);
 
-                send_response_to_tcp_client(&this.tcp_connection_map, response, uuid).await?;
+                send_response_to_tcp_client(&this.tx_to_localhost_clients, response, uuid)?;
             }
         }
     } else {
         // Sender - Must spawn a task to relay status updates to TCP client. When receiving this handle,
         // we know the opposite node agreed to the connection thus we can spawn
-        let mut server_connection_map = this.server_connection_map.lock().await;
+        let mut server_connection_map = this.server_connection_map.write();
         info!(target: "citadel", "Sender Obtained ObjectTransferHandler");
         spawn_tick_updater(
             object_transfer_handler,
             implicated_cid,
             Some(peer_cid),
             &mut server_connection_map,
-            this.tcp_connection_map.clone(),
+            this.tx_to_localhost_clients.clone(),
             None,
         );
     }

@@ -13,7 +13,7 @@ mod tests {
         FileTransferRequestNotification, FileTransferStatusNotification, InternalServiceRequest,
         InternalServiceResponse, SendFileRequestFailure, SendFileRequestSuccess,
     };
-    use citadel_logging::info;
+    use citadel_sdk::logging::info;
     use citadel_sdk::prelude::*;
     use core::panic;
     use std::error::Error;

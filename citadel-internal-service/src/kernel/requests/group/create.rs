@@ -6,6 +6,7 @@ use citadel_internal_service_types::{
 };
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::{ProtocolRemoteTargetExt, Ratchet, VirtualTargetType};
+use std::sync::atomic::Ordering;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -40,7 +41,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             let key = group_channel.key();
             let group_cid = group_channel.cid();
             let (tx, rx) = group_channel.split();
-            match this.server_connection_map.lock().await.get_mut(&cid) {
+            match this.server_connection_map.write().get_mut(&cid) {
                 Some(conn) => {
                     conn.add_group_channel(
                         key,
@@ -51,13 +52,13 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         },
                     );
 
-                    let uuid = conn.associated_tcp_connection;
+                    let uuid = conn.associated_localhost_connection.load(Ordering::Relaxed);
                     spawn_group_channel_receiver(
                         key,
                         cid,
                         uuid,
                         rx,
-                        this.tcp_connection_map.clone(),
+                        this.tx_to_localhost_clients.clone(),
                     );
 
                     InternalServiceResponse::GroupCreateSuccess(GroupCreateSuccess {

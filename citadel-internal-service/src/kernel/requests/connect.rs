@@ -1,11 +1,35 @@
+//! C2S Connection Handler
+//!
+//! ## Protocol Semantics (CRITICAL)
+//!
+//! ### C2S (Client-to-Server)
+//! - **Registration**: ONE-TIME per user. Creates permanent CID. Persisted in backend.
+//! - **Connection**: Can happen MANY TIMES after registration. Reuses existing CID.
+//! - **No re-registration**: The protocol has NO notion of re-registering a user.
+//!
+//! ### P2P (Peer-to-Peer)
+//! - **Registration**: ONE-TIME per peer pair. Consent to communicate. Persisted.
+//! - **Connection**: Can happen MANY TIMES after P2P registration.
+//! - **No re-registration**: The protocol has NO notion of re-registering peers.
+//!
+//! ### Key Insight
+//! If a user gets a NEW CID after reconnection, it means a NEW ACCOUNT was registered.
+//! CID is PERMANENT per account - not per session.
+//!
+//! ### Connect vs Register
+//! - `register.rs` → `remote.register()` → Creates NEW account with NEW CID
+//! - `connect.rs` (this file) → `remote.connect()` → Connects to EXISTING account, SAME CID
+
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::{create_client_server_remote, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    ConnectFailure, InternalServiceRequest, InternalServiceResponse, MessageNotification,
+    AtomicUuid, ConnectFailure, InternalServiceRequest, InternalServiceResponse,
+    MessageNotification,
 };
-use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt, Ratchet};
+use citadel_sdk::prelude::{AuthenticationRequest, NodeRequest, ProtocolRemoteExt, Ratchet};
 use futures::StreamExt;
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -28,6 +52,85 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     };
     let remote = this.remote();
 
+    // GUARD 1: Prevent duplicate concurrent connection attempts for same username
+    // This fixes TOCTOU race conditions where two Connect requests arrive simultaneously
+    {
+        let mut connecting = this.connecting_usernames.lock();
+        if connecting.contains(&username) {
+            citadel_sdk::logging::warn!(target: "citadel", "[Connect] BLOCKED: Connection already in progress for user {}", username);
+            let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                cid: 0,
+                message: format!("Connection already in progress for user {}", username),
+                request_id: Some(request_id),
+            });
+            return Some(HandledRequestResult { response, uuid });
+        }
+        connecting.insert(username.clone());
+    }
+
+    // Helper to cleanup connecting_usernames on function exit
+    let cleanup_username = |this: &CitadelWorkspaceService<T, R>, username: &str| {
+        this.connecting_usernames.lock().remove(username);
+    };
+
+    // GUARD 2: Session reuse check - prevent duplicate SDK sessions for same username
+    // This prevents the race condition where ClaimSession + second Connect resets ratchet
+    let existing_cid = {
+        let lock = this.server_connection_map.read();
+        lock.iter()
+            .find(|(_, conn)| conn.username == username)
+            .map(|(cid, _)| *cid)
+    };
+
+    if let Some(cid) = existing_cid {
+        citadel_sdk::logging::info!(target: "citadel", "[Connect] Found existing session {} for user {}, checking SDK...", cid, username);
+
+        // Query SDK to see if session is actually active
+        let sdk_active = match remote.sessions().await {
+            Ok(sessions) => sessions.sessions.iter().any(|sess| sess.cid == cid),
+            Err(e) => {
+                citadel_sdk::logging::warn!(target: "citadel", "[Connect] Failed to query SDK sessions: {:?}, assuming inactive", e);
+                false
+            }
+        };
+
+        if sdk_active {
+            // Session is active in both internal state and SDK - inform frontend
+            citadel_sdk::logging::info!(target: "citadel", "[Connect] Session {} already active for user {} - returning SessionAlreadyActive", cid, username);
+
+            // Update TCP mapping to new connection
+            {
+                let lock = this.server_connection_map.read();
+                if let Some(conn) = lock.get(&cid) {
+                    conn.associated_localhost_connection
+                        .store(uuid, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+
+            // Return SessionAlreadyActive to let frontend know the session was already connected
+            // This allows the frontend to gracefully handle the case (e.g., redirect to workspace)
+            let response = InternalServiceResponse::SessionAlreadyActive(
+                citadel_internal_service_types::SessionAlreadyActive {
+                    cid,
+                    username: username.clone(),
+                    message: "Session already active. Use the navbar to switch sessions or proceed to workspace.".to_string(),
+                    request_id: Some(request_id),
+                },
+            );
+
+            cleanup_username(this, &username);
+            return Some(HandledRequestResult { response, uuid });
+        } else {
+            // Internal has session but SDK doesn't - clean up stale state
+            citadel_sdk::logging::info!(target: "citadel", "[Connect] Clearing stale session {} for user {} (SDK session disconnected)", cid, username);
+            this.server_connection_map.write().remove(&cid);
+        }
+    }
+
+    // Save username for cleanup (will be moved into SDK connect)
+    let username_for_cleanup = username.clone();
+
+    // Proceed with new connection (no existing session or stale session was cleaned)
     match remote
         .connect(
             AuthenticationRequest::credentialed(username, password),
@@ -41,6 +144,23 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     {
         Ok(conn_success) => {
             let cid = conn_success.cid;
+            citadel_sdk::logging::info!(target: "citadel", "[Connect] SUCCESS: cid={}", cid);
+
+            // DEBUG: Query active sessions in the kernel's session_manager after connect
+            citadel_sdk::logging::info!(target: "citadel", "[Connect] Querying active sessions after connect...");
+            match remote
+                .send_callback_subscription(NodeRequest::GetActiveSessions)
+                .await
+            {
+                Ok(mut stream_sessions) => {
+                    if let Some(result) = stream_sessions.next().await {
+                        citadel_sdk::logging::info!(target: "citadel", "[Connect] GetActiveSessions result: {:?}", result);
+                    }
+                }
+                Err(e) => {
+                    citadel_sdk::logging::error!(target: "citadel", "[Connect] Failed to query active sessions: {:?}", e);
+                }
+            }
 
             let (sink, mut stream) = conn_success.split();
             let client_server_remote = create_client_server_remote(
@@ -48,13 +168,39 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 remote.clone(),
                 session_security_settings,
             );
-            let connection_struct = Connection::new(sink, client_server_remote, uuid);
-            this.server_connection_map
-                .lock()
+
+            let username = remote
+                .account_manager()
+                .get_username_by_cid(cid)
                 .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "#INVALID_USERNAME".to_string());
+
+            // Get server address from the CNAC's connection info
+            let server_address = remote
+                .account_manager()
+                .get_persistence_handler()
+                .get_cnac_by_cid(cid)
+                .await
+                .ok()
+                .flatten()
+                .map(|cnac| cnac.get_connect_info().addr.to_string())
+                .unwrap_or_default();
+
+            let connection_struct = Connection::new(
+                sink,
+                client_server_remote,
+                Arc::new(AtomicUuid::new(uuid)),
+                username,
+                server_address,
+            );
+            this.server_connection_map
+                .write()
                 .insert(cid, connection_struct);
 
-            let hm_for_conn = this.tcp_connection_map.clone();
+            let hm_for_conn = this.tx_to_localhost_clients.clone();
+            let server_conn_map = this.server_connection_map.clone();
 
             let response = InternalServiceResponse::ConnectSuccess(
                 citadel_internal_service_types::ConnectSuccess {
@@ -72,15 +218,27 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                             peer_cid: 0,
                             request_id: Some(request_id),
                         });
-                    let lock = hm_for_conn.lock().await;
-                    match lock.get(&uuid) {
+
+                    // Get the current associated TCP connection for this session (may have changed via ClaimSession)
+                    let server_lock = server_conn_map.read();
+                    let current_tcp_uuid = server_lock
+                        .get(&cid)
+                        .map(|conn| {
+                            conn.associated_localhost_connection
+                                .load(std::sync::atomic::Ordering::Relaxed)
+                        })
+                        .unwrap_or(uuid);
+                    drop(server_lock);
+
+                    let lock = hm_for_conn.read();
+                    match lock.get(&current_tcp_uuid) {
                         Some(entry) => {
                             if let Err(err) = entry.send(message) {
-                                citadel_logging::error!(target:"citadel","Error sending message to client: {err:?}");
+                                citadel_sdk::logging::error!(target:"citadel","Error sending message to client: {err:?}");
                             }
                         }
                         None => {
-                            citadel_logging::info!(target:"citadel","Hash map connection not found")
+                            citadel_sdk::logging::info!(target:"citadel","Hash map connection not found for TCP uuid: {}", current_tcp_uuid)
                         }
                     }
                 }
@@ -88,6 +246,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
             tokio::spawn(connection_read_stream);
 
+            cleanup_username(this, &username_for_cleanup);
             Some(HandledRequestResult { response, uuid })
         }
 
@@ -98,6 +257,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 request_id: Some(request_id),
             });
 
+            cleanup_username(this, &username_for_cleanup);
             Some(HandledRequestResult { response, uuid })
         }
     }

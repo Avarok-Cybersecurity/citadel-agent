@@ -6,7 +6,7 @@ use structopt::StructOpt;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    citadel_logging::setup_log();
+    citadel_sdk::logging::setup_log();
     let opts: Options = Options::from_args();
     let service = EmptyKernel::<StackedRatchet>::default();
     let mut builder = NodeBuilder::default();

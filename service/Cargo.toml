@@ -8,7 +8,12 @@ edition = "2021"
 [features]
 localhost-testing = ["citadel_sdk/localhost-testing"]
 vendored = ["citadel-internal-service/vendored"]
-deadlock-detection = ["parking_lot/deadlock_detection", "parking_lot", "lazy_static"]
+deadlock-detection = [
+    "parking_lot/deadlock_detection",
+    "parking_lot",
+    "lazy_static",
+]
+websockets = ["citadel-internal-service-connector/websockets"]
 
 [[bin]]
 name = "internal-service"
@@ -23,6 +28,12 @@ structopt = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 citadel-internal-service = { workspace = true }
 citadel_sdk = { workspace = true }
-citadel_logging = { workspace = true }
+citadel-internal-service-connector = { workspace = true }
 parking_lot = { workspace = true, optional = true }
 lazy_static = { workspace = true, optional = true }
+env_logger = "0.10"
+
+[[example]]
+name = "websocket_internal_service"
+path = "src/websocket_example.rs"
+required-features = ["websockets"]

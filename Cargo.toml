@@ -8,7 +8,8 @@ members = [
     "citadel-internal-service-macros",
     "citadel-internal-service/tests/common",
     "service",
-    "intersession-layer-messaging",
+    "intersession-layer-messaging", 
+    "citadel-internal-service-wasm-client",
 ]
 
 exclude = [
@@ -24,16 +25,19 @@ citadel-internal-service = { path = "./citadel-internal-service", default-featur
 citadel-internal-service-connector = { path = "./citadel-internal-service-connector", default-features = false, version = "0.1.0" }
 citadel-internal-service-macros = { path = "./citadel-internal-service-macros", default-features = false, version = "0.1.0" }
 intersession-layer-messaging = { path = "intersession-layer-messaging", default-features = false, version = "0.2.0" }
+citadel-internal-service-wasm-client = { path = "citadel-internal-service-wasm-client", default-features = false, version = "0.1.0" }
 
 # Avarok deps
-citadel_sdk = { version = "0.13.0" }
-citadel_types = { version = "0.13.0" }
-citadel_logging = { version = "0.13.0" }
+citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "master" }
+citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "master" }
+citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "master" }
+citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "master" }
+citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "master" }
 
 # Standard deps
 serde = { version = "1.0.104", features = ["derive"] }
-tokio = { version = "1.28.1", default-features = false }
-tokio-util = { version = "0.7.8", default-features = false }
+tokio = { version = "1.47", default-features = false }
+tokio-util = { version = "0.7.15", default-features = false }
 bincode2 = { version = "2.0.1", default-features = false }
 futures = { version = "0.3.28", default-features = false }
 bytes = { version = "1.4.0", default-features = false }
@@ -44,9 +48,14 @@ uuid = { version="1.3.3", features = [
 ]}
 anyhow = "1.0.71"
 async-recursion = { version = "1.0.4" }
-parking_lot = { version = "0.12.1" }
+parking_lot = { version = "0.12.1", features = ["deadlock_detection"] }
 structopt = { version = "0.3.26" }
 lazy_static = "1.4.0"
 async-trait = "0.1.83"
 itertools = "0.13.0"
 dashmap = "6.1.0"
+custom_debug = { version = "0.6.2" }
+# rfd is only used in citadel-internal-service for native file picker dialogs
+# Default features disabled to avoid wayland dependency issues in Docker
+# On macOS/Windows, native dialogs work without extra features
+rfd = { version = "0.15", default-features = false, features = ["tokio"] }

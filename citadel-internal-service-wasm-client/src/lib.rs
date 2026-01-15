@@ -46,176 +46,18 @@ macro_rules! console_log {
     ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
 }
 
-// Custom serializer that handles u64 as BigInt
-fn serialize_response_with_bigint(response: &InternalServiceResponse) -> Result<JsValue, JsValue> {
-    // First convert to serde_json::Value to manipulate the structure
-    let mut json_value = serde_json::to_value(response)
-        .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))?;
-
-    // Recursively convert u64 values that are too large for JavaScript numbers to strings
-    convert_large_numbers_to_strings(&mut json_value);
-
-    // Convert to JsValue with custom handling for large integers
-    js_sys::JSON::parse(
-        &serde_json::to_string(&json_value)
-            .map_err(|e| JsValue::from_str(&format!("JSON string conversion error: {}", e)))?,
-    )
-    .map_err(|e| JsValue::from_str(&format!("JS JSON parse error: {:?}", e)))
+// Native BigInt serialization using serde-wasm-bindgen
+// u64 values are automatically converted to JavaScript BigInt
+fn serialize_response(response: &InternalServiceResponse) -> Result<JsValue, JsValue> {
+    serde_wasm_bindgen::to_value(response)
+        .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
 }
 
-// Custom deserializer that handles string CIDs from JavaScript
-fn deserialize_request_with_string_cids(
-    message: JsValue,
-) -> Result<InternalServiceRequest, JsValue> {
-    // First convert to JSON string, then to serde_json::Value for manipulation
-    let json_str = js_sys::JSON::stringify(&message)
-        .map_err(|e| JsValue::from_str(&format!("JSON stringify error: {:?}", e)))?;
-
-    let json_str = json_str
-        .as_string()
-        .ok_or_else(|| JsValue::from_str("Failed to convert JSON to string"))?;
-
-    // DEBUG: Log ALL Message requests to see peer_cid handling
-    if json_str.contains("\"Message\"") {
-        // Log the first 1000 chars to see full structure
-        console_log!(
-            "[P2P-WASM] Raw JSON (Message request): {}",
-            &json_str[..json_str.len().min(1000)]
-        );
-    }
-
-    let mut json_value: serde_json::Value = serde_json::from_str(&json_str)
-        .map_err(|e| JsValue::from_str(&format!("JSON parse error: {}", e)))?;
-
-    // DEBUG: Log peer_cid before conversion WITH request_id for correlation
-    if let Some(msg) = json_value.get("Message") {
-        let req_id = msg
-            .get("request_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        if let Some(peer_cid) = msg.get("peer_cid") {
-            console_log!(
-                "[P2P-WASM] REQUEST_ID={} peer_cid BEFORE conversion: {:?} (is_string={})",
-                req_id,
-                peer_cid,
-                peer_cid.is_string()
-            );
-        } else {
-            console_log!(
-                "[P2P-WASM] REQUEST_ID={} peer_cid is MISSING from Message!",
-                req_id
-            );
-        }
-    }
-
-    // Convert string CIDs back to numbers
-    convert_string_cids_to_numbers(&mut json_value);
-
-    // DEBUG: Log peer_cid after conversion
-    if let Some(msg) = json_value.get("Message")
-        && let Some(peer_cid) = msg.get("peer_cid")
-    {
-        console_log!(
-            "[P2P-WASM] peer_cid AFTER conversion: {:?} (is_number={})",
-            peer_cid,
-            peer_cid.is_number()
-        );
-    }
-
-    // Convert to the final request type
-    match serde_json::from_value::<InternalServiceRequest>(json_value.clone()) {
-        Ok(request) => {
-            // DEBUG: Log the final deserialized request for Message types
-            if let InternalServiceRequest::Message { cid, peer_cid, .. } = &request {
-                console_log!(
-                    "[P2P-WASM] Deserialized Message: cid={}, peer_cid={:?}",
-                    cid,
-                    peer_cid
-                );
-            }
-            Ok(request)
-        }
-        Err(e) => {
-            debug_log!("Deserialization error: {}", e);
-            // serde_json::Error doesn't have path() method
-
-            // Try to identify which field is causing the issue
-            if let serde_json::Value::Object(map) = &json_value {
-                for (key, value) in map {
-                    debug_log!("Top-level key '{}': {:?}", key, value);
-                }
-            }
-
-            Err(JsValue::from_str(&format!(
-                "Request deserialization error: {}",
-                e
-            )))
-        }
-    }
-}
-
-// Recursively convert large integers to strings to avoid JavaScript overflow
-fn convert_large_numbers_to_strings(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Number(n) => {
-            if let Some(u) = n.as_u64() {
-                // Check if the number exceeds JavaScript's safe integer range
-                if u > (1u64 << 53) - 1 {
-                    *value = serde_json::Value::String(u.to_string());
-                }
-            }
-        }
-        serde_json::Value::Object(map) => {
-            // First, handle specific CID field names that should always be strings
-            for (key, v) in map.iter_mut() {
-                if key == "cid"
-                    || key == "peer_cid"
-                    || key == "session_cid"
-                    || key.ends_with("_cid")
-                {
-                    if let serde_json::Value::Number(n) = v
-                        && let Some(u) = n.as_u64()
-                    {
-                        *v = serde_json::Value::String(u.to_string());
-                    }
-                } else {
-                    convert_large_numbers_to_strings(v);
-                }
-            }
-        }
-        serde_json::Value::Array(arr) => {
-            for v in arr.iter_mut() {
-                convert_large_numbers_to_strings(v);
-            }
-        }
-        _ => {}
-    }
-}
-
-// Convert string CIDs back to numbers for Rust deserialization
-fn convert_string_cids_to_numbers(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Object(map) => {
-            // Handle specific CID field names
-            for (key, v) in map.iter_mut() {
-                if (key == "cid" || key == "peer_cid" || key == "session_cid") && v.is_string() {
-                    if let Some(s) = v.as_str()
-                        && let Ok(n) = s.parse::<u64>()
-                    {
-                        *v = serde_json::Value::Number(serde_json::Number::from(n));
-                    }
-                } else {
-                    convert_string_cids_to_numbers(v);
-                }
-            }
-        }
-        serde_json::Value::Array(arr) => {
-            for v in arr.iter_mut() {
-                convert_string_cids_to_numbers(v);
-            }
-        }
-        _ => {}
-    }
+// Native BigInt deserialization using serde-wasm-bindgen
+// JavaScript BigInt values are automatically converted to u64
+fn deserialize_request(message: JsValue) -> Result<InternalServiceRequest, JsValue> {
+    serde_wasm_bindgen::from_value(message)
+        .map_err(|e| JsValue::from_str(&format!("Deserialization error: {}", e)))
 }
 // use std::time::Duration;
 
@@ -786,7 +628,7 @@ pub async fn next_message() -> Result<JsValue, JsValue> {
                     .expect("Workspace stream corrupted")
                     .stream
                     .replace(stream);
-                serialize_response_with_bigint(&response)
+                serialize_response(&response)
             } else {
                 get_workspace_state()
                     .write()
@@ -883,7 +725,7 @@ pub async fn send_direct_to_internal_service(message: JsValue) -> Result<(), JsV
     // Note: Verbose logging removed to reduce console noise
     // Enable debug_log!() calls below for troubleshooting
 
-    let request: InternalServiceRequest = deserialize_request_with_string_cids(message)?;
+    let request: InternalServiceRequest = deserialize_request(message)?;
     // debug_log!("Deserialized request: {:?}", request);
 
     // Use direct WebSocket channel instead of bypasser to avoid workspace lock

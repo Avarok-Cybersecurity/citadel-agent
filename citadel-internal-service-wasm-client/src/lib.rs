@@ -37,6 +37,8 @@ extern "C" {
 }
 
 // For debugging objects that need formatting
+// Allow unused - kept for debugging purposes, can be enabled by uncommenting calls
+#[allow(unused_macros)]
 macro_rules! debug_log {
     ($($t:tt)*) => (debug_log(&format_args!($($t)*).to_string()))
 }

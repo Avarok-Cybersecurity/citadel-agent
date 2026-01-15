@@ -52,8 +52,10 @@ macro_rules! console_log {
 // u64 values are converted to JavaScript BigInt to avoid overflow
 fn serialize_response(response: &InternalServiceResponse) -> Result<JsValue, JsValue> {
     use serde::Serialize;
-    let serializer = serde_wasm_bindgen::Serializer::new().serialize_large_number_types_as_bigints(true);
-    response.serialize(&serializer)
+    let serializer =
+        serde_wasm_bindgen::Serializer::new().serialize_large_number_types_as_bigints(true);
+    response
+        .serialize(&serializer)
         .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
 }
 

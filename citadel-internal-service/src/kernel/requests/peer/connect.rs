@@ -136,7 +136,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                                 info!(target:"citadel","[P2P-RECV] Received P2P message! cid={cid}, peer_cid={peer_cid}, msg_len={}", message.len());
                                 let message = InternalServiceResponse::MessageNotification(
                                     MessageNotification {
-                                        message: message.into_buffer(),
+                                        message: message.into_buffer().into(),
                                         cid,
                                         peer_cid,
                                         request_id: Some(request_id),

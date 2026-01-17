@@ -213,7 +213,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 while let Some(message) = stream.next().await {
                     let message =
                         InternalServiceResponse::MessageNotification(MessageNotification {
-                            message: message.into_buffer(),
+                            message: message.into_buffer().into(),
                             cid,
                             peer_cid: 0,
                             request_id: Some(request_id),

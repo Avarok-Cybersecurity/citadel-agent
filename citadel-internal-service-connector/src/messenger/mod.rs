@@ -2,7 +2,6 @@ use crate::connector::InternalServiceConnector;
 use crate::io_interface::IOInterface;
 use crate::messenger::backend::CitadelBackendExt;
 use async_trait::async_trait;
-use bytes::{Bytes, BytesMut};
 use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse, SecurityLevel,
     SessionInformation,
@@ -356,7 +355,7 @@ where
                                         // Replace message bytes with unwrapped content
                                         let _ = std::mem::replace(
                                             &mut message.message,
-                                            BytesMut::from(Bytes::from(contents)),
+                                            contents,
                                         );
 
                                         // CRITICAL FIX: Forward UNWRAPPED MessageNotification to JavaScript.

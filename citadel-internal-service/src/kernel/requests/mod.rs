@@ -223,7 +223,7 @@ pub(crate) fn spawn_group_channel_receiver(
                                 GroupMessageNotification {
                                     cid: implicated_cid,
                                     peer_cid: sender,
-                                    message: payload.into_buffer(),
+                                    message: payload.into_buffer().into(),
                                     group_key,
                                     request_id: None,
                                 },

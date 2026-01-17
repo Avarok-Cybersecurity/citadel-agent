@@ -1,4 +1,3 @@
-use bytes::BytesMut;
 use citadel_internal_service_macros::{Cid, IsError, IsNotification, RequestId};
 use citadel_types::crypto::PreSharedKey;
 pub use citadel_types::prelude::{
@@ -192,7 +191,7 @@ pub struct MessageSendFailure {
 #[cfg_attr(feature = "typescript", ts(export))]
 pub struct MessageNotification {
     #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
-    pub message: BytesMut,
+    pub message: Vec<u8>,
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
@@ -567,7 +566,7 @@ pub struct GroupMessageNotification {
     pub peer_cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
     #[debug(with = bytes_debug_fmt)]
-    pub message: BytesMut,
+    pub message: Vec<u8>,
     #[cfg_attr(feature = "typescript", ts(type = "any"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
@@ -1395,7 +1394,7 @@ pub enum InternalServiceRequest {
         cid: u64,
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
         #[debug(with = bytes_debug_fmt)]
-        message: BytesMut,
+        message: Vec<u8>,
         #[cfg_attr(feature = "typescript", ts(type = "any"))]
         group_key: MessageGroupKey,
         request_id: Uuid,

@@ -339,6 +339,9 @@ where
                 match network_message {
                     // TODO: Add support for group messaging
                     InternalServiceResponse::MessageNotification(mut message) => {
+                        // DEBUG: Log ALL MessageNotification arrivals to trace P2P message flow
+                        log::info!(target: "citadel", "[P2P-DEBUG] MessageNotification arrived: cid={}, peer_cid={}, msg_len={}",
+                            message.cid, message.peer_cid, message.message.len());
                         // deserialize and relay to ISM
                         match bincode2::deserialize::<WireWrapper>(&message.message) {
                             Ok(ism_message) => {
@@ -375,8 +378,8 @@ where
                                         {
                                             log::error!(target: "citadel", "Error forwarding ISM MessageNotification to JS: {err:?}");
                                         } else {
-                                            log::trace!(target: "citadel", "Forwarded ISM MessageNotification to JS (cid={}, peer_cid={})",
-                                                message.cid, message.peer_cid);
+                                            log::info!(target: "citadel", "[P2P-DEBUG] FORWARDED ISM MessageNotification to JS: cid={}, peer_cid={}, unwrapped_len={}",
+                                                message.cid, message.peer_cid, message.message.len());
                                         }
 
                                         InternalMessage::Message(WrappedMessage {

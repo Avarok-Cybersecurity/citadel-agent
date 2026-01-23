@@ -88,6 +88,10 @@ where
             peer::register::handle(this, uuid, command).await
         }
 
+        InternalServiceRequest::PeerRegisterRespond { .. } => {
+            peer::respond_register::handle(this, uuid, command).await
+        }
+
         InternalServiceRequest::PeerConnect { .. } => {
             peer::connect::handle(this, uuid, command).await
         }

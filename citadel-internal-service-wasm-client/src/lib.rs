@@ -52,6 +52,17 @@ macro_rules! console_log {
 // u64 values are converted to JavaScript BigInt to avoid overflow
 fn serialize_response(response: &InternalServiceResponse) -> Result<JsValue, JsValue> {
     use serde::Serialize;
+
+    // DEBUG: Log ListRegisteredPeersResponse before serialization to trace HashMap data loss
+    if let InternalServiceResponse::ListRegisteredPeersResponse(resp) = response {
+        console_log!(
+            "[WASM-DEBUG] ListRegisteredPeersResponse BEFORE serialization: cid={}, peers.len()={}, peer_cids={:?}",
+            resp.cid,
+            resp.peers.len(),
+            resp.peers.keys().collect::<Vec<_>>()
+        );
+    }
+
     let serializer =
         serde_wasm_bindgen::Serializer::new().serialize_large_number_types_as_bigints(true);
     response
@@ -305,6 +316,11 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
                 Some(message) = ws_stream.next() => {
                     match message {
                         WsMessage::Text(text) => {
+                            // DEBUG: Log raw JSON for ListRegisteredPeersResponse to trace HashMap data
+                            if text.contains("ListRegisteredPeersResponse") {
+                                console_log!("[WASM-DEBUG] Raw JSON (ListRegisteredPeersResponse): {}", &text[..text.len().min(500)]);
+                            }
+
                             match serde_json::from_str::<InternalServicePayload>(&text) {
                                 Ok(payload) => {
                                     if stream_tx.send(Ok(payload)).is_err() {

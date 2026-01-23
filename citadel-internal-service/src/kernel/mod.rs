@@ -46,6 +46,9 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     /// Stores pending PeerConnect signals awaiting UI acceptance.
     /// Key is (session_cid, peer_cid), value is the original PeerSignal for responding.
     pub pending_peer_connect_signals: Arc<RwLock<HashMap<(u64, u64), PeerSignal>>>,
+    /// Stores pending PeerRegister signals awaiting UI acceptance.
+    /// Key is (session_cid, peer_cid), value is the original PostRegister PeerSignal for responding.
+    pub pending_peer_registrations: Arc<RwLock<HashMap<(u64, u64), PeerSignal>>>,
     /// Cache for peer usernames received from registration events.
     /// Key is (session_cid, peer_cid), value is the peer's username.
     /// Used as fallback when SDK's get_local_group_mutual_peers returns empty username.
@@ -64,6 +67,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             tx_to_localhost_clients: self.tx_to_localhost_clients.clone(),
             orphan_sessions: self.orphan_sessions.clone(),
             pending_peer_connect_signals: self.pending_peer_connect_signals.clone(),
+            pending_peer_registrations: self.pending_peer_registrations.clone(),
             peer_username_cache: self.peer_username_cache.clone(),
             connecting_usernames: self.connecting_usernames.clone(),
             io: self.io.clone(),
@@ -79,6 +83,7 @@ impl<T: IOInterface, R: Ratchet> From<T> for CitadelWorkspaceService<T, R> {
             tx_to_localhost_clients: Arc::new(RwLock::new(Default::default())),
             orphan_sessions: Arc::new(RwLock::new(Default::default())),
             pending_peer_connect_signals: Arc::new(RwLock::new(Default::default())),
+            pending_peer_registrations: Arc::new(RwLock::new(Default::default())),
             peer_username_cache: Arc::new(RwLock::new(Default::default())),
             connecting_usernames: Arc::new(Mutex::new(HashSet::new())),
             io: Arc::new(RwLock::new(Some(io))),

@@ -22,9 +22,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist",
-    "test": "node dist/test.js",
-    "typecheck": "tsc --noEmit"
+    "clean": "rm -rf dist"
   },
   "sideEffects": [
     "./snippets/*"

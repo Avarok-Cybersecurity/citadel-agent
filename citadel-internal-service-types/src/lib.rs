@@ -1319,6 +1319,16 @@ pub enum InternalServiceRequest {
         #[cfg_attr(feature = "typescript", ts(type = "any"))]
         peer_session_password: Option<PreSharedKey>,
     },
+    /// Respond to an incoming peer registration request (accept/decline).
+    /// Used when a peer sends a PeerRegister and we receive PeerRegisterNotification.
+    PeerRegisterRespond {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        accept: bool,
+    },
     LocalDBGetKV {
         request_id: Uuid,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]

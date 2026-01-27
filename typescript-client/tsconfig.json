@@ -16,7 +16,7 @@
         "allowSyntheticDefaultImports": true,
         "experimentalDecorators": true,
         "emitDecoratorMetadata": true,
-        "noImplicitAny": false,
+        "strictNullChecks": true,
         "removeComments": true,
         "preserveConstEnums": true,
         "sourceMap": true,

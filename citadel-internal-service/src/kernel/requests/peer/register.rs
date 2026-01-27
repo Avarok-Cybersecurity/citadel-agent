@@ -106,7 +106,36 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
                             match connect_after_register {
                                 true => {
-                                    info!(target: "citadel", "[PeerRegister] connect_after_register=true, chaining to PeerConnect...");
+                                    info!(target: "citadel", "[PeerRegister] connect_after_register=true, sending PeerRegisterSuccess first, then chaining to PeerConnect...");
+
+                                    // CRITICAL: Send PeerRegisterSuccess FIRST so the initiator's frontend
+                                    // knows the peer is registered. Without this, the frontend only receives
+                                    // PeerConnectSuccess and doesn't update its peer store.
+                                    let register_success = InternalServiceResponse::PeerRegisterSuccess(
+                                        PeerRegisterSuccess {
+                                            cid,
+                                            peer_cid: mutual_peer.cid,
+                                            peer_username: mutual_peer
+                                                .username
+                                                .clone()
+                                                .unwrap_or_default(),
+                                            request_id: Some(request_id),
+                                        },
+                                    );
+
+                                    // Send PeerRegisterSuccess to the initiator via TCP
+                                    {
+                                        let tcp_map = this.tx_to_localhost_clients.read();
+                                        if let Some(sender) = tcp_map.get(&uuid) {
+                                            if let Err(e) = sender.send(register_success) {
+                                                error!(target: "citadel", "[PeerRegister] Failed to send PeerRegisterSuccess: {:?}", e);
+                                            } else {
+                                                info!(target: "citadel", "[PeerRegister] Sent PeerRegisterSuccess to initiator before PeerConnect chain");
+                                            }
+                                        }
+                                    }
+
+                                    // Now chain to PeerConnect
                                     let connect_command = InternalServiceRequest::PeerConnect {
                                         cid,
                                         peer_cid: mutual_peer.cid,

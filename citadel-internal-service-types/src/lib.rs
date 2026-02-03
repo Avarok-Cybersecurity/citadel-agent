@@ -323,6 +323,21 @@ pub struct PickFileFailure {
     pub request_id: Option<Uuid>,
 }
 
+/// Source for file transfer operations.
+/// Allows either a direct file path or a reference to a previously picked file.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub enum FileSource {
+    /// Direct file path (for native apps, CLI, or after PickFile)
+    Path(#[cfg_attr(feature = "typescript", ts(type = "string"))] PathBuf),
+    /// Reference to a PickFile result stored in the internal service.
+    /// The pick_file_request_id is the request_id from the PickFile response.
+    PickFileRef {
+        pick_file_request_id: Uuid,
+    },
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
@@ -1202,8 +1217,10 @@ pub enum InternalServiceRequest {
     },
     SendFile {
         request_id: Uuid,
-        #[cfg_attr(feature = "typescript", ts(type = "string"))]
-        source: PathBuf,
+        /// File source - either a direct path or a reference to a PickFile result.
+        /// Use FileSource::Path for direct file paths, or FileSource::PickFileRef
+        /// to reference a previously picked file via its request_id.
+        source: FileSource,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
         #[cfg_attr(feature = "typescript", ts(type = "bigint | null"))]

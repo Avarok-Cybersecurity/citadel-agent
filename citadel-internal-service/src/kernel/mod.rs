@@ -21,8 +21,10 @@ use futures::{Sink, SinkExt};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 
@@ -147,6 +149,20 @@ impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {
 /// This enables us to drop the RwLock on server_connection_map before awaiting sends.
 pub type AsyncSink<R> = Arc<tokio::sync::Mutex<PeerChannelSendHalf<R>>>;
 
+/// Information about a file picked via the native file picker dialog.
+/// Stored temporarily to allow subsequent SendFile requests to reference the picked file.
+#[derive(Debug, Clone)]
+pub struct PickedFileInfo {
+    /// Full path to the picked file
+    pub file_path: PathBuf,
+    /// File name (basename)
+    pub file_name: String,
+    /// File size in bytes
+    pub file_size: u64,
+    /// When the file was picked (for expiration/cleanup)
+    pub picked_at: Instant,
+}
+
 #[allow(dead_code)]
 pub struct Connection<R: Ratchet> {
     pub sink_to_server: AsyncSink<R>,
@@ -157,6 +173,10 @@ pub struct Connection<R: Ratchet> {
     pub groups: HashMap<MessageGroupKey, GroupConnection>,
     pub username: String,
     pub server_address: String,
+    /// Storage for files picked via PickFile command.
+    /// Key is the request_id from the PickFile request.
+    /// Used to resolve FileSource::PickFileRef in SendFile commands.
+    pub picked_files: HashMap<Uuid, PickedFileInfo>,
 }
 
 #[allow(dead_code)]
@@ -193,6 +213,7 @@ impl<R: Ratchet> Connection<R> {
             username,
             groups: HashMap::new(),
             server_address,
+            picked_files: HashMap::new(),
         }
     }
 

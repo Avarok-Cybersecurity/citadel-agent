@@ -29,14 +29,20 @@ impl CitadelWorkspaceBackend {
     async fn wait_for_response(&self, request_id: Uuid) -> Option<InternalServiceResponse> {
         let (tx, rx) = citadel_io::tokio::sync::oneshot::channel();
         self.expected_requests.insert(request_id, tx);
+        citadel_logging::info!(target: "citadel", "[BACKEND-WAIT] Waiting for response to request_id: {} (CID: {})", request_id, self.cid);
 
         // Add a timeout to prevent infinite waiting (using platform-agnostic timeout)
         match timeout_internal(Duration::from_secs(5), rx).await {
-            Ok(result) => result.ok(),
+            Ok(result) => {
+                let response = result.ok();
+                citadel_logging::info!(target: "citadel", "[BACKEND-WAIT] Received response for request_id {}: {:?}", request_id, response.as_ref().map(|r| std::any::type_name_of_val(r)));
+                response
+            }
             Err(_) => {
                 // Remove the request from expected_requests if it times out
                 self.expected_requests.remove(&request_id);
-                citadel_logging::warn!(target: "citadel", "Timeout waiting for response to request_id: {}", request_id);
+                citadel_logging::warn!(target: "citadel", "[BACKEND-WAIT] TIMEOUT waiting for response to request_id: {} (CID: {}, pending requests: {})",
+                    request_id, self.cid, self.expected_requests.len());
                 None
             }
         }
@@ -47,12 +53,16 @@ impl CitadelWorkspaceBackend {
         &self,
         request: InternalServiceRequest,
     ) -> Result<(), BackendError<WrappedMessage>> {
+        citadel_logging::info!(target: "citadel", "[BACKEND-NETWORK] send_to_network called for CID {} with request: {:?}", self.cid, std::any::type_name_of_val(&request));
         // Send the message to the network layer
         if let Some(tx) = &self.bypass_ism_outbound_tx {
             tx.send(request).await.map_err(|err| {
+                citadel_logging::error!(target: "citadel", "[BACKEND-NETWORK] Failed to send bypass message: {}", err);
                 BackendError::StorageError(format!("Failed to send bypass message: {err}"))
             })?;
+            citadel_logging::info!(target: "citadel", "[BACKEND-NETWORK] Successfully sent to bypass channel");
         } else {
+            citadel_logging::error!(target: "citadel", "[BACKEND-NETWORK] bypass_ism_outbound_tx is None!");
             return Err(BackendError::StorageError(
                 "Failed to send bypass message: bypass_ism_outbound_tx is None".to_string(),
             ));

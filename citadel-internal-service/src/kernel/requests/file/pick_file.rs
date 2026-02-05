@@ -1,10 +1,14 @@
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
+#[cfg(feature = "native-dialogs")]
+use crate::kernel::PickedFileInfo;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, PickFileFailure,
 };
 use citadel_sdk::prelude::Ratchet;
+#[cfg(feature = "native-dialogs")]
+use std::time::Instant;
 use uuid::Uuid;
 
 #[cfg(feature = "native-dialogs")]
@@ -15,7 +19,7 @@ use citadel_sdk::logging::info;
 use citadel_sdk::logging::error;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
-    _this: &CitadelWorkspaceService<T, R>,
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -101,6 +105,23 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                             .unwrap_or_else(|| "unknown".to_string());
 
                         info!(target: "citadel", "PickFile Success: {:?}", path);
+
+                        // Store picked file info for later SendFile reference
+                        let picked_info = PickedFileInfo {
+                            file_path: path.clone(),
+                            file_name: file_name.clone(),
+                            file_size: metadata.len(),
+                            picked_at: Instant::now(),
+                        };
+
+                        // Store in connection's picked_files map
+                        {
+                            let mut map = this.server_connection_map.write();
+                            if let Some(conn) = map.get_mut(&cid) {
+                                conn.picked_files.insert(request_id, picked_info);
+                                info!(target: "citadel", "PickFile stored for request_id: {:?}", request_id);
+                            }
+                        }
 
                         let response = InternalServiceResponse::PickFileSuccess(PickFileSuccess {
                             cid,

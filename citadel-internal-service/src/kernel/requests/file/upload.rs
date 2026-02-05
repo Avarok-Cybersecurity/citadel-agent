@@ -2,12 +2,14 @@ use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    InternalServiceRequest, InternalServiceResponse, SendFileRequestFailure, SendFileRequestSuccess,
+    FileSource, InternalServiceRequest, InternalServiceResponse, SendFileRequestFailure,
+    SendFileRequestSuccess,
 };
 use citadel_sdk::logging::{error, info};
 use citadel_sdk::prelude::{
     NetworkError, NodeRequest, Ratchet, SendObject, TargetLockedRemote, VirtualTargetType,
 };
+use std::path::PathBuf;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -28,42 +30,74 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     };
     let remote = this.remote().clone();
 
-    // Extract what we need from the lock, then drop it before any await
-    let send_request: Result<NodeRequest, NetworkError> = {
+    // Resolve FileSource to actual PathBuf
+    let resolved_path: Result<PathBuf, NetworkError> = {
         let lock = this.server_connection_map.read();
-        match lock.get(&cid) {
-            Some(conn) => {
-                if let Some(peer_cid) = peer_cid {
-                    if let Some(peer_conn) = conn.peers.get(&peer_cid) {
-                        if let Some(peer_remote) = &peer_conn.remote {
-                            Ok(NodeRequest::SendObject(SendObject {
-                                source: Box::new(source),
-                                chunk_size,
-                                session_cid: cid,
-                                v_conn_type: *peer_remote.user(),
-                                transfer_type,
-                            }))
-                        } else {
-                            Err(NetworkError::msg("Peer connection missing remote (acceptor-only connection cannot send files)"))
+        match &source {
+            FileSource::Path(path) => Ok(path.clone()),
+            FileSource::PickFileRef {
+                pick_file_request_id,
+            } => {
+                // Look up the picked file info from the connection
+                match lock.get(&cid) {
+                    Some(conn) => match conn.picked_files.get(pick_file_request_id) {
+                        Some(picked_info) => {
+                            info!(target: "citadel", "Resolved PickFileRef {:?} to path {:?}",
+                                pick_file_request_id, picked_info.file_path);
+                            Ok(picked_info.file_path.clone())
                         }
-                    } else {
-                        Err(NetworkError::msg("Peer Connection Not Found"))
-                    }
-                } else {
-                    Ok(NodeRequest::SendObject(SendObject {
-                        source: Box::new(source),
-                        chunk_size,
-                        session_cid: cid,
-                        v_conn_type: VirtualTargetType::LocalGroupServer { session_cid: cid },
-                        transfer_type,
-                    }))
+                        None => Err(NetworkError::msg(format!(
+                            "PickFile reference not found: {:?}. The file picker result may have expired.",
+                            pick_file_request_id
+                        ))),
+                    },
+                    None => Err(NetworkError::msg("Connection not found for PickFileRef lookup")),
                 }
             }
-            None => {
-                error!(target: "citadel","upload: server connection not found");
-                Err(NetworkError::msg("upload: Server Connection Not Found"))
+        }
+    };
+
+    // Extract what we need from the lock, then drop it before any await
+    let send_request: Result<NodeRequest, NetworkError> = match resolved_path {
+        Ok(file_path) => {
+            let lock = this.server_connection_map.read();
+            match lock.get(&cid) {
+                Some(conn) => {
+                    if let Some(peer_cid) = peer_cid {
+                        if let Some(peer_conn) = conn.peers.get(&peer_cid) {
+                            if let Some(peer_remote) = &peer_conn.remote {
+                                Ok(NodeRequest::SendObject(SendObject {
+                                    source: Box::new(file_path),
+                                    chunk_size,
+                                    session_cid: cid,
+                                    v_conn_type: *peer_remote.user(),
+                                    transfer_type,
+                                }))
+                            } else {
+                                Err(NetworkError::msg(
+                                    "Peer connection missing remote (acceptor-only connection cannot send files)",
+                                ))
+                            }
+                        } else {
+                            Err(NetworkError::msg("Peer Connection Not Found"))
+                        }
+                    } else {
+                        Ok(NodeRequest::SendObject(SendObject {
+                            source: Box::new(file_path),
+                            chunk_size,
+                            session_cid: cid,
+                            v_conn_type: VirtualTargetType::LocalGroupServer { session_cid: cid },
+                            transfer_type,
+                        }))
+                    }
+                }
+                None => {
+                    error!(target: "citadel","upload: server connection not found");
+                    Err(NetworkError::msg("upload: Server Connection Not Found"))
+                }
             }
         }
+        Err(e) => Err(e),
     }; // Lock dropped here - BEFORE any await
 
     match send_request {

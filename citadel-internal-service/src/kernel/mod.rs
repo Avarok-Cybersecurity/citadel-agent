@@ -302,21 +302,6 @@ impl<R: Ratchet> Connection<R> {
     }
 }
 
-impl<R: Ratchet> Drop for Connection<R> {
-    fn drop(&mut self) {
-        let remote = self.client_server_remote.clone();
-        // Filter out peers without remotes (acceptor-side connections)
-        let peers: Vec<_> = self.peers.drain().filter_map(|(_k, v)| v.remote).collect();
-        drop(tokio::spawn(async move {
-            for peer in peers {
-                let _ = peer.disconnect().await;
-            }
-
-            let _ = remote.disconnect().await;
-        }));
-    }
-}
-
 impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
     // Query SDK for active sessions. Useful for when determining if there is asymmetry between the inner protocol
     // and the internal service

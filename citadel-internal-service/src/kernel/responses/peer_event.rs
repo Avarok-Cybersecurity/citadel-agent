@@ -81,6 +81,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     peer_cid,
                 },
             disconnect_response: _,
+            ..
         } => {
             // SDK is source of truth - clean up P2P peer state to mirror SDK
             info!(
@@ -143,6 +144,25 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 let mut cache = this.peer_username_cache.write();
                 cache.insert((session_cid, peer_cid), inviter_username.clone());
                 info!(target: "citadel", "Cached username '{}' for peer {} (session {})", inviter_username, peer_cid, session_cid);
+            }
+
+            // Store the pending signal for later acceptance via PeerRegisterRespond
+            // The signal is stored with the original structure (CIDs as received from SDK)
+            // The responses::peer_register() function will handle the reversal
+            let pending_signal = PeerSignal::PostRegister {
+                peer_conn_type: PeerConnectionType::LocalGroupPeer {
+                    session_cid: peer_cid,
+                    peer_cid: session_cid,
+                },
+                inviter_username: inviter_username.clone(),
+                invitee_username: None,
+                ticket_opt: Some(event.ticket),
+                invitee_response: None,
+            };
+            {
+                let mut signals = this.pending_peer_registrations.write();
+                signals.insert((session_cid, peer_cid), pending_signal);
+                info!(target: "citadel", "[PostRegister] Stored pending registration signal for (cid={}, peer_cid={}), total pending: {}", session_cid, peer_cid, signals.len());
             }
 
             // Extract what we need from the lock, then drop it before any await

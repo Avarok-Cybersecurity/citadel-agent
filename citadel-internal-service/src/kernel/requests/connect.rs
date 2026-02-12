@@ -124,6 +124,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             // Internal has session but SDK doesn't - clean up stale state
             citadel_sdk::logging::info!(target: "citadel", "[Connect] Clearing stale session {} for user {} (SDK session disconnected)", cid, username);
             this.server_connection_map.write().remove(&cid);
+            // Allow SDK protocol layer to stabilize after stale session cleanup
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
     }
 
@@ -213,7 +215,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 while let Some(message) = stream.next().await {
                     let message =
                         InternalServiceResponse::MessageNotification(MessageNotification {
-                            message: message.into_buffer(),
+                            message: message.into_buffer().into(),
                             cid,
                             peer_cid: 0,
                             request_id: Some(request_id),

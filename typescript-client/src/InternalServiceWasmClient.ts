@@ -8,11 +8,15 @@ import type { RegisterSuccess } from './types/RegisterSuccess';
 import type { ConfigCommand } from './types/ConfigCommand';
 import type { ConnectionManagementSuccess } from './types/ConnectionManagementSuccess';
 import type { ConnectionManagementFailure } from './types/ConnectionManagementFailure';
+import { isResponseType } from './type-guards';
 
 // WASM module will be loaded dynamically
 
 // Type definitions for WASM functions (based on our WASM implementation)
-interface WasmModule {
+// WASM-BOUNDARY: next_message/send_p2p_message/send_direct_to_internal_service use `any`
+// because wasm-bindgen generates untyped JS bindings. Typed wrappers in this class contain
+// the `any` at the boundary (sendDirectToInternalService, nextMessage, etc.)
+export interface WasmModule {
     init(url: string): Promise<void>;
     restart(url: string): Promise<void>;
     open_p2p_connection(cid: string): Promise<void>;
@@ -34,7 +38,8 @@ export interface WasmClientConfig {
     timeout?: number;
 }
 
-// Extract exact field types from generated union types, excluding request_id (generated internally)
+// TS-PATTERN: Extract<> requires `any` for discriminated union variant matching —
+// `unknown` doesn't work because Extract requires the match type to be assignable.
 type ConnectRequestFields = Extract<InternalServiceRequest, { Connect: any }>['Connect'];
 type RegisterRequestFields = Extract<InternalServiceRequest, { Register: any }>['Register'];
 type MessageRequestFields = Extract<InternalServiceRequest, { Message: any }>['Message'];
@@ -48,7 +53,7 @@ export type MessageOptions = MessageRequestFields;
 // that can only handle one connection at a time
 
 export class InternalServiceWasmClient {
-    private wasmModule: WasmModule | null = null;
+    protected wasmModule: WasmModule | null = null;
     private config: WasmClientConfig;
     private isConnected = false;
     private currentCid: string | null = null;
@@ -330,7 +335,8 @@ export class InternalServiceWasmClient {
             await wasmModule.default(wasmBinaryUrl);
             console.log('WASM module initialized successfully');
 
-            return wasmModule as any;
+            // WASM-BOUNDARY: dynamic import returns untyped module namespace, cast to our interface
+            return wasmModule as unknown as WasmModule;
         } catch (error) {
             console.error('Failed to load WASM module:', error);
             throw new Error(`Failed to load WASM module: ${error}`);
@@ -497,16 +503,16 @@ export class InternalServiceWasmClient {
         // JSON.stringify on every message is extremely expensive
         try {
             // Handle specific message types for client state management
-            if ('ConnectSuccess' in message) {
+            if (isResponseType(message, 'ConnectSuccess')) {
                 this.currentCid = message.ConnectSuccess.cid.toString();
                 this.isConnected = true;
                 // Only log important state changes
                 console.log('InternalServiceWasmClient: ConnectSuccess received, CID:', this.currentCid);
-            } else if ('RegisterSuccess' in message) {
+            } else if (isResponseType(message, 'RegisterSuccess')) {
                 this.currentCid = message.RegisterSuccess.cid.toString();
                 this.isConnected = true;
                 console.log('InternalServiceWasmClient: RegisterSuccess received, CID:', this.currentCid);
-            } else if ('ServiceConnectionAccepted' in message) {
+            } else if (isResponseType(message, 'ServiceConnectionAccepted')) {
                 // Connection to service established
                 console.log('Service connection accepted');
             }
@@ -539,7 +545,7 @@ export class InternalServiceWasmClient {
             const responseHandler = (message: InternalServiceResponse) => {
                 // For registration with connect_after_register=true, accept either RegisterSuccess or ConnectSuccess
                 const isRegisterRequest = responseType === 'RegisterSuccess';
-                const hasConnectSuccess = 'ConnectSuccess' in message;
+                const hasConnectSuccess = isResponseType(message, 'ConnectSuccess');
                 const hasRegisterSuccess = responseType in message;
 
                 if (hasRegisterSuccess || (isRegisterRequest && hasConnectSuccess)) {
@@ -552,15 +558,18 @@ export class InternalServiceWasmClient {
                     }
 
                     if (hasRegisterSuccess) {
-                        resolve((message as any)[responseType]);
+                        // TS-PATTERN: Dynamic property access on discriminated union — responseType is a runtime string
+                        resolve((message as any)[responseType]); // eslint-disable-line @typescript-eslint/no-explicit-any
                     } else if (isRegisterRequest && hasConnectSuccess) {
                         // Registration with connect_after_register=true returns ConnectSuccess
-                        resolve((message as any)['ConnectSuccess']);
+                        // TS-PATTERN: Dynamic property access on discriminated union
+                        resolve((message as any)['ConnectSuccess']); // eslint-disable-line @typescript-eslint/no-explicit-any
                     }
                 } else if (responseType.replace('Success', 'Failure') in message) {
                     clearTimeout(timeoutId);
                     this.messageHandler = originalHandler; // Restore original handler
-                    const failure = (message as any)[responseType.replace('Success', 'Failure')];
+                    // TS-PATTERN: Dynamic property access on discriminated union — responseType is a runtime string
+                    const failure = (message as any)[responseType.replace('Success', 'Failure')]; // eslint-disable-line @typescript-eslint/no-explicit-any
                     reject(new Error(failure.message || `${responseType} failed`));
                 } else {
                     // Call original handler for other messages
@@ -679,7 +688,7 @@ export class InternalServiceWasmClient {
             const originalHandler = this.messageHandler;
 
             const responseHandler = (message: InternalServiceResponse) => {
-                if ('ConnectionManagementSuccess' in message) {
+                if (isResponseType(message, 'ConnectionManagementSuccess')) {
                     clearTimeout(timeoutId);
                     this.messageHandler = originalHandler;
 
@@ -688,7 +697,7 @@ export class InternalServiceWasmClient {
                     }
 
                     resolve(message.ConnectionManagementSuccess);
-                } else if ('ConnectionManagementFailure' in message) {
+                } else if (isResponseType(message, 'ConnectionManagementFailure')) {
                     clearTimeout(timeoutId);
                     this.messageHandler = originalHandler;
 

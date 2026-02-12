@@ -21,8 +21,10 @@ use futures::{Sink, SinkExt};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 
@@ -46,6 +48,9 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     /// Stores pending PeerConnect signals awaiting UI acceptance.
     /// Key is (session_cid, peer_cid), value is the original PeerSignal for responding.
     pub pending_peer_connect_signals: Arc<RwLock<HashMap<(u64, u64), PeerSignal>>>,
+    /// Stores pending PeerRegister signals awaiting UI acceptance.
+    /// Key is (session_cid, peer_cid), value is the original PostRegister PeerSignal for responding.
+    pub pending_peer_registrations: Arc<RwLock<HashMap<(u64, u64), PeerSignal>>>,
     /// Cache for peer usernames received from registration events.
     /// Key is (session_cid, peer_cid), value is the peer's username.
     /// Used as fallback when SDK's get_local_group_mutual_peers returns empty username.
@@ -64,6 +69,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             tx_to_localhost_clients: self.tx_to_localhost_clients.clone(),
             orphan_sessions: self.orphan_sessions.clone(),
             pending_peer_connect_signals: self.pending_peer_connect_signals.clone(),
+            pending_peer_registrations: self.pending_peer_registrations.clone(),
             peer_username_cache: self.peer_username_cache.clone(),
             connecting_usernames: self.connecting_usernames.clone(),
             io: self.io.clone(),
@@ -79,6 +85,7 @@ impl<T: IOInterface, R: Ratchet> From<T> for CitadelWorkspaceService<T, R> {
             tx_to_localhost_clients: Arc::new(RwLock::new(Default::default())),
             orphan_sessions: Arc::new(RwLock::new(Default::default())),
             pending_peer_connect_signals: Arc::new(RwLock::new(Default::default())),
+            pending_peer_registrations: Arc::new(RwLock::new(Default::default())),
             peer_username_cache: Arc::new(RwLock::new(Default::default())),
             connecting_usernames: Arc::new(Mutex::new(HashSet::new())),
             io: Arc::new(RwLock::new(Some(io))),
@@ -142,6 +149,20 @@ impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {
 /// This enables us to drop the RwLock on server_connection_map before awaiting sends.
 pub type AsyncSink<R> = Arc<tokio::sync::Mutex<PeerChannelSendHalf<R>>>;
 
+/// Information about a file picked via the native file picker dialog.
+/// Stored temporarily to allow subsequent SendFile requests to reference the picked file.
+#[derive(Debug, Clone)]
+pub struct PickedFileInfo {
+    /// Full path to the picked file
+    pub file_path: PathBuf,
+    /// File name (basename)
+    pub file_name: String,
+    /// File size in bytes
+    pub file_size: u64,
+    /// When the file was picked (for expiration/cleanup)
+    pub picked_at: Instant,
+}
+
 #[allow(dead_code)]
 pub struct Connection<R: Ratchet> {
     pub sink_to_server: AsyncSink<R>,
@@ -152,6 +173,10 @@ pub struct Connection<R: Ratchet> {
     pub groups: HashMap<MessageGroupKey, GroupConnection>,
     pub username: String,
     pub server_address: String,
+    /// Storage for files picked via PickFile command.
+    /// Key is the request_id from the PickFile request.
+    /// Used to resolve FileSource::PickFileRef in SendFile commands.
+    pub picked_files: HashMap<Uuid, PickedFileInfo>,
 }
 
 #[allow(dead_code)]
@@ -188,6 +213,7 @@ impl<R: Ratchet> Connection<R> {
             username,
             groups: HashMap::new(),
             server_address,
+            picked_files: HashMap::new(),
         }
     }
 
@@ -276,21 +302,6 @@ impl<R: Ratchet> Connection<R> {
     }
 }
 
-impl<R: Ratchet> Drop for Connection<R> {
-    fn drop(&mut self) {
-        let remote = self.client_server_remote.clone();
-        // Filter out peers without remotes (acceptor-side connections)
-        let peers: Vec<_> = self.peers.drain().filter_map(|(_k, v)| v.remote).collect();
-        drop(tokio::spawn(async move {
-            for peer in peers {
-                let _ = peer.disconnect().await;
-            }
-
-            let _ = remote.disconnect().await;
-        }));
-    }
-}
-
 impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
     // Query SDK for active sessions. Useful for when determining if there is asymmetry between the inner protocol
     // and the internal service
@@ -338,7 +349,9 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
 
     async fn on_start(&self) -> Result<(), NetworkError> {
         let this = self.clone();
-        let remote = self.remote.clone().unwrap();
+        let remote = self.remote.clone().ok_or_else(|| {
+            NetworkError::msg("Kernel remote not initialized when on_start called")
+        })?;
         let remote_for_closure = remote.clone();
         let mut io = self.io.write().take().expect("Already called");
 

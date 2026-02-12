@@ -30,7 +30,7 @@ async function runTests() {
                 secrecy_mode: "BestEffort",
                 crypto_params: {
                     encryption_algorithm: "AES_GCM_256",
-                    kem_algorithm: "Kyber",
+                    kem_algorithm: "MlKem",
                     sig_algorithm: "None"
                 },
                 header_obfuscator_settings: "Disabled"

@@ -75,6 +75,32 @@ if [ -f "SessionInformation.ts" ]; then
     fi
 fi
 
+# Fix protocol type imports from @avarok/citadel-protocol-types
+# ts-rs generates type references (e.g., connect_mode: ConnectMode) via #[ts(type = "...")]
+# but does NOT generate the import statements for external packages.
+echo "🔧 Fixing @avarok/citadel-protocol-types imports in generated files..."
+PROTOCOL_TYPES=("ConnectMode" "UdpMode" "SessionSecuritySettings" "SecurityLevel" "TransferType" "ObjectId" "PreSharedKey" "MessageGroupKey" "UserIdentifier" "VirtualObjectMetadata" "ObjectTransferStatus" "MemberState")
+
+for ts_file in *.ts; do
+    [ "$ts_file" = "index.ts" ] && continue
+
+    # Find which protocol types are used in this file (excluding existing imports)
+    needed_types=()
+    for ptype in "${PROTOCOL_TYPES[@]}"; do
+        if grep -q "$ptype" "$ts_file" && ! grep -q "import.*$ptype.*@avarok/citadel-protocol-types" "$ts_file"; then
+            needed_types+=("$ptype")
+        fi
+    done
+
+    # Add import if any protocol types are needed
+    if [ ${#needed_types[@]} -gt 0 ]; then
+        types_str=$(IFS=", "; echo "${needed_types[*]}")
+        import_line="import type { $types_str } from '@avarok/citadel-protocol-types';"
+        echo "  Adding import to $ts_file: { $types_str }"
+        add_import "$ts_file" "$import_line"
+    fi
+done
+
 echo "📦 Creating index.ts file for convenient imports..."
 cat > index.ts << 'EOF'
 // Auto-generated index for all TypeScript types
@@ -87,14 +113,21 @@ export * from './InternalServicePayload';
 // Export all individual types
 export * from './AccountInformation';
 export * from './Accounts';
+export * from './BatchedResponseData';
+export * from './ConfigCommand';
 export * from './ConnectFailure';
 export * from './ConnectSuccess';
+export * from './ConnectionManagementFailure';
+export * from './ConnectionManagementSuccess';
 export * from './DeleteVirtualFileFailure';
 export * from './DeleteVirtualFileSuccess';
+export * from './DeregisterFailure';
+export * from './DeregisterSuccess';
 export * from './DisconnectFailure';
 export * from './DisconnectNotification';
 export * from './DownloadFileFailure';
 export * from './DownloadFileSuccess';
+export * from './FileSource';
 export * from './FileTransferRequestNotification';
 export * from './FileTransferStatusNotification';
 export * from './FileTransferTickNotification';
@@ -150,6 +183,8 @@ export * from './LocalDBSetKVSuccess';
 export * from './MessageNotification';
 export * from './MessageSendFailure';
 export * from './MessageSendSuccess';
+export * from './PeerConnectAcceptFailure';
+export * from './PeerConnectAcceptSuccess';
 export * from './PeerConnectFailure';
 export * from './PeerConnectNotification';
 export * from './PeerConnectSuccess';
@@ -160,12 +195,19 @@ export * from './PeerRegisterFailure';
 export * from './PeerRegisterNotification';
 export * from './PeerRegisterSuccess';
 export * from './PeerSessionInformation';
+export * from './PickFileFailure';
+export * from './PickFileSuccess';
 export * from './RegisterFailure';
 export * from './RegisterSuccess';
 export * from './SendFileRequestFailure';
 export * from './SendFileRequestSuccess';
 export * from './ServiceConnectionAccepted';
+export * from './SessionAlreadyActive';
 export * from './SessionInformation';
+
+// Re-export protocol types used in InternalServiceRequest fields
+// so downstream packages can reference them directly.
+export type { ConnectMode, UdpMode, SessionSecuritySettings, SecurityLevel, TransferType, ObjectId, PreSharedKey, MessageGroupKey, UserIdentifier } from '@avarok/citadel-protocol-types';
 EOF
 
 echo "🎉 TypeScript types generated successfully!"

@@ -409,9 +409,9 @@ pub struct PeerConnectNotification {
     pub cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub peer_cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
     pub session_security_settings: SessionSecuritySettings,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "UdpMode"))]
     pub udp_mode: UdpMode,
     pub request_id: Option<Uuid>,
 }
@@ -456,7 +456,7 @@ pub struct PeerRegisterFailure {
 pub struct GroupChannelCreateSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -467,7 +467,7 @@ pub struct GroupChannelCreateSuccess {
 pub struct GroupChannelCreateFailure {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub message: String,
     pub request_id: Option<Uuid>,
@@ -489,7 +489,7 @@ pub struct GroupBroadcastHandleFailure {
 pub struct GroupCreateSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -510,7 +510,7 @@ pub struct GroupCreateFailure {
 pub struct GroupLeaveSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -531,7 +531,7 @@ pub struct GroupLeaveFailure {
 pub struct GroupEndSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -552,7 +552,7 @@ pub struct GroupEndFailure {
 pub struct GroupEndNotification {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub success: bool,
     pub request_id: Option<Uuid>,
@@ -564,7 +564,7 @@ pub struct GroupEndNotification {
 pub struct GroupLeaveNotification {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub success: bool,
     pub message: String,
@@ -582,7 +582,7 @@ pub struct GroupMessageNotification {
     #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
     #[debug(with = bytes_debug_fmt)]
     pub message: Vec<u8>,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -593,7 +593,7 @@ pub struct GroupMessageNotification {
 pub struct GroupMessageSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -604,7 +604,7 @@ pub struct GroupMessageSuccess {
 pub struct GroupMessageResponse {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub success: bool,
     pub request_id: Option<Uuid>,
@@ -628,7 +628,7 @@ pub struct GroupInviteNotification {
     pub cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub peer_cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -639,7 +639,7 @@ pub struct GroupInviteNotification {
 pub struct GroupInviteSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -660,7 +660,7 @@ pub struct GroupInviteFailure {
 pub struct GroupRespondRequestSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -681,7 +681,7 @@ pub struct GroupRespondRequestFailure {
 pub struct GroupMembershipResponse {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub success: bool,
     pub request_id: Option<Uuid>,
@@ -693,7 +693,7 @@ pub struct GroupMembershipResponse {
 pub struct GroupRequestJoinPendingNotification {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub result: Result<(), String>,
     pub request_id: Option<Uuid>,
@@ -705,7 +705,7 @@ pub struct GroupRequestJoinPendingNotification {
 pub struct GroupDisconnectNotification {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -716,7 +716,7 @@ pub struct GroupDisconnectNotification {
 pub struct GroupKickSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -739,7 +739,7 @@ pub struct GroupListGroupsSuccess {
     pub cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint | null"))]
     pub peer_cid: Option<u64>,
-    #[cfg_attr(feature = "typescript", ts(type = "any[] | null"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey[] | null"))]
     pub group_list: Option<Vec<MessageGroupKey>>,
     pub request_id: Option<Uuid>,
 }
@@ -760,7 +760,7 @@ pub struct GroupListGroupsFailure {
 pub struct GroupListGroupsResponse {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any[] | null"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey[] | null"))]
     pub group_list: Option<Vec<MessageGroupKey>>,
     pub request_id: Option<Uuid>,
 }
@@ -773,7 +773,7 @@ pub struct GroupJoinRequestNotification {
     pub cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub peer_cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -784,7 +784,7 @@ pub struct GroupJoinRequestNotification {
 pub struct GroupRequestJoinAcceptResponse {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -795,7 +795,7 @@ pub struct GroupRequestJoinAcceptResponse {
 pub struct GroupRequestJoinDeclineResponse {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -806,7 +806,7 @@ pub struct GroupRequestJoinDeclineResponse {
 pub struct GroupRequestJoinSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -827,9 +827,9 @@ pub struct GroupRequestJoinFailure {
 pub struct GroupMemberStateChangeNotification {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "MemberState"))]
     pub state: MemberState,
     pub request_id: Option<Uuid>,
 }
@@ -1029,7 +1029,7 @@ pub struct FileTransferRequestNotification {
     pub cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub peer_cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "VirtualObjectMetadata"))]
     pub metadata: VirtualObjectMetadata,
     pub request_id: Option<Uuid>,
 }
@@ -1040,7 +1040,7 @@ pub struct FileTransferRequestNotification {
 pub struct FileTransferStatusNotification {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "ObjectId"))]
     pub object_id: ObjectId,
     pub success: bool,
     pub response: bool,
@@ -1056,7 +1056,7 @@ pub struct FileTransferTickNotification {
     pub cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint | null"))]
     pub peer_cid: Option<u64>,
-    #[cfg_attr(feature = "typescript", ts(type = "any"))]
+    #[cfg_attr(feature = "typescript", ts(type = "ObjectTransferStatus"))]
     pub status: ObjectTransferStatus,
     pub request_id: Option<Uuid>,
 }
@@ -1164,18 +1164,18 @@ pub enum InternalServiceRequest {
         username: String,
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
         password: SecBuffer,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "ConnectMode"))]
         connect_mode: ConnectMode,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "UdpMode"))]
         udp_mode: UdpMode,
         #[cfg_attr(
             feature = "typescript",
             ts(type = "{ secs: number; nanos: number } | null")
         )]
         keep_alive_timeout: Option<Duration>,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
         session_security_settings: SessionSecuritySettings,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
         server_password: Option<PreSharedKey>,
     },
     Register {
@@ -1187,9 +1187,9 @@ pub enum InternalServiceRequest {
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
         proposed_password: SecBuffer,
         connect_after_register: bool,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
         session_security_settings: SessionSecuritySettings,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
         server_password: Option<PreSharedKey>,
     },
     Message {
@@ -1201,7 +1201,7 @@ pub enum InternalServiceRequest {
         cid: u64,
         #[cfg_attr(feature = "typescript", ts(type = "bigint | null"))]
         peer_cid: Option<u64>,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "SecurityLevel"))]
         security_level: SecurityLevel,
     },
     Disconnect {
@@ -1226,7 +1226,7 @@ pub enum InternalServiceRequest {
         #[cfg_attr(feature = "typescript", ts(type = "bigint | null"))]
         peer_cid: Option<u64>,
         chunk_size: Option<usize>,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "TransferType"))]
         transfer_type: TransferType,
     },
     RespondFileTransfer {
@@ -1234,7 +1234,7 @@ pub enum InternalServiceRequest {
         cid: u64,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         peer_cid: u64,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "ObjectId"))]
         object_id: ObjectId,
         accept: bool,
         #[cfg_attr(feature = "typescript", ts(type = "string | null"))]
@@ -1244,7 +1244,7 @@ pub enum InternalServiceRequest {
     DownloadFile {
         #[cfg_attr(feature = "typescript", ts(type = "string"))]
         virtual_directory: PathBuf,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "SecurityLevel | null"))]
         security_level: Option<SecurityLevel>,
         delete_on_pull: bool,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
@@ -1291,11 +1291,11 @@ pub enum InternalServiceRequest {
         cid: u64,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         peer_cid: u64,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "UdpMode"))]
         udp_mode: UdpMode,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
         session_security_settings: SessionSecuritySettings,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
         peer_session_password: Option<PreSharedKey>,
     },
     PeerDisconnect {
@@ -1317,11 +1317,11 @@ pub enum InternalServiceRequest {
         peer_cid: u64,
         /// Accept (true) or decline (false) the connection
         accept: bool,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "UdpMode"))]
         udp_mode: UdpMode,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
         session_security_settings: SessionSecuritySettings,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
         peer_session_password: Option<PreSharedKey>,
     },
     PeerRegister {
@@ -1330,10 +1330,10 @@ pub enum InternalServiceRequest {
         cid: u64,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         peer_cid: u64,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
         session_security_settings: SessionSecuritySettings,
         connect_after_register: bool,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
         peer_session_password: Option<PreSharedKey>,
     },
     /// Respond to an incoming peer registration request (accept/decline).
@@ -1399,20 +1399,20 @@ pub enum InternalServiceRequest {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
         request_id: Uuid,
-        #[cfg_attr(feature = "typescript", ts(type = "any[] | null"))]
+        #[cfg_attr(feature = "typescript", ts(type = "UserIdentifier[] | null"))]
         initial_users_to_invite: Option<Vec<UserIdentifier>>,
     },
     GroupLeave {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
         group_key: MessageGroupKey,
         request_id: Uuid,
     },
     GroupEnd {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
         group_key: MessageGroupKey,
         request_id: Uuid,
     },
@@ -1422,7 +1422,7 @@ pub enum InternalServiceRequest {
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
         #[debug(with = bytes_debug_fmt)]
         message: Vec<u8>,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
         group_key: MessageGroupKey,
         request_id: Uuid,
     },
@@ -1431,7 +1431,7 @@ pub enum InternalServiceRequest {
         cid: u64,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         peer_cid: u64,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
         group_key: MessageGroupKey,
         request_id: Uuid,
     },
@@ -1440,7 +1440,7 @@ pub enum InternalServiceRequest {
         cid: u64,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         peer_cid: u64,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
         group_key: MessageGroupKey,
         response: bool,
         request_id: Uuid,
@@ -1451,7 +1451,7 @@ pub enum InternalServiceRequest {
         cid: u64,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         peer_cid: u64,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
         group_key: MessageGroupKey,
         request_id: Uuid,
     },
@@ -1465,7 +1465,7 @@ pub enum InternalServiceRequest {
     GroupRequestJoin {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
-        #[cfg_attr(feature = "typescript", ts(type = "any"))]
+        #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
         group_key: MessageGroupKey,
         request_id: Uuid,
     },

@@ -92,7 +92,20 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     match account_manager.find_target_information(cid, peer_cid).await {
                         Ok(target_information) => {
                             info!(target: "citadel", "[PeerRegister] find_target_information succeeded");
-                            let (_, mutual_peer) = target_information.unwrap();
+                            let Some((_, mutual_peer)) = target_information else {
+                                let msg = format!("Target information not found for cid={} peer_cid={}", cid, peer_cid);
+                                error!(target: "citadel", "[PeerRegister] {}", msg);
+                                return Some(HandledRequestResult {
+                                    response: InternalServiceResponse::PeerRegisterFailure(
+                                        PeerRegisterFailure {
+                                            cid,
+                                            message: msg,
+                                            request_id: Some(request_id),
+                                        },
+                                    ),
+                                    uuid,
+                                });
+                            };
                             info!(target: "citadel", "[PeerRegister] mutual_peer.cid={}, connect_after_register={}", mutual_peer.cid, connect_after_register);
 
                             // Cache the peer's username for later use in ListRegisteredPeers

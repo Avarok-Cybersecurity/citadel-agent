@@ -1,4 +1,4 @@
-import { InternalServiceWasmClient, InternalServiceResponse } from './index';
+import { InternalServiceWasmClient, InternalServiceResponse, isResponseType } from './index';
 
 /**
  * Example usage of the InternalServiceWasmClient
@@ -11,13 +11,13 @@ async function wasmClientExample() {
             console.log('Received message:', message);
 
             // Handle different message types
-            if ('MessageNotification' in message) {
+            if (isResponseType(message, 'MessageNotification')) {
                 const notification = message.MessageNotification;
                 const messageText = new TextDecoder().decode(new Uint8Array(notification.message));
                 console.log(`Message from peer ${notification.peer_cid}: ${messageText}`);
-            } else if ('ConnectSuccess' in message) {
+            } else if (isResponseType(message, 'ConnectSuccess')) {
                 console.log(`Connected with CID: ${message.ConnectSuccess.cid}`);
-            } else if ('RegisterSuccess' in message) {
+            } else if (isResponseType(message, 'RegisterSuccess')) {
                 console.log(`Registered with CID: ${message.RegisterSuccess.cid}`);
             }
         },
@@ -109,7 +109,7 @@ async function p2pExample() {
     const alice = new InternalServiceWasmClient({
         websocketUrl: 'ws://127.0.0.1:8080',
         messageHandler: (message: InternalServiceResponse) => {
-            if ('MessageNotification' in message) {
+            if (isResponseType(message, 'MessageNotification')) {
                 const notification = message.MessageNotification;
                 const messageText = new TextDecoder().decode(new Uint8Array(notification.message));
                 console.log(`[Alice] Received from ${notification.peer_cid}: ${messageText}`);
@@ -120,7 +120,7 @@ async function p2pExample() {
     const bob = new InternalServiceWasmClient({
         websocketUrl: 'ws://127.0.0.1:8080',
         messageHandler: (message: InternalServiceResponse) => {
-            if ('MessageNotification' in message) {
+            if (isResponseType(message, 'MessageNotification')) {
                 const notification = message.MessageNotification;
                 const messageText = new TextDecoder().decode(new Uint8Array(notification.message));
                 console.log(`[Bob] Received from ${notification.peer_cid}: ${messageText}`);

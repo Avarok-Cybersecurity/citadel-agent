@@ -349,7 +349,9 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
 
     async fn on_start(&self) -> Result<(), NetworkError> {
         let this = self.clone();
-        let remote = self.remote.clone().unwrap();
+        let remote = self.remote.clone().ok_or_else(|| {
+            NetworkError::msg("Kernel remote not initialized when on_start called")
+        })?;
         let remote_for_closure = remote.clone();
         let mut io = self.io.write().take().expect("Already called");
 

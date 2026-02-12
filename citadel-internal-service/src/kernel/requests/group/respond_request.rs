@@ -88,11 +88,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                                     let key = channel.key();
                                     let group_cid = channel.cid();
                                     let (tx, rx) = channel.split();
-                                    this.server_connection_map
+                                    if let Some(connection) = this.server_connection_map
                                         .write()
                                         .get_mut(&cid)
-                                        .unwrap()
-                                        .add_group_channel(
+                                    {
+                                        connection.add_group_channel(
                                             key,
                                             GroupConnection {
                                                 key,
@@ -101,15 +101,19 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                                             },
                                         );
 
-                                    spawn_group_channel_receiver(
-                                        key,
-                                        cid,
-                                        uuid,
-                                        rx,
-                                        this.tx_to_localhost_clients.clone(),
-                                    );
+                                        spawn_group_channel_receiver(
+                                            key,
+                                            cid,
+                                            uuid,
+                                            rx,
+                                            this.tx_to_localhost_clients.clone(),
+                                        );
 
-                                    result = true;
+                                        result = true;
+                                    } else {
+                                        citadel_sdk::logging::error!(target: "citadel", "Connection {} not found in server_connection_map during group respond request", cid);
+                                        result = false;
+                                    }
                                     break;
                                 }
                                 NodeResult::GroupEvent(GroupEvent {

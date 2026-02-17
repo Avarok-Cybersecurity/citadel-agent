@@ -1154,7 +1154,7 @@ mod tests {
             // Service A Sends a Message
             let service_a_outbound = InternalServiceRequest::GroupMessage {
                 cid: cid_a,
-                message: service_a_message.clone(),
+                message: service_a_message.to_vec(),
                 group_key: *group_key,
                 request_id: Uuid::new_v4(),
             };
@@ -1221,7 +1221,7 @@ mod tests {
             // Service B Sends a Message
             let service_b_outbound = InternalServiceRequest::GroupMessage {
                 cid: cid_b,
-                message: service_b_message.clone(),
+                message: service_b_message.to_vec(),
                 group_key: *group_key,
                 request_id: Uuid::new_v4(),
             };

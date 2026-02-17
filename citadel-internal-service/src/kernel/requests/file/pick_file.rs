@@ -19,7 +19,7 @@ use citadel_sdk::logging::info;
 use citadel_sdk::logging::error;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
-    this: &CitadelWorkspaceService<T, R>,
+    _this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {

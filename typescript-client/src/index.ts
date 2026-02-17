@@ -6,6 +6,7 @@
 export { InternalServiceWasmClient } from './InternalServiceWasmClient';
 export type {
     WasmClientConfig,
+    WasmModule,
     ConnectOptions as WasmConnectOptions,
     RegisterOptions as WasmRegisterOptions,
     MessageOptions as WasmMessageOptions
@@ -13,6 +14,10 @@ export type {
 
 // Export all types
 export * from './types';
+
+// Export type-safe discriminated union narrowing helpers
+export { isResponseType, isRequestType, isVariant } from './type-guards';
+export type { DiscriminatorOf, ResponseType, RequestType } from './type-guards';
 
 // Re-export as default for convenience
 export { InternalServiceWasmClient as default } from './InternalServiceWasmClient'; 

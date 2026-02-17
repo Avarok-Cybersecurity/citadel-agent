@@ -73,7 +73,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     InternalServiceResponse::GroupMessageNotification(GroupMessageNotification {
                         cid: implicated_cid,
                         peer_cid,
-                        message: message.into_buffer(),
+                        message: message.into_buffer().into(),
                         group_key,
                         request_id: None,
                     })

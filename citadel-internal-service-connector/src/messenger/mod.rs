@@ -2,7 +2,6 @@ use crate::connector::InternalServiceConnector;
 use crate::io_interface::IOInterface;
 use crate::messenger::backend::CitadelBackendExt;
 use async_trait::async_trait;
-use bytes::{Bytes, BytesMut};
 use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse, SecurityLevel,
     SessionInformation,
@@ -340,6 +339,9 @@ where
                 match network_message {
                     // TODO: Add support for group messaging
                     InternalServiceResponse::MessageNotification(mut message) => {
+                        // DEBUG: Log ALL MessageNotification arrivals to trace P2P message flow
+                        log::info!(target: "citadel", "[P2P-DEBUG] MessageNotification arrived: cid={}, peer_cid={}, msg_len={}",
+                            message.cid, message.peer_cid, message.message.len());
                         // deserialize and relay to ISM
                         match bincode2::deserialize::<WireWrapper>(&message.message) {
                             Ok(ism_message) => {
@@ -354,10 +356,7 @@ where
                                         message_id,
                                     } => {
                                         // Replace message bytes with unwrapped content
-                                        let _ = std::mem::replace(
-                                            &mut message.message,
-                                            BytesMut::from(Bytes::from(contents)),
-                                        );
+                                        let _ = std::mem::replace(&mut message.message, contents);
 
                                         // CRITICAL FIX: Forward UNWRAPPED MessageNotification to JavaScript.
                                         // This ensures the frontend receives messages immediately with:
@@ -376,8 +375,8 @@ where
                                         {
                                             log::error!(target: "citadel", "Error forwarding ISM MessageNotification to JS: {err:?}");
                                         } else {
-                                            log::trace!(target: "citadel", "Forwarded ISM MessageNotification to JS (cid={}, peer_cid={})",
-                                                message.cid, message.peer_cid);
+                                            log::info!(target: "citadel", "[P2P-DEBUG] FORWARDED ISM MessageNotification to JS: cid={}, peer_cid={}, unwrapped_len={}",
+                                                message.cid, message.peer_cid, message.message.len());
                                         }
 
                                         InternalMessage::Message(WrappedMessage {

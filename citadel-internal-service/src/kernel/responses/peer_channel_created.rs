@@ -77,7 +77,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
                 let notification =
                     InternalServiceResponse::MessageNotification(MessageNotification {
-                        message: message.into_buffer(),
+                        message: message.into_buffer().into(),
                         cid: session_cid,
                         peer_cid,
                         request_id: None,

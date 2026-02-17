@@ -8,7 +8,7 @@ mod tests {
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_types::{
-        DeleteVirtualFileSuccess, DownloadFileSuccess, FileTransferRequestNotification,
+        DeleteVirtualFileSuccess, DownloadFileSuccess, FileSource, FileTransferRequestNotification,
         FileTransferStatusNotification, InternalServiceRequest, InternalServiceResponse,
         MessageNotification, MessageSendFailure, MessageSendSuccess, SendFileRequestSuccess,
     };
@@ -264,7 +264,7 @@ mod tests {
 
         let send_file_to_service_1_payload = InternalServiceRequest::SendFile {
             request_id: Uuid::new_v4(),
-            source: file_to_send,
+            source: FileSource::Path(file_to_send),
             cid: peer_0_cid,
             transfer_type: TransferType::FileTransfer,
             peer_cid: Some(peer_1_cid),
@@ -406,7 +406,7 @@ mod tests {
         let virtual_path = PathBuf::from("/vfs/test.txt");
         let send_file_peer_1_tx_payload = InternalServiceRequest::SendFile {
             request_id: Uuid::new_v4(),
-            source: file_to_send.clone(),
+            source: FileSource::Path(file_to_send.clone()),
             cid: peer_0_cid,
             transfer_type: TransferType::RemoteEncryptedVirtualFilesystem {
                 virtual_path: virtual_path.clone(),

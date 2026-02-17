@@ -10,6 +10,8 @@ import {
     MessageSendFailure,
     MessageNotification
 } from './types';
+import { isResponseType, isVariant } from './type-guards';
+import type { ConnectMode, UdpMode, SessionSecuritySettings, PreSharedKey, SecurityLevel } from '@avarok/citadel-protocol-types';
 
 export interface CitadelClientConfig {
     url: string;
@@ -19,24 +21,24 @@ export interface CitadelClientConfig {
 }
 
 export interface ConnectOptions {
-    connectMode?: any;
-    udpMode?: any;
+    connectMode?: ConnectMode;
+    udpMode?: UdpMode;
     keepAliveTimeout?: { secs: number; nanos: number } | null;
-    sessionSecuritySettings?: any;
-    serverPassword?: any;
+    sessionSecuritySettings?: SessionSecuritySettings;
+    serverPassword?: PreSharedKey | null;
 }
 
 export interface MessageOptions {
     peer_cid?: bigint | null;
-    security_level?: any;
+    security_level?: SecurityLevel;
 }
 
 export class CitadelClient {
     private ws: WebSocket | null = null;
     private config: CitadelClientConfig;
     private pendingRequests = new Map<string, {
-        resolve: (value: any) => void;
-        reject: (reason: any) => void;
+        resolve: (value: InternalServiceResponse) => void;
+        reject: (reason: unknown) => void;
         timeout: NodeJS.Timeout;
     }>();
     private messageHandlers = new Set<(message: MessageNotification) => void>();
@@ -97,7 +99,7 @@ export class CitadelClient {
                     secrecy_mode: "BestEffort",
                     crypto_params: {
                         encryption_algorithm: "AES_GCM_256",
-                        kem_algorithm: "Kyber",
+                        kem_algorithm: "MlKem",
                         sig_algorithm: "None"
                     },
                     header_obfuscator_settings: "Disabled"
@@ -184,7 +186,14 @@ export class CitadelClient {
                 reject(new Error(`Request timeout after ${this.defaultTimeout}ms`));
             }, this.defaultTimeout);
 
-            this.pendingRequests.set(requestId, { resolve, reject, timeout });
+            // Heterogeneous promise map: resolve is typed as (T) => void from the Promise<T>,
+            // but handleResponse always passes InternalServiceResponse. This cast is safe
+            // because T is always narrowed from InternalServiceResponse at call sites.
+            this.pendingRequests.set(requestId, {
+                resolve: resolve as (value: InternalServiceResponse) => void,
+                reject,
+                timeout
+            });
 
             try {
                 const message = JSON.stringify(payload);
@@ -202,7 +211,7 @@ export class CitadelClient {
             const message = data.toString();
             const payload: InternalServicePayload = JSON.parse(message);
 
-            if ('Response' in payload) {
+            if (isVariant(payload, 'Response')) {
                 this.handleResponse(payload.Response);
             }
         } catch (error) {
@@ -222,7 +231,7 @@ export class CitadelClient {
                 reject(new Error(this.extractErrorMessage(response)));
             } else {
                 // Handle ConnectSuccess specially to extract CID
-                if ('ConnectSuccess' in response) {
+                if (isResponseType(response, 'ConnectSuccess')) {
                     this.connectedCid = response.ConnectSuccess.cid;
                 }
                 resolve(response);
@@ -231,7 +240,7 @@ export class CitadelClient {
 
         // Handle notifications
         if (this.isNotification(response)) {
-            if ('MessageNotification' in response) {
+            if (isResponseType(response, 'MessageNotification')) {
                 this.messageHandlers.forEach(handler => {
                     try {
                         handler(response.MessageNotification);
@@ -244,9 +253,8 @@ export class CitadelClient {
     }
 
     private extractRequestId(response: InternalServiceResponse): string | null {
-        // Extract request_id from any response type
-        const responseData = Object.values(response)[0] as any;
-        return responseData?.request_id || null;
+        const responseData = Object.values(response)[0] as Record<string, unknown> | undefined;
+        return (typeof responseData?.request_id === 'string') ? responseData.request_id : null;
     }
 
     private isErrorResponse(response: InternalServiceResponse): boolean {
@@ -254,8 +262,8 @@ export class CitadelClient {
     }
 
     private extractErrorMessage(response: InternalServiceResponse): string {
-        const responseData = Object.values(response)[0] as any;
-        return responseData?.message || 'Unknown error';
+        const responseData = Object.values(response)[0] as Record<string, unknown> | undefined;
+        return (typeof responseData?.message === 'string') ? responseData.message : 'Unknown error';
     }
 
     private isNotification(response: InternalServiceResponse): boolean {

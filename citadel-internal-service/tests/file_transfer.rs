@@ -9,7 +9,7 @@ mod tests {
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_types::{
-        DeleteVirtualFileSuccess, DownloadFileFailure, DownloadFileSuccess,
+        DeleteVirtualFileSuccess, DownloadFileFailure, DownloadFileSuccess, FileSource,
         FileTransferRequestNotification, FileTransferStatusNotification, InternalServiceRequest,
         InternalServiceResponse, SendFileRequestFailure, SendFileRequestSuccess,
     };
@@ -81,7 +81,7 @@ mod tests {
 
             let file_transfer_command = InternalServiceRequest::SendFile {
                 request_id: Uuid::new_v4(),
-                source: cmp_path.clone(),
+                source: FileSource::Path(cmp_path.clone()),
                 cid: *cid,
                 transfer_type: TransferType::FileTransfer,
                 peer_cid: None,
@@ -125,7 +125,7 @@ mod tests {
 
         let send_file_to_service_b_payload = InternalServiceRequest::SendFile {
             request_id: Uuid::new_v4(),
-            source: file_to_send,
+            source: FileSource::Path(file_to_send),
             cid: *cid_a,
             transfer_type: TransferType::FileTransfer,
             peer_cid: Some(*cid_b),
@@ -243,7 +243,7 @@ mod tests {
             let virtual_path = PathBuf::from("/vfs/test.txt");
             let file_transfer_command = InternalServiceRequest::SendFile {
                 request_id: Uuid::new_v4(),
-                source: file_to_send.clone(),
+                source: FileSource::Path(file_to_send.clone()),
                 cid: *cid,
                 transfer_type: TransferType::RemoteEncryptedVirtualFilesystem {
                     virtual_path: virtual_path.clone(),
@@ -352,7 +352,7 @@ mod tests {
         let virtual_path = PathBuf::from("/vfs/test.txt");
         let send_file_to_service_b_payload = InternalServiceRequest::SendFile {
             request_id: Uuid::new_v4(),
-            source: file_to_send.clone(),
+            source: FileSource::Path(file_to_send.clone()),
             cid: *cid_a,
             transfer_type: TransferType::RemoteEncryptedVirtualFilesystem {
                 virtual_path: virtual_path.clone(),

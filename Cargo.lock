@@ -259,7 +259,7 @@ dependencies = [
 [[package]]
 name = "async_ip"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#a7800cab840ac2e57da3e321ee7bc3517d113823"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#eb32fd66edf094f38a869589407d7b1d7b27c951"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -689,7 +689,7 @@ dependencies = [
 [[package]]
 name = "citadel_crypt"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#a7800cab840ac2e57da3e321ee7bc3517d113823"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#eb32fd66edf094f38a869589407d7b1d7b27c951"
 dependencies = [
  "arrayvec",
  "async-trait",
@@ -721,7 +721,7 @@ dependencies = [
 [[package]]
 name = "citadel_io"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#a7800cab840ac2e57da3e321ee7bc3517d113823"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#eb32fd66edf094f38a869589407d7b1d7b27c951"
 dependencies = [
  "getrandom 0.3.4",
  "parking_lot",
@@ -739,7 +739,7 @@ dependencies = [
 [[package]]
 name = "citadel_logging"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#a7800cab840ac2e57da3e321ee7bc3517d113823"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#eb32fd66edf094f38a869589407d7b1d7b27c951"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -748,7 +748,7 @@ dependencies = [
 [[package]]
 name = "citadel_pqcrypto"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#a7800cab840ac2e57da3e321ee7bc3517d113823"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#eb32fd66edf094f38a869589407d7b1d7b27c951"
 dependencies = [
  "aes-gcm",
  "ascon-aead",
@@ -774,7 +774,7 @@ dependencies = [
 [[package]]
 name = "citadel_proto"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#a7800cab840ac2e57da3e321ee7bc3517d113823"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#eb32fd66edf094f38a869589407d7b1d7b27c951"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -810,7 +810,7 @@ dependencies = [
 [[package]]
 name = "citadel_sdk"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#a7800cab840ac2e57da3e321ee7bc3517d113823"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#eb32fd66edf094f38a869589407d7b1d7b27c951"
 dependencies = [
  "anyhow",
  "bytes",
@@ -845,7 +845,7 @@ dependencies = [
 [[package]]
 name = "citadel_types"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#a7800cab840ac2e57da3e321ee7bc3517d113823"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#eb32fd66edf094f38a869589407d7b1d7b27c951"
 dependencies = [
  "bincode",
  "bytes",
@@ -864,7 +864,7 @@ dependencies = [
 [[package]]
 name = "citadel_user"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#a7800cab840ac2e57da3e321ee7bc3517d113823"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#eb32fd66edf094f38a869589407d7b1d7b27c951"
 dependencies = [
  "async-trait",
  "bincode",
@@ -889,7 +889,7 @@ dependencies = [
 [[package]]
 name = "citadel_wire"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#a7800cab840ac2e57da3e321ee7bc3517d113823"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#eb32fd66edf094f38a869589407d7b1d7b27c951"
 dependencies = [
  "anyhow",
  "async-trait-with-sync",
@@ -2381,7 +2381,7 @@ dependencies = [
 [[package]]
 name = "netbeam"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#a7800cab840ac2e57da3e321ee7bc3517d113823"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=opfs-support#eb32fd66edf094f38a869589407d7b1d7b27c951"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4059,9 +4059,9 @@ dependencies = [
 
 [[package]]
 name = "toml_parser"
-version = "1.0.8+spec-1.1.0"
+version = "1.0.9+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0742ff5ff03ea7e67c8ae6c93cac239e0d9784833362da3f9a9c1da8dfefcbdc"
+checksum = "702d4415e08923e7e1ef96cd5727c0dfed80b4d2fa25db9647fe5eb6f7c5a4c4"
 dependencies = [
  "winnow",
 ]

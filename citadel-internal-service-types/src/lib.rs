@@ -333,9 +333,7 @@ pub enum FileSource {
     Path(#[cfg_attr(feature = "typescript", ts(type = "string"))] PathBuf),
     /// Reference to a PickFile result stored in the internal service.
     /// The pick_file_request_id is the request_id from the PickFile response.
-    PickFileRef {
-        pick_file_request_id: Uuid,
-    },
+    PickFileRef { pick_file_request_id: Uuid },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

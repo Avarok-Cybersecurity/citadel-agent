@@ -93,7 +93,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                         Ok(target_information) => {
                             info!(target: "citadel", "[PeerRegister] find_target_information succeeded");
                             let Some((_, mutual_peer)) = target_information else {
-                                let msg = format!("Target information not found for cid={} peer_cid={}", cid, peer_cid);
+                                let msg = format!(
+                                    "Target information not found for cid={} peer_cid={}",
+                                    cid, peer_cid
+                                );
                                 error!(target: "citadel", "[PeerRegister] {}", msg);
                                 return Some(HandledRequestResult {
                                     response: InternalServiceResponse::PeerRegisterFailure(
@@ -124,17 +127,18 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                                     // CRITICAL: Send PeerRegisterSuccess FIRST so the initiator's frontend
                                     // knows the peer is registered. Without this, the frontend only receives
                                     // PeerConnectSuccess and doesn't update its peer store.
-                                    let register_success = InternalServiceResponse::PeerRegisterSuccess(
-                                        PeerRegisterSuccess {
-                                            cid,
-                                            peer_cid: mutual_peer.cid,
-                                            peer_username: mutual_peer
-                                                .username
-                                                .clone()
-                                                .unwrap_or_default(),
-                                            request_id: Some(request_id),
-                                        },
-                                    );
+                                    let register_success =
+                                        InternalServiceResponse::PeerRegisterSuccess(
+                                            PeerRegisterSuccess {
+                                                cid,
+                                                peer_cid: mutual_peer.cid,
+                                                peer_username: mutual_peer
+                                                    .username
+                                                    .clone()
+                                                    .unwrap_or_default(),
+                                                request_id: Some(request_id),
+                                            },
+                                        );
 
                                     // Send PeerRegisterSuccess to the initiator via TCP
                                     {

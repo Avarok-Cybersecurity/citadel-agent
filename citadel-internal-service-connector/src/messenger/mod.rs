@@ -356,10 +356,7 @@ where
                                         message_id,
                                     } => {
                                         // Replace message bytes with unwrapped content
-                                        let _ = std::mem::replace(
-                                            &mut message.message,
-                                            contents,
-                                        );
+                                        let _ = std::mem::replace(&mut message.message, contents);
 
                                         // CRITICAL FIX: Forward UNWRAPPED MessageNotification to JavaScript.
                                         // This ensures the frontend receives messages immediately with:

@@ -88,9 +88,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                                     let key = channel.key();
                                     let group_cid = channel.cid();
                                     let (tx, rx) = channel.split();
-                                    if let Some(connection) = this.server_connection_map
-                                        .write()
-                                        .get_mut(&cid)
+                                    if let Some(connection) =
+                                        this.server_connection_map.write().get_mut(&cid)
                                     {
                                         connection.add_group_channel(
                                             key,

@@ -28,11 +28,11 @@ intersession-layer-messaging = { path = "intersession-layer-messaging", default-
 citadel-internal-service-wasm-client = { path = "citadel-internal-service-wasm-client", default-features = false, version = "0.1.0" }
 
 # Avarok deps
-citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "opfs-support" }
-citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "opfs-support" }
-citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "opfs-support" }
-citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "opfs-support" }
-citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "opfs-support" }
+citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "master" }
+citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "master" }
+citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "master" }
+citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "master" }
+citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "master" }
 
 # Standard deps
 serde = { version = "1.0.104", features = ["derive"] }

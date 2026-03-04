@@ -54,6 +54,27 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     None => Err(NetworkError::msg("Connection not found for PickFileRef lookup")),
                 }
             }
+            FileSource::ByteContents { file_name, data } => {
+                // Write browser-uploaded bytes to a temp file
+                let temp_dir = std::env::temp_dir().join("citadel-browser-transfers");
+                if let Err(e) = std::fs::create_dir_all(&temp_dir) {
+                    Err(NetworkError::msg(format!(
+                        "Failed to create temp directory for browser file: {e}"
+                    )))
+                } else {
+                    let temp_path = temp_dir.join(format!("{}_{}", Uuid::new_v4(), file_name));
+                    match std::fs::write(&temp_path, data) {
+                        Ok(_) => {
+                            info!(target: "citadel", "Wrote browser file {:?} ({} bytes) to {:?}",
+                                file_name, data.len(), temp_path);
+                            Ok(temp_path)
+                        }
+                        Err(e) => Err(NetworkError::msg(format!(
+                            "Failed to write browser file to temp: {e}"
+                        ))),
+                    }
+                }
+            }
         }
     };
 

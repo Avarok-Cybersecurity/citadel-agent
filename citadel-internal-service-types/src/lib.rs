@@ -324,7 +324,8 @@ pub struct PickFileFailure {
 }
 
 /// Source for file transfer operations.
-/// Allows either a direct file path or a reference to a previously picked file.
+/// Allows either a direct file path, a reference to a previously picked file,
+/// or inline byte contents (for browser-selected files).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
@@ -334,6 +335,13 @@ pub enum FileSource {
     /// Reference to a PickFile result stored in the internal service.
     /// The pick_file_request_id is the request_id from the PickFile response.
     PickFileRef { pick_file_request_id: Uuid },
+    /// Inline byte contents from browser File objects.
+    /// The internal service writes these to a temp file before sending.
+    ByteContents {
+        file_name: String,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

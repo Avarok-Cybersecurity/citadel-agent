@@ -336,9 +336,33 @@ pub enum FileSource {
     /// The pick_file_request_id is the request_id from the PickFile response.
     PickFileRef { pick_file_request_id: Uuid },
     /// Inline byte contents from browser File objects.
+    ///
     /// The internal service writes these to a temp file before sending.
+    ///
+    /// ## Operational cost
+    /// Over the WebSocket / TCP transport, payloads are framed as JSON
+    /// (`serde_json::to_string`), which encodes `Vec<u8>` as a JSON array
+    /// of decimal integers. Each byte typically expands to 2-4 bytes of
+    /// JSON text plus separators, and the browser must construct an
+    /// equivalent JS `number[]` array in memory. Plan on roughly 3-4x
+    /// the raw byte length for transient memory on both sides during a
+    /// single request, in addition to the materialised `Vec<u8>` itself.
+    ///
+    /// ## Size cap
+    /// The handler caps `data.len()` at 16 MiB - the practical ceiling
+    /// imposed by the TCP `LengthDelimitedCodec`'s 64 MiB frame limit
+    /// once JSON expansion is accounted for. The browser-side workspace
+    /// UI applies a much stricter cap (a few MiB) before invoking this
+    /// path. Larger uploads should go through the native `PickFile` flow,
+    /// which streams from disk and bypasses both the memory blow-up and
+    /// the JSON-encoding cost.
     ByteContents {
         file_name: String,
+        /// Raw payload bytes. The `bytes_debug_fmt` formatter prevents
+        /// the full payload from landing in `{:?}` output - without it,
+        /// a single Debug-rendered `FileSource::ByteContents` could dump
+        /// hundreds of MiB into log lines.
+        #[debug(with = bytes_debug_fmt)]
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
         data: Vec<u8>,
     },

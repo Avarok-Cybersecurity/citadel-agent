@@ -447,4 +447,163 @@ mod tests {
 
         Ok(())
     }
+
+    /// Happy path for `FileSource::ByteContents`: a browser-style upload
+    /// that materialises inline bytes into a temp file before handing the
+    /// path to the SDK.
+    ///
+    /// This exercises the entire ByteContents code path - size guard, name
+    /// sanitisation, `spawn_blocking` write, scheduled cleanup, and the
+    /// SDK's subsequent `File::open` of the temp path - and uses the
+    /// existing `exhaust_stream_to_file_completion` helper to confirm the
+    /// streamed bytes match the original. If the cleanup race that
+    /// previously lived in this handler ever returned, this test would
+    /// flake (the SDK would observe ENOENT on open instead of completing).
+    #[tokio::test]
+    async fn test_internal_service_byte_contents_file_transfer_c2s() -> Result<(), Box<dyn Error>> {
+        let orig_hook = take_hook();
+        set_hook(Box::new(move |panic_info| {
+            orig_hook(panic_info);
+            exit(1);
+        }));
+
+        crate::common::setup_log();
+        let bind_address_internal_service: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+
+        let server_success = &Arc::new(AtomicBool::new(false));
+        let (server, server_bind_address) =
+            server_info_file_transfer::<StackedRatchet>(server_success.clone());
+        tokio::task::spawn(server);
+
+        let internal_service_kernel =
+            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
+                .await?;
+        let internal_service = NodeBuilder::default()
+            .with_backend(BackendType::Filesystem("filesystem".into()))
+            .with_node_type(NodeType::Peer)
+            .with_insecure_skip_cert_verification()
+            .build(internal_service_kernel)?;
+
+        tokio::task::spawn(internal_service);
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+
+        let to_spawn = vec![RegisterAndConnectItems {
+            internal_service_addr: bind_address_internal_service,
+            server_addr: server_bind_address,
+            full_name: "Browser User",
+            username: "browser.user",
+            password: "secret",
+            pre_shared_key: None::<PreSharedKey>,
+        }];
+        let returned_service_info = register_and_connect_to_server(to_spawn).await;
+        let mut service_vec = returned_service_info.unwrap();
+        if let Some((to_service, from_service, cid)) = service_vec.get_mut(0_usize) {
+            // Read the same fixture as the path-based test, but transfer
+            // it via ByteContents so we exercise the temp-file path.
+            let cmp_path = PathBuf::from("../resources/test.txt");
+            let bytes = std::fs::read(&cmp_path)?;
+
+            let file_transfer_command = InternalServiceRequest::SendFile {
+                request_id: Uuid::new_v4(),
+                source: FileSource::ByteContents {
+                    file_name: "test.txt".to_string(),
+                    data: bytes,
+                },
+                cid: *cid,
+                transfer_type: TransferType::FileTransfer,
+                peer_cid: None,
+                chunk_size: None,
+            };
+            to_service.send(file_transfer_command).unwrap();
+            exhaust_stream_to_file_completion(cmp_path, from_service).await;
+
+            Ok(())
+        } else {
+            panic!("Service Spawn Error")
+        }
+    }
+
+    /// Confirms that an oversized `ByteContents` payload is rejected with
+    /// `SendFileRequestFailure` *before* any temp file is created. Uses a
+    /// payload one byte larger than the handler's 16 MiB cap. The size is
+    /// chosen to fit within the TCP `LengthDelimitedCodec`'s 64 MiB frame
+    /// limit (after JSON expansion ~3-4x) so the request actually reaches
+    /// the handler and exercises the in-handler size guard, rather than
+    /// being rejected at the framing layer.
+    #[tokio::test]
+    async fn test_internal_service_byte_contents_size_limit_rejected() -> Result<(), Box<dyn Error>>
+    {
+        crate::common::setup_log();
+        let bind_address_internal_service: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+
+        let server_success = &Arc::new(AtomicBool::new(false));
+        let (server, server_bind_address) =
+            server_info_file_transfer::<StackedRatchet>(server_success.clone());
+        tokio::task::spawn(server);
+
+        let internal_service_kernel =
+            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
+                .await?;
+        let internal_service = NodeBuilder::default()
+            .with_backend(BackendType::Filesystem("filesystem".into()))
+            .with_node_type(NodeType::Peer)
+            .with_insecure_skip_cert_verification()
+            .build(internal_service_kernel)?;
+
+        tokio::task::spawn(internal_service);
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+
+        let to_spawn = vec![RegisterAndConnectItems {
+            internal_service_addr: bind_address_internal_service,
+            server_addr: server_bind_address,
+            full_name: "Oversize User",
+            username: "oversize.user",
+            password: "secret",
+            pre_shared_key: None::<PreSharedKey>,
+        }];
+        let returned_service_info = register_and_connect_to_server(to_spawn).await;
+        let mut service_vec = returned_service_info.unwrap();
+        if let Some((to_service, from_service, cid)) = service_vec.get_mut(0_usize) {
+            // 16 MiB + 1 byte: just past the handler's MAX_BYTE_CONTENTS_BYTES
+            // cap, while still fitting under the 64 MiB TCP frame limit
+            // even after JSON expansion (~3-4x).
+            let oversize: Vec<u8> = vec![0u8; 16 * 1024 * 1024 + 1];
+
+            let file_transfer_command = InternalServiceRequest::SendFile {
+                request_id: Uuid::new_v4(),
+                source: FileSource::ByteContents {
+                    file_name: "huge.bin".to_string(),
+                    data: oversize,
+                },
+                cid: *cid,
+                transfer_type: TransferType::FileTransfer,
+                peer_cid: None,
+                chunk_size: None,
+            };
+            to_service.send(file_transfer_command).unwrap();
+
+            // Must come back as a SendFileRequestFailure with a message
+            // mentioning the size cap. We don't tightly couple to the
+            // exact wording - just that the handler refused.
+            let response = from_service.recv().await.unwrap();
+            match response {
+                InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
+                    message,
+                    ..
+                }) => {
+                    assert!(
+                        message.contains("exceeds") && message.contains("maximum"),
+                        "expected an oversize-rejection message, got: {message:?}"
+                    );
+                }
+                other => panic!("expected SendFileRequestFailure, got {other:?}"),
+            }
+
+            Ok(())
+        } else {
+            panic!("Service Spawn Error")
+        }
+    }
 }

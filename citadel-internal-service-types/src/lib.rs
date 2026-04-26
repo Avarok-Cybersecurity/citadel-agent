@@ -339,8 +339,8 @@ pub enum FileSource {
     ///
     /// The internal service writes these to a temp file before sending.
     ///
-    /// ## Operational cost
-    /// Over the WebSocket / TCP transport, payloads are framed as JSON
+    /// ## Operational cost (WebSocket / JSON path)
+    /// Over the WebSocket transport, payloads are encoded as JSON
     /// (`serde_json::to_string`), which encodes `Vec<u8>` as a JSON array
     /// of decimal integers. Each byte typically expands to 2-4 bytes of
     /// JSON text plus separators, and the browser must construct an
@@ -348,14 +348,21 @@ pub enum FileSource {
     /// the raw byte length for transient memory on both sides during a
     /// single request, in addition to the materialised `Vec<u8>` itself.
     ///
+    /// The TCP transport uses `bincode2` (binary framing via
+    /// `SerializingCodec`) and does not incur this expansion - a `Vec<u8>`
+    /// is encoded as length-prefix plus raw bytes (~1:1).
+    ///
     /// ## Size cap
-    /// The handler caps `data.len()` at 16 MiB - the practical ceiling
-    /// imposed by the TCP `LengthDelimitedCodec`'s 64 MiB frame limit
-    /// once JSON expansion is accounted for. The browser-side workspace
-    /// UI applies a much stricter cap (a few MiB) before invoking this
-    /// path. Larger uploads should go through the native `PickFile` flow,
-    /// which streams from disk and bypasses both the memory blow-up and
-    /// the JSON-encoding cost.
+    /// The handler caps `data.len()` at 16 MiB. This is the practical
+    /// ceiling for the WebSocket/JSON path, where the ~3-4x expansion
+    /// approaches the WS frame limit. TCP can in principle accept
+    /// larger payloads (the bincode2-framed `LengthDelimitedCodec` cap
+    /// is 64 MiB), but the cap is applied uniformly so behaviour does
+    /// not depend on which transport happens to be in use. The
+    /// browser-side workspace UI applies a much stricter cap (a few MiB)
+    /// before invoking this path. Larger uploads should go through the
+    /// native `PickFile` flow, which streams from disk and bypasses both
+    /// the memory blow-up and the JSON-encoding cost.
     ByteContents {
         file_name: String,
         /// Raw payload bytes. The `bytes_debug_fmt` formatter prevents

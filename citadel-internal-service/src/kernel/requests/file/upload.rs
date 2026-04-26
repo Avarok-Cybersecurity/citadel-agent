@@ -20,20 +20,23 @@ use uuid::Uuid;
 /// guard actually fires) rather than a number large enough to be defeated
 /// by transport-layer framing earlier in the stack:
 ///
-///   * The TCP `LengthDelimitedCodec` configured in
-///     `citadel-internal-service-connector/src/connector.rs` caps frames
-///     at 64 MiB. After `serde_json` encoding, a `Vec<u8>` expands by
-///     roughly 3-4x (each byte becomes a decimal-integer plus separator),
-///     so the largest raw `data.len()` that survives JSON framing is
-///     somewhere near 16 MiB.
+///   * The WebSocket/JSON transport (used by the browser UI) encodes
+///     payloads via `serde_json::to_string`, where a `Vec<u8>` expands
+///     by roughly 3-4x. The resulting JSON must fit within the WS frame
+///     limit, so the largest raw `data.len()` that survives serialization
+///     is somewhere near 16 MiB.
+///   * The TCP transport uses `bincode2` (binary framing via
+///     `SerializingCodec` over a 64 MiB `LengthDelimitedCodec`) and does
+///     not incur the JSON expansion, but the cap is applied uniformly so
+///     behaviour does not depend on which transport happens to be in use.
 ///   * The browser-side workspace UI applies a much stricter cap (a few
 ///     MiB) before invoking this path.
 ///
-/// 16 MiB therefore sits at the natural ceiling of the framing layer
-/// while still being multiple orders of magnitude above any sane browser
-/// upload. Larger transfers must use the native `PickFile` flow, which
-/// streams the file from disk and bypasses both this cap and the JSON
-/// expansion entirely.
+/// 16 MiB therefore sits at the natural ceiling of the WebSocket framing
+/// layer while still being multiple orders of magnitude above any sane
+/// browser upload. Larger transfers must use the native `PickFile` flow,
+/// which streams the file from disk and bypasses both this cap and the
+/// JSON expansion entirely.
 const MAX_BYTE_CONTENTS_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
 
 /// Subdirectory under `std::env::temp_dir()` where browser-uploaded payloads
@@ -324,7 +327,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_file_name;
+    use super::{materialize_byte_contents, sanitize_file_name};
 
     #[test]
     fn sanitize_strips_path_components() {
@@ -339,5 +342,70 @@ mod tests {
         assert_eq!(sanitize_file_name("/"), "upload");
         // A pure directory-style name has no file component
         assert_eq!(sanitize_file_name("a/b/"), "b");
+    }
+
+    /// Exercises the IO-error branch of `materialize_byte_contents`. We
+    /// trigger a real `std::fs::write` failure by passing a filename longer
+    /// than `NAME_MAX` (typically 255 bytes on ext4 / APFS / NTFS), which
+    /// makes the filesystem return ENAMETOOLONG when we try to create the
+    /// file inside the per-request subdir.
+    ///
+    /// This proves that the `Ok(Err(e))` arm is reached (and therefore
+    /// schedule_temp_dir_cleanup is invoked - code coverage is the
+    /// proof; verifying the deferred cleanup task ran would require
+    /// advancing tokio's paused clock 10 minutes, which adds complexity
+    /// without strengthening this contract).
+    #[tokio::test]
+    async fn materialize_returns_err_when_write_fails() {
+        // 300 bytes well exceeds NAME_MAX on every mainstream filesystem.
+        let overlong = "a".repeat(300);
+        let result = materialize_byte_contents(&overlong, vec![1, 2, 3]).await;
+        assert!(
+            result.is_err(),
+            "expected IO error for overlong filename, got Ok({:?})",
+            result.ok()
+        );
+        let msg = result.unwrap_err().into_string();
+        assert!(
+            msg.contains("Failed to write browser file to temp"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    /// Happy-path counterpart to `materialize_returns_err_when_write_fails`.
+    /// A reasonable filename and small payload must produce a path inside
+    /// the configured browser-transfer subdir, with the file actually
+    /// present on disk and containing the bytes we asked for.
+    #[tokio::test]
+    async fn materialize_writes_payload_to_temp_path() {
+        let path = materialize_byte_contents("hello.bin", vec![0xDE, 0xAD, 0xBE, 0xEF])
+            .await
+            .expect("materialize should succeed");
+
+        // Path lives under our isolated subdir.
+        let parent_components: Vec<_> = path
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            parent_components
+                .iter()
+                .any(|c| c == super::BROWSER_TRANSFER_SUBDIR),
+            "path {:?} not under {:?}",
+            path,
+            super::BROWSER_TRANSFER_SUBDIR
+        );
+        assert_eq!(path.file_name().and_then(|n| n.to_str()), Some("hello.bin"));
+
+        // File on disk has exactly the bytes we wrote.
+        let read_back = std::fs::read(&path).expect("read written temp file");
+        assert_eq!(read_back, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+
+        // Best-effort eager cleanup so the test doesn't lean on the
+        // 10-minute deferred TTL. Cleanup of the parent dir is what
+        // production relies on; we replicate that here.
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        }
     }
 }

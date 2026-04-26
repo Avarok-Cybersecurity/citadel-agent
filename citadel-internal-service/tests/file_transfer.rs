@@ -526,11 +526,12 @@ mod tests {
 
     /// Confirms that an oversized `ByteContents` payload is rejected with
     /// `SendFileRequestFailure` *before* any temp file is created. Uses a
-    /// payload one byte larger than the handler's 16 MiB cap. The size is
-    /// chosen to fit within the TCP `LengthDelimitedCodec`'s 64 MiB frame
-    /// limit (after JSON expansion ~3-4x) so the request actually reaches
-    /// the handler and exercises the in-handler size guard, rather than
-    /// being rejected at the framing layer.
+    /// payload one byte larger than the handler's 16 MiB cap. The size
+    /// fits comfortably within the TCP `LengthDelimitedCodec`'s 64 MiB
+    /// frame limit (TCP encodes via bincode2, ~1:1, so 16 MiB stays
+    /// under 64 MiB without any JSON-style expansion), so the request
+    /// actually reaches the handler and exercises the in-handler size
+    /// guard rather than being rejected at the framing layer.
     #[tokio::test]
     async fn test_internal_service_byte_contents_size_limit_rejected() -> Result<(), Box<dyn Error>>
     {
@@ -567,8 +568,8 @@ mod tests {
         let mut service_vec = returned_service_info.unwrap();
         if let Some((to_service, from_service, cid)) = service_vec.get_mut(0_usize) {
             // 16 MiB + 1 byte: just past the handler's MAX_BYTE_CONTENTS_BYTES
-            // cap, while still fitting under the 64 MiB TCP frame limit
-            // even after JSON expansion (~3-4x).
+            // cap. TCP encodes via bincode2 (~1:1), so the raw 16 MiB stays
+            // well under the 64 MiB framing limit and reaches the handler.
             let oversize: Vec<u8> = vec![0u8; 16 * 1024 * 1024 + 1];
 
             let file_transfer_command = InternalServiceRequest::SendFile {

@@ -2,6 +2,7 @@ use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_sdk::prelude::{BackendType, NodeBuilder, NodeType, StackedRatchet};
 use std::error::Error;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use structopt::StructOpt;
 
 #[tokio::main]
@@ -17,10 +18,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let opts: Options = Options::from_args();
     let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(opts.bind).await?;
 
+    // Resolve the SDK backend from CLI + env (env takes precedence so docker
+    // operators can flip backends without rebuilding). `filesystem` is required
+    // for file transfer to function — the SDK refuses `SendObject` calls when
+    // both peers run on `InMemory`, with the error
+    //   "File transfer is not enabled for this p2p session.
+    //    Both nodes must use a filesystem backend"
+    // Default stays `in-memory` for `tilt`-style ephemeral dev runs.
+    let backend = resolve_backend(&opts)?;
+
     let mut builder = NodeBuilder::default();
-    let mut builder = builder
-        .with_backend(BackendType::InMemory) // TODO: parameterize this in the opts
-        .with_node_type(NodeType::Peer);
+    let mut builder = builder.with_backend(backend).with_node_type(NodeType::Peer);
 
     if opts.dangerous.unwrap_or(false) {
         builder = builder.with_insecure_skip_cert_verification()
@@ -29,6 +37,33 @@ async fn main() -> Result<(), Box<dyn Error>> {
     builder.build(service)?.await?;
 
     Ok(())
+}
+
+fn resolve_backend(opts: &Options) -> Result<BackendType, Box<dyn Error>> {
+    let env_kind = std::env::var("INTERNAL_SERVICE_BACKEND").ok();
+    let env_dir = std::env::var("INTERNAL_SERVICE_DATA_DIR").ok().map(PathBuf::from);
+
+    let kind = env_kind
+        .as_deref()
+        .or(opts.backend.as_deref())
+        .unwrap_or("in-memory");
+    let data_dir = env_dir.or_else(|| opts.data_dir.clone());
+
+    match kind {
+        "in-memory" | "inmemory" => Ok(BackendType::InMemory),
+        "filesystem" | "fs" => {
+            let path = data_dir.unwrap_or_else(|| PathBuf::from("./internal-service-data"));
+            // Create the directory up front so the SDK doesn't fail on first write.
+            std::fs::create_dir_all(&path)?;
+            Ok(BackendType::Filesystem(
+                path.to_string_lossy().into_owned().into(),
+            ))
+        }
+        other => Err(format!(
+            "Unknown backend kind {other:?}; expected 'in-memory' or 'filesystem'"
+        )
+        .into()),
+    }
 }
 
 #[derive(Debug, StructOpt)]
@@ -41,6 +76,15 @@ struct Options {
     bind: SocketAddr,
     #[structopt(short, long)]
     dangerous: Option<bool>,
+    /// Account storage backend: "in-memory" (default, ephemeral) or "filesystem".
+    /// `INTERNAL_SERVICE_BACKEND` env var overrides this.
+    #[structopt(long)]
+    backend: Option<String>,
+    /// Directory used by the filesystem backend. Defaults to
+    /// `./internal-service-data`. Ignored when backend is "in-memory".
+    /// `INTERNAL_SERVICE_DATA_DIR` env var overrides this.
+    #[structopt(long, parse(from_os_str))]
+    data_dir: Option<PathBuf>,
 }
 
 #[cfg(feature = "deadlock-detection")]

@@ -3,7 +3,7 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServiceResponse, MessageNotification, PeerConnectSuccess,
 };
-use citadel_sdk::logging::{error, info};
+use citadel_sdk::logging::{error, info, warn};
 use citadel_sdk::prelude::{NetworkError, PeerChannelCreated, Ratchet};
 use futures::StreamExt;
 use std::sync::atomic::Ordering;
@@ -91,17 +91,52 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     .unwrap_or(associated_tcp_connection);
                 drop(server_lock);
 
-                // Forward to TCP client
-                match tcp_connection_map.read().get(&current_tcp_uuid) {
-                    Some(entry) => {
-                        if let Err(err) = entry.send(notification) {
-                            error!(target: "citadel", "[PeerChannelCreated] Error sending message to client: {err:?}");
-                        }
-                    }
-                    None => {
-                        info!(target: "citadel", "[PeerChannelCreated] TCP connection not found for uuid: {}", current_tcp_uuid);
+                // Mirror peer/connect.rs:157-195, with a key difference: the
+                // simple `entry.send().is_ok()` check is NOT sufficient on
+                // its own here. After a ClaimSession / tab-handoff, the OLD
+                // TCP entry may still be in `tcp_connection_map` (not yet
+                // GC'd), and `UnboundedSender::send` to a stale-but-not-yet-
+                // dropped receiver returns Ok — so the on-error fallback we
+                // mirrored from connect.rs never triggers and the message
+                // silently lands on a socket nobody is reading. Instead, we
+                // explicitly check `is_closed()` AND also broadcast to all
+                // other live connections so a stale target can't strand the
+                // message. Cost: one extra send per active follower tab,
+                // which is bounded by the small number of same-browser tabs.
+                let tcp_map = tcp_connection_map.read();
+                let target_alive = tcp_map.get(&current_tcp_uuid)
+                    .map(|s| !s.is_closed())
+                    .unwrap_or(false);
+
+                let mut sent_count = 0;
+                if let Some(entry) = tcp_map.get(&current_tcp_uuid) {
+                    if target_alive && entry.send(notification.clone()).is_ok() {
+                        info!(target: "citadel", "[PeerChannelCreated] Sent MessageNotification to target client {}", current_tcp_uuid);
+                        sent_count += 1;
+                    } else {
+                        warn!(target: "citadel", "[PeerChannelCreated] Target {} is stale or closed (target_alive={}), will broadcast", current_tcp_uuid, target_alive);
                     }
                 }
+
+                // Always broadcast to any OTHER live connections so the message
+                // also reaches the right session via the cid-filter path on
+                // any tab whose TCP UUID is currently authoritative for that
+                // session. The frontend filters duplicates by request_id.
+                for (uuid, sender) in tcp_map.iter() {
+                    if *uuid == current_tcp_uuid { continue; }
+                    if sender.is_closed() { continue; }
+                    if sender.send(notification.clone()).is_ok() {
+                        sent_count += 1;
+                    }
+                }
+
+                if sent_count == 0 {
+                    warn!(target: "citadel", "[PeerChannelCreated] No live TCP connections; MessageNotification dropped (will be re-queued via ILM)");
+                } else {
+                    info!(target: "citadel", "[PeerChannelCreated] Delivered MessageNotification to {} connection(s)", sent_count);
+                }
+
+                drop(tcp_map);
             }
 
             info!(target: "citadel", "[PeerChannelCreated] P2P read stream ended for session={} from peer={}", session_cid, peer_cid);

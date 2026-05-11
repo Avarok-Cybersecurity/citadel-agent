@@ -1,7 +1,7 @@
-use crate::kernel::{send_response_to_tcp_client, spawn_tick_updater, CitadelWorkspaceService};
+use crate::kernel::{spawn_tick_updater, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{FileTransferRequestNotification, InternalServiceResponse};
-use citadel_sdk::logging::info;
+use citadel_sdk::logging::{info, warn};
 use citadel_sdk::prelude::{
     NetworkError, ObjectTransferHandle, ObjectTransferOrientation, Ratchet,
 };
@@ -71,7 +71,40 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
                 drop(server_connection_map);
 
-                send_response_to_tcp_client(&this.tx_to_localhost_clients, response, uuid)?;
+                // Same robustness story as peer_channel_created.rs: a stale
+                // `associated_localhost_connection` UUID (post ClaimSession /
+                // tab-reload) can leave a not-yet-GC'd TCP entry whose
+                // `send()` returns Ok but lands on a closed receiver. Check
+                // `is_closed()` AND broadcast to other live connections so
+                // the FileTransferRequestNotification reaches whichever tab
+                // currently owns the session. Frontend filters duplicates
+                // by `cid`. Without this, a fresh user that reloads mid-
+                // accept-flow never sees the file prompt.
+                let tcp_map = this.tx_to_localhost_clients.read();
+                let target_alive = tcp_map.get(&uuid)
+                    .map(|s| !s.is_closed())
+                    .unwrap_or(false);
+                let mut sent_count = 0;
+                if target_alive {
+                    if let Some(entry) = tcp_map.get(&uuid) {
+                        if entry.send(response.clone()).is_ok() {
+                            sent_count += 1;
+                        }
+                    }
+                }
+                for (other_uuid, sender) in tcp_map.iter() {
+                    if *other_uuid == uuid { continue; }
+                    if sender.is_closed() { continue; }
+                    if sender.send(response.clone()).is_ok() {
+                        sent_count += 1;
+                    }
+                }
+                if sent_count == 0 {
+                    warn!(target: "citadel", "[ObjectTransferHandle] No live TCP connections; FileTransferRequestNotification dropped for cid={implicated_cid}, peer_cid={peer_cid}");
+                } else {
+                    info!(target: "citadel", "[ObjectTransferHandle] Delivered FileTransferRequestNotification to {sent_count} connection(s)");
+                }
+                drop(tcp_map);
             }
         }
     } else {

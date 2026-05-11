@@ -5,4 +5,11 @@
  * Allows either a direct file path, a reference to a previously picked file,
  * or inline byte contents (for browser-selected files).
  */
-export type FileSource = { "Path": string } | { "PickFileRef": { pick_file_request_id: string, } } | { "ByteContents": { file_name: string, data: number[], } };
+export type FileSource = { "Path": string } | { "PickFileRef": { pick_file_request_id: string, } } | { "ByteContents": { file_name: string, 
+/**
+ * Raw payload bytes. The `bytes_debug_fmt` formatter prevents
+ * the full payload from landing in `{:?}` output - without it,
+ * a single Debug-rendered `FileSource::ByteContents` could dump
+ * hundreds of MiB into log lines.
+ */
+data: number[], } };

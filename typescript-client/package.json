@@ -22,8 +22,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist",
-    "test": "echo \"No tests configured yet\" && exit 0"
+    "clean": "rm -rf dist"
   },
   "sideEffects": [
     "./snippets/*"

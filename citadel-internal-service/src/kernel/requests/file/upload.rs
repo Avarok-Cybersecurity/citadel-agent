@@ -6,9 +6,7 @@ use citadel_internal_service_types::{
     SendFileRequestSuccess,
 };
 use citadel_sdk::logging::{error, info, warn};
-use citadel_sdk::prelude::{
-    NetworkError, NodeRequest, Ratchet, SendObject, TargetLockedRemote, VirtualTargetType,
-};
+use citadel_sdk::prelude::{NetworkError, NodeRequest, Ratchet, SendObject, VirtualTargetType};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use uuid::Uuid;
@@ -252,20 +250,30 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             match lock.get(&cid) {
                 Some(conn) => {
                     if let Some(peer_cid) = peer_cid {
-                        if let Some(peer_conn) = conn.peers.get(&peer_cid) {
-                            if let Some(peer_remote) = &peer_conn.remote {
-                                Ok(NodeRequest::SendObject(SendObject {
-                                    source: Box::new(file_path),
-                                    chunk_size,
+                        if conn.peers.contains_key(&peer_cid) {
+                            // Use the deterministic `LocalGroupPeer { session_cid,
+                            // peer_cid }` value the SDK expects, instead of
+                            // requiring `peer_conn.remote.user()`. The previous
+                            // implementation gated on `peer_conn.remote` being
+                            // `Some`, which is only true on the side that called
+                            // `connect_to_peer_custom`. For acceptor-side
+                            // connections `remote` is `None` and the request
+                            // failed with "Peer connection missing remote
+                            // (acceptor-only connection cannot send files)" —
+                            // which silently broke file transfer in either
+                            // direction whenever the sender wasn't also the
+                            // P2P initiator. Same shape we already use for
+                            // messaging via the sink works for SendObject too.
+                            Ok(NodeRequest::SendObject(SendObject {
+                                source: Box::new(file_path),
+                                chunk_size,
+                                session_cid: cid,
+                                v_conn_type: VirtualTargetType::LocalGroupPeer {
                                     session_cid: cid,
-                                    v_conn_type: *peer_remote.user(),
-                                    transfer_type,
-                                }))
-                            } else {
-                                Err(NetworkError::msg(
-                                    "Peer connection missing remote (acceptor-only connection cannot send files)",
-                                ))
-                            }
+                                    peer_cid,
+                                },
+                                transfer_type,
+                            }))
                         } else {
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }

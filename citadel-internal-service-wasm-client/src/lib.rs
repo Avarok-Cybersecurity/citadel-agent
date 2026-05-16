@@ -320,33 +320,15 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
                             if text.contains("ListRegisteredPeersResponse") {
                                 console_log!("[WASM-DEBUG] Raw JSON (ListRegisteredPeersResponse): {}", &text[..text.len().min(500)]);
                             }
-                            // DEBUG: Trace file-transfer notifications all the way through WASM.
-                            if text.contains("FileTransfer") || text.contains("ObjectTransfer") {
-                                console_log!("[WASM-DEBUG] Raw JSON (FileTransfer*): {}", &text[..text.len().min(800)]);
-                            }
 
                             match serde_json::from_str::<InternalServicePayload>(&text) {
                                 Ok(payload) => {
-                                    if let InternalServicePayload::Response(ref resp) = payload {
-                                        let variant = match resp {
-                                            InternalServiceResponse::FileTransferRequestNotification(_) => Some("FileTransferRequestNotification"),
-                                            InternalServiceResponse::FileTransferStatusNotification(_) => Some("FileTransferStatusNotification"),
-                                            InternalServiceResponse::FileTransferTickNotification(_) => Some("FileTransferTickNotification"),
-                                            _ => None,
-                                        };
-                                        if let Some(v) = variant {
-                                            console_log!("[WASM-DEBUG] Decoded payload variant: {}", v);
-                                        }
-                                    }
                                     if stream_tx.send(Ok(payload)).is_err() {
                                         console_log!("Stream receiver closed");
                                         break;
                                     }
                                 }
                                 Err(e) => {
-                                    if text.contains("FileTransfer") || text.contains("ObjectTransfer") {
-                                        console_log!("[WASM-DEBUG] FAILED to deserialize FileTransfer payload: {}", e);
-                                    }
                                     console_log!("Error deserializing payload: {:?}", e);
                                     let err = std::io::Error::new(std::io::ErrorKind::InvalidData, e);
                                     if stream_tx.send(Err(err)).is_err() {

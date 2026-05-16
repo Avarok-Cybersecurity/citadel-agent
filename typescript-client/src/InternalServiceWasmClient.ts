@@ -8,7 +8,7 @@ import type { RegisterSuccess } from './types/RegisterSuccess';
 import type { ConfigCommand } from './types/ConfigCommand';
 import type { ConnectionManagementSuccess } from './types/ConnectionManagementSuccess';
 import type { ConnectionManagementFailure } from './types/ConnectionManagementFailure';
-import { isResponseType } from './type-guards';
+import { isResponseType } from './type-guards.js';
 
 // WASM module will be loaded dynamically
 

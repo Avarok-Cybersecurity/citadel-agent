@@ -3,7 +3,7 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServiceResponse, MessageNotification, PeerConnectSuccess,
 };
-use citadel_sdk::logging::{error, info, warn};
+use citadel_sdk::logging::{error, info};
 use citadel_sdk::prelude::{NetworkError, PeerChannelCreated, Ratchet};
 use futures::StreamExt;
 use std::sync::atomic::Ordering;
@@ -83,7 +83,16 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         request_id: None,
                     });
 
-                // Get the current associated TCP connection (may have changed via ClaimSession)
+                // Get the current associated TCP connection (may have
+                // changed via ClaimSession). Send only to that one client —
+                // a previous version broadcast to every live TCP entry as a
+                // workaround for stale-UUID delivery, but that leaked
+                // P2P message content to any other session multiplexed
+                // through the same internal-service process. The single-
+                // TCP-per-browser architecture invariant means the
+                // session's current `associated_localhost_connection` is
+                // the sole authoritative destination; if it isn't in the
+                // live map, ILM is the layer that retries.
                 let server_lock = server_conn_map.read();
                 let current_tcp_uuid = server_lock
                     .get(&session_cid)
@@ -91,51 +100,17 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     .unwrap_or(associated_tcp_connection);
                 drop(server_lock);
 
-                // Mirror peer/connect.rs:157-195, with a key difference: the
-                // simple `entry.send().is_ok()` check is NOT sufficient on
-                // its own here. After a ClaimSession / tab-handoff, the OLD
-                // TCP entry may still be in `tcp_connection_map` (not yet
-                // GC'd), and `UnboundedSender::send` to a stale-but-not-yet-
-                // dropped receiver returns Ok — so the on-error fallback we
-                // mirrored from connect.rs never triggers and the message
-                // silently lands on a socket nobody is reading. Instead, we
-                // explicitly check `is_closed()` AND also broadcast to all
-                // other live connections so a stale target can't strand the
-                // message. Cost: one extra send per active follower tab,
-                // which is bounded by the small number of same-browser tabs.
                 let tcp_map = tcp_connection_map.read();
-                let target_alive = tcp_map.get(&current_tcp_uuid)
-                    .map(|s| !s.is_closed())
-                    .unwrap_or(false);
-
-                let mut sent_count = 0;
-                if let Some(entry) = tcp_map.get(&current_tcp_uuid) {
-                    if target_alive && entry.send(notification.clone()).is_ok() {
-                        info!(target: "citadel", "[PeerChannelCreated] Sent MessageNotification to target client {}", current_tcp_uuid);
-                        sent_count += 1;
-                    } else {
-                        warn!(target: "citadel", "[PeerChannelCreated] Target {} is stale or closed (target_alive={}), will broadcast", current_tcp_uuid, target_alive);
+                match tcp_map.get(&current_tcp_uuid) {
+                    Some(entry) => {
+                        if let Err(err) = entry.send(notification) {
+                            error!(target: "citadel", "[PeerChannelCreated] Failed to send MessageNotification to {current_tcp_uuid}: {err:?}");
+                        }
+                    }
+                    None => {
+                        info!(target: "citadel", "[PeerChannelCreated] Target TCP {current_tcp_uuid} not found in live map; relying on ILM redelivery");
                     }
                 }
-
-                // Always broadcast to any OTHER live connections so the message
-                // also reaches the right session via the cid-filter path on
-                // any tab whose TCP UUID is currently authoritative for that
-                // session. The frontend filters duplicates by request_id.
-                for (uuid, sender) in tcp_map.iter() {
-                    if *uuid == current_tcp_uuid { continue; }
-                    if sender.is_closed() { continue; }
-                    if sender.send(notification.clone()).is_ok() {
-                        sent_count += 1;
-                    }
-                }
-
-                if sent_count == 0 {
-                    warn!(target: "citadel", "[PeerChannelCreated] No live TCP connections; MessageNotification dropped (will be re-queued via ILM)");
-                } else {
-                    info!(target: "citadel", "[PeerChannelCreated] Delivered MessageNotification to {} connection(s)", sent_count);
-                }
-
                 drop(tcp_map);
             }
 

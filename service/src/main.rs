@@ -41,7 +41,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 fn resolve_backend(opts: &Options) -> Result<BackendType, Box<dyn Error>> {
     let env_kind = std::env::var("INTERNAL_SERVICE_BACKEND").ok();
-    let env_dir = std::env::var("INTERNAL_SERVICE_DATA_DIR").ok().map(PathBuf::from);
+    let env_dir = std::env::var("INTERNAL_SERVICE_DATA_DIR")
+        .ok()
+        .map(PathBuf::from);
 
     let kind = env_kind
         .as_deref()
@@ -55,9 +57,7 @@ fn resolve_backend(opts: &Options) -> Result<BackendType, Box<dyn Error>> {
             let path = data_dir.unwrap_or_else(|| PathBuf::from("./internal-service-data"));
             // Create the directory up front so the SDK doesn't fail on first write.
             std::fs::create_dir_all(&path)?;
-            Ok(BackendType::Filesystem(
-                path.to_string_lossy().into_owned().into(),
-            ))
+            Ok(BackendType::Filesystem(path.to_string_lossy().into_owned()))
         }
         other => Err(format!(
             "Unknown backend kind {other:?}; expected 'in-memory' or 'filesystem'"

@@ -607,4 +607,123 @@ mod tests {
             panic!("Service Spawn Error")
         }
     }
+
+    /// Acceptor-side P2P upload + download via REVFS. Pins the
+    /// `VirtualTargetType::LocalGroupPeer { session_cid, peer_cid }`
+    /// fix in `upload.rs`/`download.rs`: the previous implementations
+    /// dereferenced `peer_conn.remote.user()`, which is `None` on the
+    /// side that ACCEPTED the original `PeerConnect` (i.e. the
+    /// non-initiator) — so any file send/download initiated by the
+    /// acceptor failed with "Peer connection missing remote". The
+    /// existing `test_internal_service_peer_revfs` only exercises the
+    /// initiator side (peer A drives every transfer) and would have
+    /// kept passing even with the acceptor bug present. This test
+    /// flips the direction: peer B (acceptor) uploads to A's REVFS
+    /// and then downloads it back, hitting both fixes.
+    #[tokio::test]
+    async fn test_internal_service_peer_revfs_acceptor_initiates() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    bind_address_internal_service_a,
+                    bind_address_internal_service_b,
+                ],
+                None,
+                None,
+            )
+            .await?;
+
+        // After `register_and_connect_to_server_then_peers`, peer A is
+        // the P2P initiator (it sent the first `PeerConnect`); peer B
+        // is the acceptor. All requests below are issued from B → A
+        // so the `peer_conn.remote == None` branch is the one being
+        // exercised.
+        let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
+        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
+        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0_usize).unwrap();
+
+        let file_to_send = PathBuf::from("../resources/test.txt");
+        // Match the source basename so `exhaust_stream_to_file_completion`'s
+        // `vfm.name == cmp_file_name` assertion lines up — the REVFS
+        // `vfm.name` is the virtual path's basename, not the source path's.
+        let virtual_path = PathBuf::from("/vfs/test.txt");
+
+        // B (acceptor) uploads to A's REVFS — exercises the
+        // `upload.rs` `LocalGroupPeer` fix.
+        let send_from_b = InternalServiceRequest::SendFile {
+            request_id: Uuid::new_v4(),
+            source: FileSource::Path(file_to_send.clone()),
+            cid: *cid_b,
+            transfer_type: TransferType::RemoteEncryptedVirtualFilesystem {
+                virtual_path: virtual_path.clone(),
+                security_level: Default::default(),
+            },
+            peer_cid: Some(*cid_a),
+            chunk_size: None,
+        };
+        to_service_b.send(send_from_b).unwrap();
+
+        let send_resp = from_service_b.recv().await.unwrap();
+        let InternalServiceResponse::SendFileRequestSuccess(SendFileRequestSuccess { .. }) =
+            send_resp
+        else {
+            panic!("Acceptor-side SendFile failed: {send_resp:?}");
+        };
+
+        // A receives the request and accepts.
+        let inbound = from_service_a.recv().await.unwrap();
+        let InternalServiceResponse::FileTransferRequestNotification(
+            FileTransferRequestNotification { metadata, .. },
+        ) = inbound
+        else {
+            panic!("Peer A didn't get the file-transfer notification: {inbound:?}");
+        };
+        to_service_a
+            .send(InternalServiceRequest::RespondFileTransfer {
+                cid: *cid_a,
+                peer_cid: *cid_b,
+                object_id: metadata.object_id,
+                accept: true,
+                download_location: None,
+                request_id: Uuid::new_v4(),
+            })
+            .unwrap();
+
+        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_a).await;
+        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_b).await;
+
+        // B (acceptor) pulls the same file back from A's REVFS —
+        // exercises the `download.rs` `LocalGroupPeer` fix.
+        let download_from_b = InternalServiceRequest::DownloadFile {
+            virtual_directory: virtual_path.clone(),
+            security_level: None,
+            delete_on_pull: false,
+            cid: *cid_b,
+            peer_cid: Some(*cid_a),
+            request_id: Uuid::new_v4(),
+        };
+        to_service_b.send(download_from_b).unwrap();
+
+        let download_resp = from_service_b.recv().await.unwrap();
+        match download_resp {
+            InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess { cid, .. }) => {
+                assert_eq!(cid, *cid_b);
+            }
+            InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
+                message, ..
+            }) => panic!("Acceptor-side download rejected with: {message}"),
+            other => panic!("Unexpected response to acceptor-side DownloadFile: {other:?}"),
+        }
+
+        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_a).await;
+        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_b).await;
+
+        Ok(())
+    }
 }

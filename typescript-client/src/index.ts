@@ -20,4 +20,4 @@ export { isResponseType, isRequestType, isVariant } from './type-guards.js';
 export type { DiscriminatorOf, ResponseType, RequestType } from './type-guards.js';
 
 // Re-export as default for convenience
-export { InternalServiceWasmClient as default } from './InternalServiceWasmClient.js'; 
+export { InternalServiceWasmClient as default } from './InternalServiceWasmClient.js';

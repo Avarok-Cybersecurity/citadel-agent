@@ -365,10 +365,15 @@ pub enum FileSource {
     /// the memory blow-up and the JSON-encoding cost.
     ByteContents {
         file_name: String,
-        /// Raw payload bytes. The `bytes_debug_fmt` formatter prevents
-        /// the full payload from landing in `{:?}` output - without it,
-        /// a single Debug-rendered `FileSource::ByteContents` could dump
-        /// hundreds of MiB into log lines.
+        /// Raw payload bytes of the file.
+        // Rust-only (NOT exported by ts-rs — plain `//` comments are
+        // skipped by ts-rs but the triple-slash `///` block above is
+        // emitted into the generated FileSource.ts as JSDoc): the
+        // `bytes_debug_fmt` formatter on the `#[debug]` attribute
+        // prevents the full payload from landing in `{:?}` log
+        // output — without it a single Debug render of
+        // `FileSource::ByteContents` could dump hundreds of MiB into
+        // the log. See `bytes_debug_fmt` earlier in this file.
         #[debug(with = bytes_debug_fmt)]
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
         data: Vec<u8>,

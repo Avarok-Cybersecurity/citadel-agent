@@ -60,3 +60,24 @@ getrandom = { version = "0.2", features = ["js"] }
 
 # Send wrapper for WASM compatibility
 send_wrapper = "0.6"
+
+# Disable wasm-pack's post-build wasm-opt step. wasm-opt requires
+# binaryen, which wasm-pack downloads from a GitHub release URL at
+# build time:
+#   https://github.com/WebAssembly/binaryen/releases/download/version_117/...
+# That download is a regular network call subject to transient GitHub
+# 5xx / rate-limit failures, and a failure terminates the whole
+# `sync-wasm-client` container with exit 1 — cascading into every
+# integration test failing at "Start Services" with no useful signal.
+# Skipping wasm-opt keeps CI deterministic at the cost of a larger
+# (un-optimised) wasm binary, which is acceptable for the dev/CI
+# pipeline. Production deploys that want the optimised binary can
+# run wasm-opt out-of-band against a pre-fetched binaryen.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[package.metadata.wasm-pack.profile.dev]
+wasm-opt = false
+
+[package.metadata.wasm-pack.profile.profiling]
+wasm-opt = false

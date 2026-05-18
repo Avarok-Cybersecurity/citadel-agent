@@ -1,4 +1,5 @@
 use citadel_internal_service::kernel::CitadelWorkspaceService;
+use citadel_internal_service::sweep_stale_browser_transfers;
 use citadel_sdk::prelude::{BackendType, NodeBuilder, NodeType, StackedRatchet};
 use std::error::Error;
 use std::net::SocketAddr;
@@ -8,6 +9,14 @@ use structopt::StructOpt;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     citadel_sdk::logging::setup_log();
+
+    // One-shot startup sweep of the shared browser-transfer temp root.
+    // Per-request cleanup tasks are cancelled on process exit, so a
+    // crash before the 10-min TTL fires leaks the materialised payload
+    // file; without this sweep, repeated crashes accumulate orphaned
+    // upload bytes unboundedly. Safe to run before the runtime is
+    // built because the helper uses blocking `std::fs`.
+    sweep_stale_browser_transfers();
 
     // Initialize deadlock detector if feature is enabled
     #[cfg(feature = "deadlock-detection")]

@@ -72,6 +72,68 @@ fn sanitize_file_name(raw: &str) -> String {
         .to_string()
 }
 
+/// One-shot, best-effort sweep of the shared browser-transfer temp root.
+/// Removes any per-request subdirectory older than `TEMP_FILE_TTL` so the
+/// service doesn't accumulate orphaned payloads across crash-restart
+/// cycles. The per-request `schedule_temp_dir_cleanup` task is cancelled
+/// when the process exits, so without this every crash before the 10-min
+/// timer fires leaks the materialised file; over many crashes the leak
+/// is unbounded in count. The 16 MiB per-file cap bounds per-file size
+/// but not aggregate disk usage.
+///
+/// Intended to run once at binary startup. The function is sync and uses
+/// `std::fs` rather than tokio so it can be called before the runtime is
+/// spawned and so it can't race in-flight tokio I/O on the same paths.
+/// Errors are logged but not propagated — a sweep failure must not block
+/// service startup.
+pub fn sweep_stale_browser_transfers() {
+    let root = std::env::temp_dir().join(BROWSER_TRANSFER_SUBDIR);
+    let entries = match std::fs::read_dir(&root) {
+        Ok(entries) => entries,
+        // The root only exists after the first upload; missing is the
+        // normal first-boot state and not worth logging at warn level.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            warn!(
+                target: "citadel",
+                "Browser-transfer sweep: failed to read {:?}: {}", root, e
+            );
+            return;
+        }
+    };
+    let mut removed = 0usize;
+    for entry in entries.flatten() {
+        // `modified()` is unsupported on a handful of exotic filesystems;
+        // when unavailable, fall back to deleting the entry on the
+        // assumption that "no timestamp" means "older than we can
+        // measure", which is safe for stale-cleanup purposes.
+        let is_stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| t.elapsed().unwrap_or_default() > TEMP_FILE_TTL)
+            .unwrap_or(true);
+        if !is_stale {
+            continue;
+        }
+        let path = entry.path();
+        match std::fs::remove_dir_all(&path) {
+            Ok(()) => removed += 1,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => warn!(
+                target: "citadel",
+                "Browser-transfer sweep: failed to remove {:?}: {}", path, e
+            ),
+        }
+    }
+    if removed > 0 {
+        info!(
+            target: "citadel",
+            "Browser-transfer sweep removed {} stale request dir(s) under {:?}",
+            removed, root
+        );
+    }
+}
+
 /// Schedule a best-effort delayed cleanup of a per-request temp directory
 /// (containing a single materialised payload file).
 ///
@@ -414,6 +476,56 @@ mod tests {
         // production relies on; we replicate that here.
         if let Some(parent) = path.parent() {
             let _ = std::fs::remove_dir_all(parent);
+        }
+    }
+
+    /// The startup sweep must not touch entries younger than the TTL,
+    /// otherwise it would race in-flight uploads from a still-living
+    /// sibling process sharing the same `$TMPDIR`. We can't observe
+    /// elapsed time deterministically in a unit test, but we can pin
+    /// the "fresh entries survive" half of the contract — the
+    /// "stale entries are removed" half is exercised by the
+    /// production code path that bounds elapsed by `TEMP_FILE_TTL`.
+    #[test]
+    fn sweep_preserves_fresh_request_dirs() {
+        use super::{sweep_stale_browser_transfers, BROWSER_TRANSFER_SUBDIR};
+
+        let root = std::env::temp_dir().join(BROWSER_TRANSFER_SUBDIR);
+        std::fs::create_dir_all(&root).expect("create transfer root");
+
+        // Use a uuid so parallel test runs don't trip on each other.
+        let fresh = root.join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&fresh).expect("create fresh request dir");
+        std::fs::write(fresh.join("payload.bin"), b"fresh").expect("seed fresh payload");
+
+        sweep_stale_browser_transfers();
+
+        assert!(
+            fresh.exists(),
+            "sweep removed a fresh request dir it should have kept: {fresh:?}"
+        );
+
+        // Cleanup so the next test run isn't polluted.
+        let _ = std::fs::remove_dir_all(&fresh);
+    }
+
+    /// Missing root is the first-boot state. Sweep must not panic or
+    /// log at warn level when the directory simply doesn't exist yet.
+    #[test]
+    fn sweep_is_a_noop_when_root_is_absent() {
+        use super::{sweep_stale_browser_transfers, BROWSER_TRANSFER_SUBDIR};
+
+        let root = std::env::temp_dir().join(BROWSER_TRANSFER_SUBDIR);
+        // Best-effort: another test may be using the root concurrently.
+        // The contract we're pinning here is that the sweep tolerates
+        // the missing-root case without panicking, so a residual root
+        // from a parallel test is fine.
+        if !root.exists() {
+            sweep_stale_browser_transfers();
+            assert!(
+                !root.exists(),
+                "sweep should not create the root dir on its own"
+            );
         }
     }
 }

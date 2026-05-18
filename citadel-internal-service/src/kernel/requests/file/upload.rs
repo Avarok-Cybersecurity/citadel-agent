@@ -81,14 +81,27 @@ fn sanitize_file_name(raw: &str) -> String {
 /// is unbounded in count. The 16 MiB per-file cap bounds per-file size
 /// but not aggregate disk usage.
 ///
-/// Intended to run once at binary startup. The function is sync and uses
-/// `std::fs` rather than tokio so it can be called before the runtime is
-/// spawned and so it can't race in-flight tokio I/O on the same paths.
-/// Errors are logged but not propagated — a sweep failure must not block
-/// service startup.
+/// Intended to run once at binary startup. The function uses blocking
+/// `std::fs` intentionally so it does not require a tokio runtime — the
+/// current call site at `service/src/main.rs` runs inside
+/// `#[tokio::main]` but before any other tasks are spawned, so the
+/// blocking I/O does not park a worker that another task is waiting
+/// on. Errors are logged but not propagated — a sweep failure must
+/// not block service startup.
 pub fn sweep_stale_browser_transfers() {
-    let root = std::env::temp_dir().join(BROWSER_TRANSFER_SUBDIR);
-    let entries = match std::fs::read_dir(&root) {
+    sweep_browser_transfers_in(
+        &std::env::temp_dir().join(BROWSER_TRANSFER_SUBDIR),
+        TEMP_FILE_TTL,
+    );
+}
+
+/// Inner sweep that operates on an arbitrary root path. Split out so
+/// tests can pass an isolated per-test directory rather than sharing
+/// the production `$TMPDIR/citadel-browser-transfers/` root with
+/// parallel test threads. Production callers go through
+/// `sweep_stale_browser_transfers`.
+fn sweep_browser_transfers_in(root: &Path, max_age: Duration) {
+    let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
         // The root only exists after the first upload; missing is the
         // normal first-boot state and not worth logging at warn level.
@@ -110,7 +123,7 @@ pub fn sweep_stale_browser_transfers() {
         let is_stale = entry
             .metadata()
             .and_then(|m| m.modified())
-            .map(|t| t.elapsed().unwrap_or_default() > TEMP_FILE_TTL)
+            .map(|t| t.elapsed().unwrap_or_default() > max_age)
             .unwrap_or(true);
         if !is_stale {
             continue;
@@ -479,53 +492,94 @@ mod tests {
         }
     }
 
-    /// The startup sweep must not touch entries younger than the TTL,
-    /// otherwise it would race in-flight uploads from a still-living
-    /// sibling process sharing the same `$TMPDIR`. We can't observe
-    /// elapsed time deterministically in a unit test, but we can pin
-    /// the "fresh entries survive" half of the contract — the
-    /// "stale entries are removed" half is exercised by the
-    /// production code path that bounds elapsed by `TEMP_FILE_TTL`.
+    /// Helper: build an isolated sweep root under `$TMPDIR` so each
+    /// test owns its directory and parallel cargo-test threads can't
+    /// step on each other. Returns `(root_path, _cleanup_guard)` —
+    /// when the guard drops the directory is best-effort removed.
+    fn isolated_sweep_root(label: &str) -> (std::path::PathBuf, IsolatedRootGuard) {
+        let root = std::env::temp_dir().join(format!(
+            "citadel-browser-transfers-test-{}-{}",
+            label,
+            uuid::Uuid::new_v4()
+        ));
+        (root.clone(), IsolatedRootGuard(root))
+    }
+
+    struct IsolatedRootGuard(std::path::PathBuf);
+    impl Drop for IsolatedRootGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Fresh request dirs younger than `max_age` must survive a sweep,
+    /// otherwise the sweep would race in-flight uploads.
     #[test]
     fn sweep_preserves_fresh_request_dirs() {
-        use super::{sweep_stale_browser_transfers, BROWSER_TRANSFER_SUBDIR};
+        use super::sweep_browser_transfers_in;
+        use std::time::Duration;
 
-        let root = std::env::temp_dir().join(BROWSER_TRANSFER_SUBDIR);
-        std::fs::create_dir_all(&root).expect("create transfer root");
+        let (root, _guard) = isolated_sweep_root("preserves_fresh");
+        std::fs::create_dir_all(&root).expect("create isolated sweep root");
 
-        // Use a uuid so parallel test runs don't trip on each other.
         let fresh = root.join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&fresh).expect("create fresh request dir");
         std::fs::write(fresh.join("payload.bin"), b"fresh").expect("seed fresh payload");
 
-        sweep_stale_browser_transfers();
+        // A 60-minute threshold ensures the just-created dir is well
+        // under the staleness cutoff regardless of CI clock skew.
+        sweep_browser_transfers_in(&root, Duration::from_secs(3600));
 
         assert!(
             fresh.exists(),
             "sweep removed a fresh request dir it should have kept: {fresh:?}"
         );
+    }
 
-        // Cleanup so the next test run isn't polluted.
-        let _ = std::fs::remove_dir_all(&fresh);
+    /// Stale request dirs (older than `max_age`) must be removed —
+    /// this is the actual job of the sweep. Deterministic because
+    /// the threshold is `Duration::ZERO`, so everything counts as stale.
+    #[test]
+    fn sweep_removes_stale_request_dirs() {
+        use super::sweep_browser_transfers_in;
+        use std::time::Duration;
+
+        let (root, _guard) = isolated_sweep_root("removes_stale");
+        std::fs::create_dir_all(&root).expect("create isolated sweep root");
+
+        let stale = root.join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&stale).expect("create stale request dir");
+        std::fs::write(stale.join("payload.bin"), b"stale").expect("seed stale payload");
+
+        // `Duration::ZERO` makes every entry exceed the threshold
+        // immediately, so the sweep MUST remove the dir.
+        sweep_browser_transfers_in(&root, Duration::ZERO);
+
+        assert!(
+            !stale.exists(),
+            "sweep failed to remove a stale request dir: {stale:?}"
+        );
     }
 
     /// Missing root is the first-boot state. Sweep must not panic or
-    /// log at warn level when the directory simply doesn't exist yet.
+    /// create the directory itself, even when called against an
+    /// absent path. Deterministic because the isolated root is
+    /// guaranteed absent (uuid).
     #[test]
     fn sweep_is_a_noop_when_root_is_absent() {
-        use super::{sweep_stale_browser_transfers, BROWSER_TRANSFER_SUBDIR};
+        use super::sweep_browser_transfers_in;
+        use std::time::Duration;
 
-        let root = std::env::temp_dir().join(BROWSER_TRANSFER_SUBDIR);
-        // Best-effort: another test may be using the root concurrently.
-        // The contract we're pinning here is that the sweep tolerates
-        // the missing-root case without panicking, so a residual root
-        // from a parallel test is fine.
-        if !root.exists() {
-            sweep_stale_browser_transfers();
-            assert!(
-                !root.exists(),
-                "sweep should not create the root dir on its own"
-            );
-        }
+        let (root, _guard) = isolated_sweep_root("absent_root");
+        // Deliberately do NOT create `root` — it's the missing-root
+        // case we want to exercise.
+        assert!(!root.exists(), "isolated root unexpectedly already exists");
+
+        sweep_browser_transfers_in(&root, Duration::from_secs(3600));
+
+        assert!(
+            !root.exists(),
+            "sweep should not create the root dir on its own: {root:?}"
+        );
     }
 }

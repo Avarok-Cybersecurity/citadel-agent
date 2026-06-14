@@ -66,6 +66,17 @@ const MAX_BROWSER_TRANSFER_TOTAL_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB
 /// startup sweep reclaims any crash leftovers).
 static IN_FLIGHT_BROWSER_TRANSFER_BYTES: AtomicU64 = AtomicU64::new(0);
 
+/// RAII guard that releases an in-flight byte reservation on drop, so the
+/// reservation is returned even if the writing task panics/unwinds (not just
+/// on the normal return paths). Created only AFTER a reservation is accepted.
+struct InFlightReservation(u64);
+
+impl Drop for InFlightReservation {
+    fn drop(&mut self) {
+        IN_FLIGHT_BROWSER_TRANSFER_BYTES.fetch_sub(self.0, Ordering::SeqCst);
+    }
+}
+
 /// Subdirectory under `std::env::temp_dir()` where browser-uploaded payloads
 /// are materialised. Each request gets its own UUID-named subdirectory
 /// containing one file (preserving the user's filename), removed by a
@@ -536,13 +547,19 @@ async fn materialize_byte_contents_in(
         let reserve = data.len() as u64;
         let in_flight_before =
             IN_FLIGHT_BROWSER_TRANSFER_BYTES.fetch_add(reserve, Ordering::SeqCst);
+        // RAII release so the reservation is given back on EVERY exit from
+        // here on — normal return, early error, or a panic that unwinds the
+        // spawn_blocking task (which surfaces as a JoinError the closure never
+        // gets to clean up). Without this a panicked upload would leak its
+        // reservation forever, permanently shrinking the effective cap.
+        let _reservation = InFlightReservation(reserve);
         let on_disk = browser_transfer_root_bytes(&root_for_blocking);
         if on_disk
             .saturating_add(in_flight_before)
             .saturating_add(reserve)
             > MAX_BROWSER_TRANSFER_TOTAL_BYTES
         {
-            IN_FLIGHT_BROWSER_TRANSFER_BYTES.fetch_sub(reserve, Ordering::SeqCst);
+            // `_reservation` drops here and releases `reserve`.
             return Err(std::io::Error::other(format!(
                 "browser-transfer root holds {on_disk} on disk + {in_flight_before} in flight; \
                  this {reserve} byte upload would exceed the \
@@ -550,13 +567,11 @@ async fn materialize_byte_contents_in(
             )));
         }
 
-        let write = create_private_dir(&request_dir_for_blocking)
-            .and_then(|()| write_private_file(&temp_path_for_blocking, &data));
-        // Release the reservation: on success the payload is now on disk (and
-        // counted by browser_transfer_root_bytes); on failure it was never
-        // written. Either way it's no longer "in flight".
-        IN_FLIGHT_BROWSER_TRANSFER_BYTES.fetch_sub(reserve, Ordering::SeqCst);
-        write
+        // On success the payload is now on disk (counted by
+        // browser_transfer_root_bytes); on failure it was never written.
+        // Either way `_reservation` releases the in-flight bytes on drop.
+        create_private_dir(&request_dir_for_blocking)
+            .and_then(|()| write_private_file(&temp_path_for_blocking, &data))
     })
     .await;
 

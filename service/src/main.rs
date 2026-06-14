@@ -145,6 +145,19 @@ fn resolve_backend(opts: &Options) -> Result<BackendType, Box<dyn Error>> {
 /// symlink. Following a pre-planted symlink would make `set_permissions`
 /// chmod (and the SDK then populate) an attacker-controlled target (CWE-59),
 /// redirecting sensitive account/node state.
+///
+/// We deliberately do NOT walk/validate the full ancestor chain nor create it
+/// recursively: the data dir is operator-supplied configuration (CLI flag /
+/// env var), so the operator — or the container volume mount — owns the parent
+/// chain. We require only the *immediate* parent to already exist as a real,
+/// non-symlink directory and create just the final component non-recursively,
+/// which is the proportionate CWE-59 mitigation for a config-derived (not
+/// request-derived) path. A residual create-time TOCTOU remains on the
+/// existing-directory tightening path (an attacker with write access to the
+/// parent swapping the verified dir for a symlink between the stat and the
+/// chmod); it is bounded by that same parent-write requirement, and fully
+/// closing it would need an `openat(O_NOFOLLOW)` + `fchmod` sequence that is
+/// disproportionate for an operator-controlled path.
 fn create_private_data_dir(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -169,6 +182,8 @@ fn create_private_data_dir(path: &Path) -> std::io::Result<()> {
                         ),
                     ));
                 }
+                // Tighten the existing (verified real, owned) directory to 0700.
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // Don't recursively create the parent CHAIN — that would
@@ -177,12 +192,18 @@ fn create_private_data_dir(path: &Path) -> std::io::Result<()> {
                 // immediate parent to already exist (the operator / volume
                 // mount provides it) and be a real, non-symlink directory,
                 // then create ONLY the final component (non-recursive, 0700).
-                let parent = path.parent().ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        format!("backend data dir {path:?} has no parent"),
-                    )
-                })?;
+                //
+                // `Path::new("data").parent()` is `Some("")` (an empty path),
+                // NOT `None`, so a single-component *relative* data dir must map
+                // the empty parent to "." — otherwise `symlink_metadata("")`
+                // fails and the service refuses to start on a perfectly valid
+                // `--data-dir data`. Only a truly parent-less path (e.g. "/",
+                // which always exists and so never reaches this arm) yields
+                // `None`, in which case "." is a harmless fallback.
+                let parent = path
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or_else(|| Path::new("."));
                 let pmeta = std::fs::symlink_metadata(parent).map_err(|e| {
                     std::io::Error::new(
                         e.kind(),
@@ -195,12 +216,15 @@ fn create_private_data_dir(path: &Path) -> std::io::Result<()> {
                         format!("backend data dir parent {parent:?} is a symlink or not a directory; refusing"),
                     ));
                 }
-                std::fs::DirBuilder::new().mode(0o700).create(path)?;
+                // Create the final component already-private. `DirBuilder`'s
+                // mode is only masked by the umask, and 0o700 has no bits in the
+                // umask's usual 0o077 range, so the result is reliably 0700 with
+                // no follow-up chmod — which also avoids a create-then-chmod
+                // TOCTOU on this first-boot path.
+                std::fs::DirBuilder::new().mode(0o700).create(path)
             }
-            Err(e) => return Err(e),
+            Err(e) => Err(e),
         }
-        // Tighten an existing (verified real, owned) directory.
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
     }
     #[cfg(not(unix))]
     {
@@ -374,5 +398,40 @@ mod tests {
         assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A single-component *relative* data dir (e.g. `--data-dir data`) has an
+    /// empty `Path::parent()`, which must be treated as "." rather than making
+    /// `symlink_metadata("")` fail and the service refuse to start. Regression
+    /// test for that edge case.
+    #[cfg(unix)]
+    #[test]
+    fn create_private_data_dir_accepts_single_component_relative_path() {
+        use super::create_private_data_dir;
+        use std::os::unix::fs::PermissionsExt;
+
+        // Relative name created under the test's CWD; unique per process so
+        // parallel test binaries don't collide. Removed by the guard on drop
+        // (incl. panic-unwind) so we never leave junk in the crate dir.
+        let rel = std::path::PathBuf::from(format!("cid-reldir-{}", std::process::id()));
+        struct RelGuard(std::path::PathBuf);
+        impl Drop for RelGuard {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _ = std::fs::remove_dir_all(&rel);
+        let _guard = RelGuard(rel.clone());
+
+        create_private_data_dir(&rel)
+            .expect("single-component relative data dir should be created");
+
+        let meta = std::fs::symlink_metadata(&rel).expect("relative data dir should exist");
+        assert!(meta.is_dir(), "relative data dir should be a directory");
+        assert_eq!(
+            meta.permissions().mode() & 0o777,
+            0o700,
+            "relative data dir should be 0700"
+        );
     }
 }

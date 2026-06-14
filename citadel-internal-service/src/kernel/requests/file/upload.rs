@@ -113,10 +113,15 @@ const WINDOWS_RESERVED_NAMES: [&str; 22] = [
 /// 1. Strip directory components ("photos/vacation.jpg" -> "vacation.jpg",
 ///    "../../../etc/passwd" -> "passwd") so the name can be joined onto the
 ///    per-request temp dir without escaping it.
-/// 2. Drop ASCII control characters (incl. NUL) and the characters Windows
-///    forbids in file names (`< > : " / \ | ? *`), all of which otherwise
-///    cause `std::fs::write` to fail cryptically or behave inconsistently
-///    across platforms.
+/// 2. Drop ASCII control characters (incl. NUL), the characters Windows
+///    forbids in file names (`< > : " / \ | ? *`), and deceptive Unicode
+///    format characters (bidirectional overrides, zero-width marks, and the
+///    BOM — the "Trojan Source" display-spoofing class). The first two
+///    otherwise make `std::fs::write` fail cryptically or behave
+///    inconsistently across platforms; stripping the last keeps the file name
+///    a receiver displays consistent with its actual bytes (a name like
+///    `report\u{202E}gpj.exe` must not render as `reportexe.jpg`). Only POSIX
+///    printable basenames survive; the result is always plain text.
 /// 3. Trim trailing dots/spaces (rejected by Windows) and prefix Windows
 ///    reserved device names. Falls back to "upload" when nothing usable
 ///    remains.
@@ -140,7 +145,9 @@ fn sanitize_file_name(raw: &str) -> String {
     let cleaned: String = base
         .chars()
         .filter(|c| {
-            !c.is_control() && !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+            !c.is_control()
+                && !is_deceptive_format_char(*c)
+                && !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
         })
         .collect();
 
@@ -166,6 +173,27 @@ fn sanitize_file_name(raw: &str) -> String {
     }
 
     bounded.to_string()
+}
+
+/// Unicode formatting characters that don't render as themselves and can be
+/// used to spoof a file name's *apparent* name in a UI without changing the
+/// path it actually resolves to. They are not path separators, so they pose no
+/// traversal risk (the UUID request dir handles that), but a receiver that
+/// displays the basename could be deceived: bidirectional overrides reorder
+/// the visible glyphs ("Trojan Source") and zero-width / BOM characters hide
+/// entirely. Stripping them keeps the displayed name faithful to the bytes.
+fn is_deceptive_format_char(c: char) -> bool {
+    matches!(c,
+        // Bidirectional formatting: embeddings, overrides, isolates, marks.
+        '\u{202A}'..='\u{202E}'   // LRE, RLE, PDF, LRO, RLO
+        | '\u{2066}'..='\u{2069}' // LRI, RLI, FSI, PDI
+        | '\u{200E}' | '\u{200F}' // LRM, RLM
+        | '\u{061C}'              // Arabic letter mark
+        // Zero-width / invisible separators and the byte-order mark.
+        | '\u{200B}'..='\u{200D}' // ZWSP, ZWNJ, ZWJ
+        | '\u{2060}'              // word joiner
+        | '\u{FEFF}'              // zero-width no-break space / BOM
+    )
 }
 
 /// Truncate `s` to at most `max_bytes` bytes without splitting a multi-byte
@@ -819,6 +847,21 @@ mod tests {
         assert_eq!(sanitize_file_name("\u{0}\u{1}\u{2}"), "upload");
         // Trailing dots/spaces (rejected by Windows) are trimmed.
         assert_eq!(sanitize_file_name("report.  "), "report");
+    }
+
+    #[test]
+    fn sanitize_strips_deceptive_unicode_format_chars() {
+        // Right-to-left override ("Trojan Source"): the raw name visually
+        // renders as "reportexe.jpg" but the bytes spell "report<RLO>gpj.exe".
+        // After stripping the override the displayed name matches the bytes.
+        assert_eq!(sanitize_file_name("report\u{202E}gpj.exe"), "reportgpj.exe");
+        // Zero-width space and BOM are invisible padding — removed entirely.
+        assert_eq!(sanitize_file_name("a\u{200B}b\u{FEFF}.txt"), "ab.txt");
+        // Bidi isolates and the word joiner are stripped too.
+        assert_eq!(sanitize_file_name("x\u{2066}y\u{2060}z.bin"), "xyz.bin");
+        // A name made entirely of deceptive format chars collapses to the
+        // fallback rather than an empty (and unwritable) name.
+        assert_eq!(sanitize_file_name("\u{202E}\u{200B}\u{FEFF}"), "upload");
     }
 
     #[test]

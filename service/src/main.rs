@@ -302,4 +302,43 @@ mod tests {
         let err = choose_backend(Some("sqlite"), None, None, None).unwrap_err();
         assert!(err.contains("Unknown backend kind"), "got: {err}");
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_private_data_dir_creates_a_0700_dir() {
+        use super::create_private_data_dir;
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("cid-datadir-ok-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let dir = base.join("internal-service-data");
+        create_private_data_dir(&dir).expect("should create the data dir");
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "data dir should be private 0700");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_private_data_dir_rejects_symlink_and_non_dir() {
+        use super::create_private_data_dir;
+        let base = std::env::temp_dir().join(format!("cid-datadir-bad-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+
+        // A symlink at the data-dir path must be refused (CWE-59).
+        let target = base.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        let link = base.join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let err = create_private_data_dir(&link).expect_err("symlink must be rejected");
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+
+        // A regular file at the path must be refused too.
+        let file = base.join("afile");
+        std::fs::write(&file, b"x").unwrap();
+        let err = create_private_data_dir(&file).expect_err("non-dir must be rejected");
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

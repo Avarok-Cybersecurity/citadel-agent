@@ -126,12 +126,28 @@ fn resolve_backend(opts: &Options) -> Result<BackendType, Box<dyn Error>> {
             Ok(BackendType::InMemory)
         }
         BackendChoice::Filesystem(path) => {
+            // `BackendType::Filesystem` carries a `String`, so a non-UTF-8 path
+            // would be silently rewritten by `to_string_lossy()` (invalid bytes
+            // become U+FFFD) — we'd validate/create one directory but hand the
+            // SDK a *different*, mangled path, writing state somewhere
+            // unexpected (or failing on first write). Reject non-UTF-8 up front
+            // so the directory we validate and the path the backend uses are
+            // always the same bytes.
+            let path_str = path
+                .to_str()
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("backend data dir {path:?} is not valid UTF-8; refusing"),
+                    )
+                })?
+                .to_owned();
             // Create the directory up front so the SDK doesn't fail on first
             // write. The filesystem backend stores sensitive account/node
             // state, so make it private (0700) rather than umask-default
             // (typically 0755, world-readable) on multi-user hosts.
             create_private_data_dir(&path)?;
-            Ok(BackendType::Filesystem(path.to_string_lossy().into_owned()))
+            Ok(BackendType::Filesystem(path_str))
         }
     }
 }
@@ -141,37 +157,47 @@ fn resolve_backend(opts: &Options) -> Result<BackendType, Box<dyn Error>> {
 /// because the service owns its own data dir. Falls back to the platform
 /// default elsewhere.
 ///
-/// If the path already exists it must be a real directory we own — never a
-/// symlink. Following a pre-planted symlink would make `set_permissions`
-/// chmod (and the SDK then populate) an attacker-controlled target (CWE-59),
-/// redirecting sensitive account/node state.
+/// The filesystem backend stores sensitive account/node state, so the directory
+/// must be private and must never be a symlink — following a pre-planted
+/// symlink would redirect that state to an attacker-controlled target (CWE-59).
 ///
+/// ## Race-free existing-directory handling
+/// For a directory that already exists we open it with
+/// `O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC` and then verify ownership (`fstat`)
+/// and tighten permissions (`fchmod`) **on the returned file descriptor** — the
+/// path is never re-resolved between the check and the chmod. `O_NOFOLLOW`
+/// makes the kernel refuse a symlink at the final component (ELOOP) and
+/// `O_DIRECTORY` refuses a non-directory (ENOTDIR), so an attacker with write
+/// access to the parent cannot swap the verified directory for a symlink in a
+/// stat→chmod window (the CWE-59 TOCTOU this function guards against).
+///
+/// ## Parent chain
 /// We deliberately do NOT walk/validate the full ancestor chain nor create it
 /// recursively: the data dir is operator-supplied configuration (CLI flag /
 /// env var), so the operator — or the container volume mount — owns the parent
-/// chain. We require only the *immediate* parent to already exist as a real,
-/// non-symlink directory and create just the final component non-recursively,
-/// which is the proportionate CWE-59 mitigation for a config-derived (not
-/// request-derived) path. A residual create-time TOCTOU remains on the
-/// existing-directory tightening path (an attacker with write access to the
-/// parent swapping the verified dir for a symlink between the stat and the
-/// chmod); it is bounded by that same parent-write requirement, and fully
-/// closing it would need an `openat(O_NOFOLLOW)` + `fchmod` sequence that is
-/// disproportionate for an operator-controlled path.
+/// chain. On first boot we require only the *immediate* parent to already exist
+/// as a real, non-symlink directory and create just the final component
+/// non-recursively at mode 0700, the proportionate CWE-59 mitigation for a
+/// config-derived (not request-derived) path.
 fn create_private_data_dir(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
-        match std::fs::symlink_metadata(path) {
-            Ok(meta) => {
-                if meta.file_type().is_symlink() || !meta.is_dir() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        format!(
-                            "backend data dir {path:?} is a symlink or not a directory; refusing"
-                        ),
-                    ));
-                }
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+        use std::os::unix::io::AsRawFd;
+
+        // Open the directory ITSELF and operate on the fd for every subsequent
+        // check/mutation, so nothing re-resolves the path. `O_NOFOLLOW` makes a
+        // symlink at `path` fail the open with ELOOP; `O_DIRECTORY` makes a
+        // non-directory fail with ENOTDIR. Both surface in the catch-all arm.
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC)
+            .open(path)
+        {
+            Ok(dir) => {
+                // `File::metadata` is `fstat(fd)`: it describes the very inode
+                // we hold open, not whatever the path resolves to now.
+                let meta = dir.metadata()?;
                 let our_euid = unsafe { libc::geteuid() };
                 if meta.uid() != our_euid {
                     return Err(std::io::Error::new(
@@ -182,8 +208,11 @@ fn create_private_data_dir(path: &Path) -> std::io::Result<()> {
                         ),
                     ));
                 }
-                // Tighten the existing (verified real, owned) directory to 0700.
-                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+                // `fchmod` the held fd, never the path → no stat→chmod TOCTOU.
+                if unsafe { libc::fchmod(dir.as_raw_fd(), 0o700) } != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // Don't recursively create the parent CHAIN — that would
@@ -223,7 +252,15 @@ fn create_private_data_dir(path: &Path) -> std::io::Result<()> {
                 // TOCTOU on this first-boot path.
                 std::fs::DirBuilder::new().mode(0o700).create(path)
             }
-            Err(e) => Err(e),
+            // ELOOP (a symlink, refused by O_NOFOLLOW), ENOTDIR (a non-directory,
+            // refused by O_DIRECTORY), EACCES, etc.: the path exists but is not a
+            // private directory we can safely use. Fail closed.
+            Err(e) => Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "backend data dir {path:?} is not a usable private directory ({e}); refusing"
+                ),
+            )),
         }
     }
     #[cfg(not(unix))]
@@ -433,5 +470,37 @@ mod tests {
             0o700,
             "relative data dir should be 0700"
         );
+    }
+
+    /// An already-existing, loosely-permissioned data dir we own must be
+    /// tightened to 0700 — this exercises the `open(O_NOFOLLOW)` + `fchmod`
+    /// path (the race-free existing-directory branch), distinct from the
+    /// first-boot create branch.
+    #[cfg(unix)]
+    #[test]
+    fn create_private_data_dir_tightens_existing_loose_dir() {
+        use super::create_private_data_dir;
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("cid-datadir-tighten-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+
+        // A pre-existing world-readable/executable dir (mode 0755) we own.
+        let dir = base.join("loose");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+
+        create_private_data_dir(&dir).expect("existing dir should be tightened, not rejected");
+
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700,
+            "existing data dir should be tightened to 0700"
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

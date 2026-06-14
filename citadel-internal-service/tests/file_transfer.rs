@@ -461,11 +461,25 @@ mod tests {
     /// flake (the SDK would observe ENOENT on open instead of completing).
     #[tokio::test]
     async fn test_internal_service_byte_contents_file_transfer_c2s() -> Result<(), Box<dyn Error>> {
+        // Surface panics from the spawned server/service tasks (which otherwise
+        // abort only their own task) as a hard process exit so this test fails
+        // loudly instead of hanging. The hook is process-global, so restore the
+        // default on scope exit to keep it from terminating a *later* test that
+        // shares this binary under `cargo test` (nextest already isolates each
+        // test in its own process). On an actual panic the hook's exit(1) fires
+        // before the guard drops, preserving the fail-fast intent.
         let orig_hook = take_hook();
         set_hook(Box::new(move |panic_info| {
             orig_hook(panic_info);
             exit(1);
         }));
+        struct RestorePanicHookOnDrop;
+        impl Drop for RestorePanicHookOnDrop {
+            fn drop(&mut self) {
+                let _ = take_hook();
+            }
+        }
+        let _restore_hook = RestorePanicHookOnDrop;
 
         crate::common::setup_log();
         let bind_address_internal_service: SocketAddr =

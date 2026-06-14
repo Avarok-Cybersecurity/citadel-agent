@@ -94,9 +94,16 @@ const WINDOWS_RESERVED_NAMES: [&str; 22] = [
 /// per-request directory, so this is robustness/cross-platform hygiene rather
 /// than the path-traversal defense (the UUID dir already provides that).
 fn sanitize_file_name(raw: &str) -> String {
-    let base = Path::new(raw)
-        .file_name()
-        .and_then(|n| n.to_str())
+    // Reduce to the basename by splitting on BOTH separators regardless of the
+    // host platform. `Path::file_name` only treats the *current* platform's
+    // separator as one, so on a Unix service a browser-supplied Windows path
+    // like `C:\fakepath\file.txt` (a common `<input type=file>` shape) would
+    // stay a single component and later collapse to `Cfakepathfile.txt`.
+    // Trailing separators are trimmed first so `a/b/` yields `b`, not "".
+    let base = raw
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
         .unwrap_or("");
 
     let cleaned: String = base
@@ -671,6 +678,18 @@ mod tests {
         assert_eq!(sanitize_file_name("photos/vacation.jpg"), "vacation.jpg");
         assert_eq!(sanitize_file_name("../../../etc/passwd"), "passwd");
         assert_eq!(sanitize_file_name("plain.txt"), "plain.txt");
+    }
+
+    #[test]
+    fn sanitize_handles_windows_and_fakepath_separators() {
+        // Browser `<input type=file>` fakepath, on a Unix host: must reduce to
+        // the real basename, not collapse to "Cfakepathfile.txt".
+        assert_eq!(sanitize_file_name("C:\\fakepath\\file.txt"), "file.txt");
+        assert_eq!(sanitize_file_name("photos\\trip\\pic.png"), "pic.png");
+        // Trailing backslash still yields the last real component.
+        assert_eq!(sanitize_file_name("dir\\sub\\"), "sub");
+        // Reserved-name handling still applies after the split.
+        assert_eq!(sanitize_file_name("C:\\fakepath\\CON.txt"), "_CON.txt");
     }
 
     #[test]

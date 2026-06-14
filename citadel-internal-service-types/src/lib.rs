@@ -326,7 +326,12 @@ pub struct PickFileFailure {
 /// Source for file transfer operations.
 /// Allows either a direct file path, a reference to a previously picked file,
 /// or inline byte contents (for browser-selected files).
-#[derive(Serialize, Deserialize, Debug, Clone)]
+///
+/// NOTE: the `Debug` below is `custom_debug::Debug` (imported at the top of
+/// this module, shadowing `std`'s), written out explicitly here so it's
+/// obvious the `#[debug(with = ...)]` field attribute on `ByteContents.data`
+/// is supported — the std derive would not accept it.
+#[derive(Serialize, Deserialize, custom_debug::Debug, Clone)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
 pub enum FileSource {

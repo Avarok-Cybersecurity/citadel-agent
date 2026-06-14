@@ -35,6 +35,15 @@ use uuid::Uuid;
 /// browser upload. Larger transfers must use the native `PickFile` flow,
 /// which streams the file from disk and bypasses both this cap and the
 /// JSON expansion entirely.
+///
+/// ## Not a pre-deserialization backstop
+/// This guard fires in `handle()` *after* serde has already deserialized the
+/// full `Vec<u8>` into RAM — it bounds what the SDK is asked to send, not the
+/// transient memory serde allocates while decoding the frame. The actual
+/// pre-deserialization defense is the transport frame limit (the bincode2
+/// path uses a 64 MiB `LengthDelimitedCodec`; the WebSocket path is bounded
+/// by its own frame cap). A client that streams a multi-GiB frame is stopped
+/// by that codec limit, not by this constant.
 const MAX_BYTE_CONTENTS_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
 
 /// Subdirectory under `std::env::temp_dir()` where browser-uploaded payloads
@@ -59,17 +68,123 @@ const BROWSER_TRANSFER_SUBDIR: &str = "citadel-browser-transfers";
 /// leak bounded in absolute terms.
 const TEMP_FILE_TTL: Duration = Duration::from_secs(600);
 
-/// Strip any directory components from a client-supplied file name so it can
-/// be safely joined onto the temp dir path. A name like "photos/vacation.jpg"
-/// would otherwise cause `std::fs::write` to fail cryptically because the
-/// intermediate directory doesn't exist.
+/// Windows device names reserved by the OS (case-insensitive, with or without
+/// an extension). Creating a file with one of these stems triggers cryptic
+/// failures on Windows; we prefix them so the same upload lands identically
+/// on every platform the internal service runs on (CI covers windows-latest).
+const WINDOWS_RESERVED_NAMES: [&str; 22] = [
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+/// Reduce a client-supplied file name to a safe single path component.
+///
+/// 1. Strip directory components ("photos/vacation.jpg" -> "vacation.jpg",
+///    "../../../etc/passwd" -> "passwd") so the name can be joined onto the
+///    per-request temp dir without escaping it.
+/// 2. Drop ASCII control characters (incl. NUL) and the characters Windows
+///    forbids in file names (`< > : " / \ | ? *`), all of which otherwise
+///    cause `std::fs::write` to fail cryptically or behave inconsistently
+///    across platforms.
+/// 3. Trim trailing dots/spaces (rejected by Windows) and prefix Windows
+///    reserved device names. Falls back to "upload" when nothing usable
+///    remains.
+///
+/// The original name is only ever used as the *basename* inside a UUID-named
+/// per-request directory, so this is robustness/cross-platform hygiene rather
+/// than the path-traversal defense (the UUID dir already provides that).
 fn sanitize_file_name(raw: &str) -> String {
-    Path::new(raw)
+    let base = Path::new(raw)
         .file_name()
         .and_then(|n| n.to_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("upload")
-        .to_string()
+        .unwrap_or("");
+
+    let cleaned: String = base
+        .chars()
+        .filter(|c| {
+            !c.is_control() && !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+        })
+        .collect();
+
+    // Windows rejects names with trailing dots or spaces.
+    let trimmed = cleaned.trim().trim_end_matches('.').trim_end();
+    if trimmed.is_empty() {
+        return "upload".to_string();
+    }
+
+    let stem = trimmed.split('.').next().unwrap_or(trimmed);
+    if WINDOWS_RESERVED_NAMES
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(stem))
+    {
+        return format!("_{trimmed}");
+    }
+
+    trimmed.to_string()
+}
+
+/// Classification of the shared browser-transfer root prior to using it.
+enum RootState {
+    /// Does not exist yet — the normal first-boot state.
+    Absent,
+    /// A private, real directory we may read from / write through.
+    Safe,
+    /// Exists but is unsafe to use (symlink, non-directory, or
+    /// group/other-writable). Carries a human-readable reason.
+    Unsafe(String),
+}
+
+/// Inspect the shared browser-transfer root WITHOUT following symlinks or
+/// creating anything. Mitigates CWE-377 (insecure temp file/dir): on a shared
+/// `$TMPDIR`, a local attacker can pre-create the predictable root path as a
+/// symlink (so our `remove_dir_all` sweep deletes through it, or our uploads
+/// write through it) or as a world-writable directory (so they can swap a
+/// per-request subdir for a symlink between materialise and the SDK's open).
+/// We refuse to operate on any such root and only use one we created `0700`.
+fn classify_root(root: &Path) -> RootState {
+    let meta = match std::fs::symlink_metadata(root) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return RootState::Absent,
+        Err(e) => return RootState::Unsafe(format!("cannot stat {root:?}: {e}")),
+    };
+    if meta.file_type().is_symlink() {
+        return RootState::Unsafe(format!("{root:?} is a symlink"));
+    }
+    if !meta.is_dir() {
+        return RootState::Unsafe(format!("{root:?} exists but is not a directory"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = meta.permissions().mode();
+        // Reject group- or other-writable roots (the bits that would let
+        // another local user tamper with our per-request subdirs).
+        if mode & 0o022 != 0 {
+            return RootState::Unsafe(format!(
+                "{root:?} is group/other-writable (mode {:o}); expected private 0700",
+                mode & 0o7777
+            ));
+        }
+    }
+    RootState::Safe
+}
+
+/// Create the browser-transfer root as a private directory. On Unix this is
+/// `0700` so only the service user can populate it; elsewhere we fall back to
+/// the platform default.
+fn create_private_root(root: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(root)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(root)
+    }
 }
 
 /// One-shot, best-effort sweep of the shared browser-transfer temp root.
@@ -101,10 +216,25 @@ pub fn sweep_stale_browser_transfers() {
 /// parallel test threads. Production callers go through
 /// `sweep_stale_browser_transfers`.
 fn sweep_browser_transfers_in(root: &Path, max_age: Duration) {
+    // Refuse to sweep through a symlinked or world-writable root: a
+    // `remove_dir_all` walk rooted at an attacker-controlled path could
+    // delete unrelated files. The root only exists after the first upload,
+    // so absent is the normal first-boot state and not worth logging.
+    match classify_root(root) {
+        RootState::Absent => return,
+        RootState::Safe => {}
+        RootState::Unsafe(reason) => {
+            warn!(
+                target: "citadel",
+                "Browser-transfer sweep: refusing insecure root ({reason}); skipping"
+            );
+            return;
+        }
+    }
     let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
-        // The root only exists after the first upload; missing is the
-        // normal first-boot state and not worth logging at warn level.
+        // Already handled NotFound via classify_root, but a TOCTOU removal
+        // between the two calls is benign — nothing to sweep.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
         Err(e) => {
             warn!(
@@ -207,16 +337,27 @@ async fn materialize_byte_contents(
     // visible filename, so the receiver sees the original `file_name`
     // rather than a UUID-mangled stem. Per-request isolation also means
     // two simultaneous uploads with the same name cannot collide.
-    let request_dir = std::env::temp_dir()
-        .join(BROWSER_TRANSFER_SUBDIR)
-        .join(Uuid::new_v4().to_string());
+    let root = std::env::temp_dir().join(BROWSER_TRANSFER_SUBDIR);
+    let request_dir = root.join(Uuid::new_v4().to_string());
     let temp_path = request_dir.join(&safe_name);
 
+    let root_for_blocking = root.clone();
     let request_dir_for_blocking = request_dir.clone();
     let temp_path_for_blocking = temp_path.clone();
     let bytes_len = data.len();
 
     let write_result = tokio::task::spawn_blocking(move || {
+        // Secure the shared root before writing through it (see classify_root).
+        match classify_root(&root_for_blocking) {
+            RootState::Safe => {}
+            RootState::Absent => create_private_root(&root_for_blocking)?,
+            RootState::Unsafe(reason) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("refusing insecure browser-transfer root: {reason}"),
+                ));
+            }
+        }
         std::fs::create_dir_all(&request_dir_for_blocking)?;
         std::fs::write(&temp_path_for_blocking, &data)
     })
@@ -425,6 +566,103 @@ mod tests {
         assert_eq!(sanitize_file_name("/"), "upload");
         // A pure directory-style name has no file component
         assert_eq!(sanitize_file_name("a/b/"), "b");
+    }
+
+    #[test]
+    fn sanitize_strips_control_and_forbidden_chars() {
+        // NUL and other ASCII control characters are removed.
+        assert_eq!(sanitize_file_name("a\u{0}b\u{7}.txt"), "ab.txt");
+        // Windows-forbidden characters are removed (the colon, pipe, etc.).
+        assert_eq!(sanitize_file_name("a<b>c:d|e?.txt"), "abcde.txt");
+        // A name that becomes empty after stripping falls back to "upload".
+        assert_eq!(sanitize_file_name("\u{0}\u{1}\u{2}"), "upload");
+        // Trailing dots/spaces (rejected by Windows) are trimmed.
+        assert_eq!(sanitize_file_name("report.  "), "report");
+    }
+
+    #[test]
+    fn sanitize_guards_windows_reserved_names() {
+        assert_eq!(sanitize_file_name("CON"), "_CON");
+        assert_eq!(sanitize_file_name("con.txt"), "_con.txt");
+        assert_eq!(sanitize_file_name("LPT1.log"), "_LPT1.log");
+        // Only an exact reserved stem is guarded; a longer name is untouched.
+        assert_eq!(sanitize_file_name("CONSOLE.txt"), "CONSOLE.txt");
+        assert_eq!(sanitize_file_name("com10"), "com10");
+    }
+
+    #[test]
+    fn classify_root_flags_symlinks_and_accepts_private_dirs() {
+        use super::{classify_root, RootState};
+
+        let (base, _guard) = isolated_sweep_root("classify");
+        std::fs::create_dir_all(&base).expect("create classify base");
+
+        // Absent path.
+        let absent = base.join("does-not-exist");
+        assert!(matches!(classify_root(&absent), RootState::Absent));
+
+        // A real private directory is Safe.
+        let real = base.join("real");
+        std::fs::create_dir_all(&real).expect("create real dir");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o700))
+                .expect("chmod 0700");
+        }
+        assert!(matches!(classify_root(&real), RootState::Safe));
+
+        // A symlink (even pointing at a valid dir) is rejected.
+        #[cfg(unix)]
+        {
+            let link = base.join("link");
+            std::os::unix::fs::symlink(&real, &link).expect("create symlink");
+            assert!(matches!(classify_root(&link), RootState::Unsafe(_)));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn classify_root_rejects_world_writable_dir() {
+        use super::{classify_root, RootState};
+        use std::os::unix::fs::PermissionsExt;
+
+        let (base, _guard) = isolated_sweep_root("classify_perms");
+        std::fs::create_dir_all(&base).expect("create perms base");
+        let permissive = base.join("permissive");
+        std::fs::create_dir_all(&permissive).expect("create permissive dir");
+        std::fs::set_permissions(&permissive, std::fs::Permissions::from_mode(0o777))
+            .expect("chmod 0777");
+        assert!(matches!(classify_root(&permissive), RootState::Unsafe(_)));
+    }
+
+    /// A symlinked sweep root must be left untouched — the sweep must not
+    /// follow it and delete through to the symlink target.
+    #[cfg(unix)]
+    #[test]
+    fn sweep_refuses_symlinked_root() {
+        use super::sweep_browser_transfers_in;
+        use std::time::Duration;
+
+        let (base, _guard) = isolated_sweep_root("sweep_symlink");
+        std::fs::create_dir_all(&base).expect("create base");
+
+        // `target` stands in for an unrelated directory the attacker wants
+        // deleted; it contains a stale entry the sweep would otherwise remove.
+        let target = base.join("target");
+        let victim = target.join("00000000-0000-0000-0000-000000000000");
+        std::fs::create_dir_all(&victim).expect("create victim dir");
+
+        let link = base.join("link");
+        std::os::unix::fs::symlink(&target, &link).expect("create symlink root");
+
+        // Sweep the symlinked root with ZERO max-age (everything is "stale").
+        sweep_browser_transfers_in(&link, Duration::ZERO);
+
+        assert!(
+            victim.exists(),
+            "sweep followed a symlinked root and deleted through it"
+        );
     }
 
     /// Exercises the IO-error branch of `materialize_byte_contents`. We

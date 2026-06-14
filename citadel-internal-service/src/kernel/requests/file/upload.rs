@@ -8,6 +8,7 @@ use citadel_internal_service_types::{
 use citadel_sdk::logging::{error, info, warn};
 use citadel_sdk::prelude::{NetworkError, NodeRequest, Ratchet, SendObject, VirtualTargetType};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -56,6 +57,14 @@ const MAX_BYTE_CONTENTS_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
 /// quota — the intent is to deny disk-exhaustion, not to meter to the byte.
 /// 256 MiB ≈ 16 concurrent max-size uploads in flight.
 const MAX_BROWSER_TRANSFER_TOTAL_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB
+
+/// Bytes of in-flight `ByteContents` uploads currently being written (between
+/// the aggregate-cap reservation and the write completing). Added to the
+/// on-disk total when enforcing `MAX_BROWSER_TRANSFER_TOTAL_BYTES` so that
+/// concurrent uploads cannot all observe the same on-disk size and
+/// collectively blow past the cap. Process-wide; resets to 0 on restart (the
+/// startup sweep reclaims any crash leftovers).
+static IN_FLIGHT_BROWSER_TRANSFER_BYTES: AtomicU64 = AtomicU64::new(0);
 
 /// Subdirectory under `std::env::temp_dir()` where browser-uploaded payloads
 /// are materialised. Each request gets its own UUID-named subdirectory
@@ -516,18 +525,38 @@ async fn materialize_byte_contents_in(
         // and write the payload (0600) so the materialised upload is private
         // end to end (see classify_root / ensure_private_root).
         ensure_private_root(&root_for_blocking)?;
-        // Aggregate disk-exhaustion guard: reject if the already-materialised
-        // payloads plus this one would exceed the root-wide ceiling.
-        let existing = browser_transfer_root_bytes(&root_for_blocking);
-        if existing.saturating_add(data.len() as u64) > MAX_BROWSER_TRANSFER_TOTAL_BYTES {
+
+        // Aggregate disk-exhaustion guard. The total counted is the bytes
+        // already ON DISK plus the bytes of every upload currently being
+        // written (the in-flight reservation). Reserving atomically BEFORE
+        // reading the on-disk total closes the concurrent-bypass race where
+        // many uploads observe the same on-disk size and all pass the check:
+        // a later racer sees the earlier racers' reservations included in
+        // `in_flight_before` and is rejected if there's no room.
+        let reserve = data.len() as u64;
+        let in_flight_before =
+            IN_FLIGHT_BROWSER_TRANSFER_BYTES.fetch_add(reserve, Ordering::SeqCst);
+        let on_disk = browser_transfer_root_bytes(&root_for_blocking);
+        if on_disk
+            .saturating_add(in_flight_before)
+            .saturating_add(reserve)
+            > MAX_BROWSER_TRANSFER_TOTAL_BYTES
+        {
+            IN_FLIGHT_BROWSER_TRANSFER_BYTES.fetch_sub(reserve, Ordering::SeqCst);
             return Err(std::io::Error::other(format!(
-                "browser-transfer root already holds {existing} bytes; this {} byte \
-                 upload would exceed the {MAX_BROWSER_TRANSFER_TOTAL_BYTES} byte aggregate cap",
-                data.len()
+                "browser-transfer root holds {on_disk} on disk + {in_flight_before} in flight; \
+                 this {reserve} byte upload would exceed the \
+                 {MAX_BROWSER_TRANSFER_TOTAL_BYTES} byte aggregate cap"
             )));
         }
-        create_private_dir(&request_dir_for_blocking)?;
-        write_private_file(&temp_path_for_blocking, &data)
+
+        let write = create_private_dir(&request_dir_for_blocking)
+            .and_then(|()| write_private_file(&temp_path_for_blocking, &data));
+        // Release the reservation: on success the payload is now on disk (and
+        // counted by browser_transfer_root_bytes); on failure it was never
+        // written. Either way it's no longer "in flight".
+        IN_FLIGHT_BROWSER_TRANSFER_BYTES.fetch_sub(reserve, Ordering::SeqCst);
+        write
     })
     .await;
 

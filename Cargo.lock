@@ -584,6 +584,7 @@ dependencies = [
  "citadel-internal-service-types",
  "citadel_sdk",
  "futures",
+ "libc",
  "parking_lot",
  "rfd",
  "tokio 1.49.0",

@@ -119,15 +119,35 @@ fn sanitize_file_name(raw: &str) -> String {
         return "upload".to_string();
     }
 
-    let stem = trimmed.split('.').next().unwrap_or(trimmed);
+    // Cap the basename at NAME_MAX (255 bytes on ext4/APFS/NTFS) so a long
+    // browser-supplied name fails closed by truncation rather than surfacing
+    // a confusing ENAMETOOLONG `SendFileRequestFailure` on otherwise valid
+    // input. Truncate on a UTF-8 char boundary so we never emit invalid text.
+    const MAX_FILE_NAME_BYTES: usize = 255;
+    let bounded = truncate_on_char_boundary(trimmed, MAX_FILE_NAME_BYTES);
+
+    let stem = bounded.split('.').next().unwrap_or(bounded);
     if WINDOWS_RESERVED_NAMES
         .iter()
         .any(|reserved| reserved.eq_ignore_ascii_case(stem))
     {
-        return format!("_{trimmed}");
+        return format!("_{bounded}");
     }
 
-    trimmed.to_string()
+    bounded.to_string()
+}
+
+/// Truncate `s` to at most `max_bytes` bytes without splitting a multi-byte
+/// UTF-8 character (backs off to the nearest lower char boundary).
+fn truncate_on_char_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 /// Classification of the shared browser-transfer root prior to using it.
@@ -169,7 +189,19 @@ fn classify_root(root: &Path) -> RootState {
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        // Reject anything we don't own. A local attacker could pre-create the
+        // predictable root path as their OWN 0700 directory — the permission
+        // check alone would accept it, then they could tamper with the
+        // per-request subdirs inside. Only a root owned by our effective uid
+        // is trustworthy.
+        let our_euid = unsafe { libc::geteuid() };
+        if meta.uid() != our_euid {
+            return RootState::Unsafe(format!(
+                "{root:?} is owned by uid {} but we are uid {our_euid}; refusing",
+                meta.uid()
+            ));
+        }
         let mode = meta.permissions().mode();
         // Reject ANY group/other permission bit — the root must be 0700 so
         // uploads under it are neither readable nor tamperable by other users.
@@ -831,26 +863,26 @@ mod tests {
         );
     }
 
-    /// Exercises the IO-error branch of `materialize_byte_contents`. We
-    /// trigger a real `std::fs::write` failure by passing a filename longer
-    /// than `NAME_MAX` (typically 255 bytes on ext4 / APFS / NTFS), which
-    /// makes the filesystem return ENAMETOOLONG when we try to create the
-    /// file inside the per-request subdir.
+    /// Exercises the IO-error branch of `materialize_byte_contents`. We point
+    /// the root at a regular FILE so securing/creating the per-request dir
+    /// under it fails (root "is not a directory"). The error flows through the
+    /// closure's `?` into the `Ok(Err(e))` arm, which wraps it as "Failed to
+    /// write browser file to temp" and schedules cleanup.
     ///
-    /// This proves that the `Ok(Err(e))` arm is reached (and therefore
-    /// schedule_temp_dir_cleanup is invoked - code coverage is the
-    /// proof; verifying the deferred cleanup task ran would require
-    /// advancing tokio's paused clock 10 minutes, which adds complexity
-    /// without strengthening this contract).
+    /// (The previous overlong-filename trigger no longer errors now that
+    /// `sanitize_file_name` truncates names to NAME_MAX — see
+    /// `sanitize_truncates_overlong_names`.)
     #[tokio::test]
     async fn materialize_returns_err_when_write_fails() {
-        // 300 bytes well exceeds NAME_MAX on every mainstream filesystem.
-        let (root, _guard) = isolated_private_root("materialize_err");
-        let overlong = "a".repeat(300);
-        let result = materialize_byte_contents_in(&root, &overlong, vec![1, 2, 3]).await;
+        let (base, _guard) = isolated_sweep_root("materialize_err");
+        std::fs::create_dir_all(&base).expect("create base");
+        let root_as_file = base.join("not-a-dir");
+        std::fs::write(&root_as_file, b"x").expect("create regular file at root path");
+
+        let result = materialize_byte_contents_in(&root_as_file, "file.bin", vec![1, 2, 3]).await;
         assert!(
             result.is_err(),
-            "expected IO error for overlong filename, got Ok({:?})",
+            "expected IO error when root is a file, got Ok({:?})",
             result.ok()
         );
         let msg = result.unwrap_err().into_string();
@@ -858,6 +890,23 @@ mod tests {
             msg.contains("Failed to write browser file to temp"),
             "unexpected error message: {msg}"
         );
+    }
+
+    #[test]
+    fn sanitize_truncates_overlong_names() {
+        // A name well past NAME_MAX is truncated to <= 255 bytes (no
+        // ENAMETOOLONG downstream) while staying valid UTF-8.
+        let long = "a".repeat(300);
+        let out = sanitize_file_name(&long);
+        assert!(out.len() <= 255, "expected <=255 bytes, got {}", out.len());
+        assert!(out.chars().all(|c| c == 'a'));
+
+        // Multi-byte chars are never split mid-codepoint.
+        let multibyte = "é".repeat(200); // 400 bytes
+        let out = sanitize_file_name(&multibyte);
+        assert!(out.len() <= 255);
+        assert!(std::str::from_utf8(out.as_bytes()).is_ok());
+        assert!(out.chars().all(|c| c == 'é'));
     }
 
     /// Happy-path counterpart to `materialize_returns_err_when_write_fails`.

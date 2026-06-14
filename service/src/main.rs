@@ -265,6 +265,14 @@ fn create_private_data_dir(path: &Path) -> std::io::Result<()> {
     }
     #[cfg(not(unix))]
     {
+        // NOTE: non-Unix platforms (e.g. Windows) get only a best-effort
+        // `create_dir_all` here — there is no private-ACL tightening and no
+        // symlink/ownership validation, so the CWE-59 / private-permissions
+        // guarantees of the Unix branch above do NOT hold. The internal service
+        // is deployed on Linux (Docker); a hardened Windows path would need the
+        // Win32 ACL APIs and is out of scope. Operators on non-Unix hosts must
+        // ensure the data directory's parent is trusted and that filesystem
+        // ACLs restrict access to the service's own account.
         std::fs::create_dir_all(path)
     }
 }

@@ -464,22 +464,27 @@ mod tests {
         // Surface panics from the spawned server/service tasks (which otherwise
         // abort only their own task) as a hard process exit so this test fails
         // loudly instead of hanging. The hook is process-global, so restore the
-        // default on scope exit to keep it from terminating a *later* test that
-        // shares this binary under `cargo test` (nextest already isolates each
-        // test in its own process). On an actual panic the hook's exit(1) fires
-        // before the guard drops, preserving the fail-fast intent.
-        let orig_hook = take_hook();
+        // *original* hook on scope exit to keep it from terminating — or merely
+        // stripping the custom handler of — a later test that shares this binary
+        // under `cargo test` (nextest already isolates each test per process).
+        // The original hook is shared via `Arc`: the panic closure clones it to
+        // still print the default panic message before `exit(1)` (preserving the
+        // fail-fast intent), and the guard clones it to reinstall it on drop.
+        type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>;
+        let orig_hook: std::sync::Arc<PanicHook> = std::sync::Arc::new(take_hook());
+        let hook_for_panic = orig_hook.clone();
         set_hook(Box::new(move |panic_info| {
-            orig_hook(panic_info);
+            hook_for_panic(panic_info);
             exit(1);
         }));
-        struct RestorePanicHookOnDrop;
+        struct RestorePanicHookOnDrop(std::sync::Arc<PanicHook>);
         impl Drop for RestorePanicHookOnDrop {
             fn drop(&mut self) {
-                let _ = take_hook();
+                let orig = self.0.clone();
+                set_hook(Box::new(move |info| orig(info)));
             }
         }
-        let _restore_hook = RestorePanicHookOnDrop;
+        let _restore_hook = RestorePanicHookOnDrop(orig_hook);
 
         crate::common::setup_log();
         let bind_address_internal_service: SocketAddr =

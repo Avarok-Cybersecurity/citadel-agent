@@ -1,4 +1,4 @@
-import { InternalServiceWasmClient, InternalServiceResponse, isResponseType } from './index';
+import { InternalServiceWasmClient, InternalServiceResponse, isResponseType } from './index.js';
 
 /**
  * Example usage of the InternalServiceWasmClient

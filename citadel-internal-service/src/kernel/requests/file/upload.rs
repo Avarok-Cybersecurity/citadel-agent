@@ -46,6 +46,17 @@ use uuid::Uuid;
 /// by that codec limit, not by this constant.
 const MAX_BYTE_CONTENTS_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
 
+/// Aggregate ceiling on bytes currently materialised under the shared
+/// browser-transfer root. The per-request `MAX_BYTE_CONTENTS_BYTES` cap bounds
+/// a single upload, but without an aggregate cap a client could fire many
+/// concurrent uploads and accumulate `N × 16 MiB` on disk before the 10-minute
+/// TTL cleanup fires. Before materialising, we sum the existing payloads and
+/// reject the request if it would push the total past this bound. It is a
+/// best-effort guard (a concurrent racer can briefly overshoot), not a hard
+/// quota — the intent is to deny disk-exhaustion, not to meter to the byte.
+/// 256 MiB ≈ 16 concurrent max-size uploads in flight.
+const MAX_BROWSER_TRANSFER_TOTAL_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB
+
 /// Subdirectory under `std::env::temp_dir()` where browser-uploaded payloads
 /// are materialised. Each request gets its own UUID-named subdirectory
 /// containing one file (preserving the user's filename), removed by a
@@ -300,6 +311,30 @@ fn write_private_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
     }
 }
 
+/// Sum the bytes of all payload files currently materialised under `root`
+/// (one file per per-request subdir). Best-effort: unreadable entries are
+/// skipped rather than failing the caller. Used to enforce the aggregate
+/// disk cap before a new materialisation.
+fn browser_transfer_root_bytes(root: &Path) -> u64 {
+    let mut total = 0u64;
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let Ok(sub) = std::fs::read_dir(entry.path()) else {
+            continue;
+        };
+        for file in sub.flatten() {
+            if let Ok(meta) = file.metadata() {
+                if meta.is_file() {
+                    total = total.saturating_add(meta.len());
+                }
+            }
+        }
+    }
+    total
+}
+
 /// One-shot, best-effort sweep of the shared browser-transfer temp root.
 /// Removes any per-request subdirectory older than `TEMP_FILE_TTL` so the
 /// service doesn't accumulate orphaned payloads across crash-restart
@@ -481,6 +516,16 @@ async fn materialize_byte_contents_in(
         // and write the payload (0600) so the materialised upload is private
         // end to end (see classify_root / ensure_private_root).
         ensure_private_root(&root_for_blocking)?;
+        // Aggregate disk-exhaustion guard: reject if the already-materialised
+        // payloads plus this one would exceed the root-wide ceiling.
+        let existing = browser_transfer_root_bytes(&root_for_blocking);
+        if existing.saturating_add(data.len() as u64) > MAX_BROWSER_TRANSFER_TOTAL_BYTES {
+            return Err(std::io::Error::other(format!(
+                "browser-transfer root already holds {existing} bytes; this {} byte \
+                 upload would exceed the {MAX_BROWSER_TRANSFER_TOTAL_BYTES} byte aggregate cap",
+                data.len()
+            )));
+        }
         create_private_dir(&request_dir_for_blocking)?;
         write_private_file(&temp_path_for_blocking, &data)
     })
@@ -973,6 +1018,28 @@ mod tests {
         let (root, guard) = isolated_sweep_root(label);
         super::create_private_dir(&root).expect("create private isolated root");
         (root, guard)
+    }
+
+    /// `browser_transfer_root_bytes` must sum payload files across per-request
+    /// subdirs (the input to the aggregate disk-cap guard). Uses tiny files so
+    /// the test itself doesn't allocate near the cap.
+    #[test]
+    fn root_bytes_sums_payload_files_across_request_dirs() {
+        let (root, _guard) = isolated_private_root("root_bytes");
+        assert_eq!(
+            super::browser_transfer_root_bytes(&root),
+            0,
+            "empty root is 0"
+        );
+
+        let d1 = root.join("req1");
+        std::fs::create_dir_all(&d1).unwrap();
+        std::fs::write(d1.join("a.bin"), vec![0u8; 100]).unwrap();
+        let d2 = root.join("req2");
+        std::fs::create_dir_all(&d2).unwrap();
+        std::fs::write(d2.join("b.bin"), vec![0u8; 50]).unwrap();
+
+        assert_eq!(super::browser_transfer_root_bytes(&root), 150);
     }
 
     struct IsolatedRootGuard(std::path::PathBuf);

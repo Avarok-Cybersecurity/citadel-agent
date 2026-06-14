@@ -64,30 +64,57 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// The resolved backend decision, separated from any filesystem side effect
+/// so the precedence/alias/validation logic can be unit-tested in isolation.
+#[derive(Debug, PartialEq, Eq)]
+enum BackendChoice {
+    InMemory,
+    Filesystem(PathBuf),
+}
+
+/// Pure resolution of the backend choice from the env + CLI inputs. Env wins
+/// over CLI (so docker operators can flip backends without rebuilding). No
+/// I/O happens here — directory creation is the caller's job.
+fn choose_backend(
+    env_kind: Option<&str>,
+    env_dir: Option<PathBuf>,
+    opts_backend: Option<&str>,
+    opts_data_dir: Option<PathBuf>,
+) -> Result<BackendChoice, String> {
+    let kind = env_kind.or(opts_backend).unwrap_or("in-memory");
+    let data_dir = env_dir.or(opts_data_dir);
+
+    match kind {
+        "in-memory" | "inmemory" => Ok(BackendChoice::InMemory),
+        "filesystem" | "fs" => {
+            Ok(BackendChoice::Filesystem(data_dir.unwrap_or_else(|| {
+                PathBuf::from("./internal-service-data")
+            })))
+        }
+        other => Err(format!(
+            "Unknown backend kind {other:?}; expected 'in-memory' or 'filesystem'"
+        )),
+    }
+}
+
 fn resolve_backend(opts: &Options) -> Result<BackendType, Box<dyn Error>> {
     let env_kind = std::env::var("INTERNAL_SERVICE_BACKEND").ok();
     let env_dir = std::env::var("INTERNAL_SERVICE_DATA_DIR")
         .ok()
         .map(PathBuf::from);
 
-    let kind = env_kind
-        .as_deref()
-        .or(opts.backend.as_deref())
-        .unwrap_or("in-memory");
-    let data_dir = env_dir.or_else(|| opts.data_dir.clone());
-
-    match kind {
-        "in-memory" | "inmemory" => Ok(BackendType::InMemory),
-        "filesystem" | "fs" => {
-            let path = data_dir.unwrap_or_else(|| PathBuf::from("./internal-service-data"));
+    match choose_backend(
+        env_kind.as_deref(),
+        env_dir,
+        opts.backend.as_deref(),
+        opts.data_dir.clone(),
+    )? {
+        BackendChoice::InMemory => Ok(BackendType::InMemory),
+        BackendChoice::Filesystem(path) => {
             // Create the directory up front so the SDK doesn't fail on first write.
             std::fs::create_dir_all(&path)?;
             Ok(BackendType::Filesystem(path.to_string_lossy().into_owned()))
         }
-        other => Err(format!(
-            "Unknown backend kind {other:?}; expected 'in-memory' or 'filesystem'"
-        )
-        .into()),
     }
 }
 
@@ -139,4 +166,81 @@ lazy_static::lazy_static! {
             }
         });
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{choose_backend, BackendChoice};
+    use std::path::PathBuf;
+
+    #[test]
+    fn defaults_to_in_memory() {
+        assert_eq!(
+            choose_backend(None, None, None, None).unwrap(),
+            BackendChoice::InMemory
+        );
+    }
+
+    #[test]
+    fn cli_filesystem_with_explicit_data_dir() {
+        assert_eq!(
+            choose_backend(
+                None,
+                None,
+                Some("filesystem"),
+                Some(PathBuf::from("/srv/data"))
+            )
+            .unwrap(),
+            BackendChoice::Filesystem(PathBuf::from("/srv/data"))
+        );
+    }
+
+    #[test]
+    fn filesystem_falls_back_to_default_dir() {
+        assert_eq!(
+            choose_backend(None, None, Some("filesystem"), None).unwrap(),
+            BackendChoice::Filesystem(PathBuf::from("./internal-service-data"))
+        );
+    }
+
+    #[test]
+    fn env_kind_overrides_cli_kind() {
+        // CLI asks for filesystem, env forces in-memory — env wins.
+        assert_eq!(
+            choose_backend(Some("in-memory"), None, Some("filesystem"), None).unwrap(),
+            BackendChoice::InMemory
+        );
+    }
+
+    #[test]
+    fn env_dir_overrides_cli_dir() {
+        assert_eq!(
+            choose_backend(
+                Some("filesystem"),
+                Some(PathBuf::from("/env/dir")),
+                Some("filesystem"),
+                Some(PathBuf::from("/cli/dir")),
+            )
+            .unwrap(),
+            BackendChoice::Filesystem(PathBuf::from("/env/dir"))
+        );
+    }
+
+    #[test]
+    fn accepts_short_aliases() {
+        assert_eq!(
+            choose_backend(Some("inmemory"), None, None, None).unwrap(),
+            BackendChoice::InMemory
+        );
+        assert_eq!(
+            choose_backend(Some("fs"), None, None, Some(PathBuf::from("/d"))).unwrap(),
+            BackendChoice::Filesystem(PathBuf::from("/d"))
+        );
+    }
+
+    #[test]
+    fn unknown_kind_is_an_error() {
+        let err = choose_backend(Some("sqlite"), None, None, None).unwrap_err();
+        assert!(err.contains("Unknown backend kind"), "got: {err}");
+    }
 }

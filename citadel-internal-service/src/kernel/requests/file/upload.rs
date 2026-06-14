@@ -291,24 +291,6 @@ fn create_private_dir_exclusive(dir: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Create a directory (and missing parents) with private `0700` perms. Used
-/// for the per-request subdir, which lives under the already-secured `0700`
-/// root and therefore cannot be tampered with by other users.
-fn create_private_dir(dir: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::create_dir_all(dir)
-    }
-}
-
 /// Write `data` to `path` with private `0600` perms so the materialised
 /// upload is not readable by other local users even if the enclosing dirs
 /// were somehow loosened. On non-Unix we fall back to `std::fs::write`.
@@ -570,7 +552,13 @@ async fn materialize_byte_contents_in(
         // On success the payload is now on disk (counted by
         // browser_transfer_root_bytes); on failure it was never written.
         // Either way `_reservation` releases the in-flight bytes on drop.
-        create_private_dir(&request_dir_for_blocking)
+        //
+        // Use the EXCLUSIVE (non-recursive) create for the per-request dir:
+        // the root is guaranteed to exist (ensure_private_root above), so we
+        // never need to create through it, and an exclusive create fails
+        // closed rather than writing through anything pre-planted at the
+        // (random) request path.
+        create_private_dir_exclusive(&request_dir_for_blocking)
             .and_then(|()| write_private_file(&temp_path_for_blocking, &data))
     })
     .await;
@@ -1060,7 +1048,7 @@ mod tests {
     /// `classify_root` rejects any non-private root.
     fn isolated_private_root(label: &str) -> (std::path::PathBuf, IsolatedRootGuard) {
         let (root, guard) = isolated_sweep_root(label);
-        super::create_private_dir(&root).expect("create private isolated root");
+        super::create_private_dir_exclusive(&root).expect("create private isolated root");
         (root, guard)
     }
 

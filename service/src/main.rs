@@ -102,6 +102,7 @@ fn resolve_backend(opts: &Options) -> Result<BackendType, Box<dyn Error>> {
     let env_dir = std::env::var("INTERNAL_SERVICE_DATA_DIR")
         .ok()
         .map(PathBuf::from);
+    let data_dir_provided = env_dir.is_some() || opts.data_dir.is_some();
 
     match choose_backend(
         env_kind.as_deref(),
@@ -109,7 +110,21 @@ fn resolve_backend(opts: &Options) -> Result<BackendType, Box<dyn Error>> {
         opts.backend.as_deref(),
         opts.data_dir.clone(),
     )? {
-        BackendChoice::InMemory => Ok(BackendType::InMemory),
+        BackendChoice::InMemory => {
+            // A data dir with the in-memory backend is a no-op; warn loudly so
+            // an operator who set INTERNAL_SERVICE_DATA_DIR but forgot to also
+            // set INTERNAL_SERVICE_BACKEND=filesystem isn't surprised by data
+            // loss on restart.
+            if data_dir_provided {
+                citadel_sdk::logging::warn!(
+                    target: "citadel",
+                    "A data directory was configured but the backend is IN-MEMORY, so it is \
+                     IGNORED and all state is ephemeral. Set INTERNAL_SERVICE_BACKEND=filesystem \
+                     to persist to the configured data directory."
+                );
+            }
+            Ok(BackendType::InMemory)
+        }
         BackendChoice::Filesystem(path) => {
             // Create the directory up front so the SDK doesn't fail on first
             // write. The filesystem backend stores sensitive account/node
@@ -156,13 +171,29 @@ fn create_private_data_dir(path: &Path) -> std::io::Result<()> {
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // Create parents (may be a fresh mount) then the final
-                // component, both at 0700.
-                if let Some(parent) = path.parent() {
-                    std::fs::DirBuilder::new()
-                        .recursive(true)
-                        .mode(0o700)
-                        .create(parent)?;
+                // Don't recursively create the parent CHAIN — that would
+                // follow a pre-planted intermediate symlink and populate the
+                // backend under an attacker-controlled target. Require the
+                // immediate parent to already exist (the operator / volume
+                // mount provides it) and be a real, non-symlink directory,
+                // then create ONLY the final component (non-recursive, 0700).
+                let parent = path.parent().ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("backend data dir {path:?} has no parent"),
+                    )
+                })?;
+                let pmeta = std::fs::symlink_metadata(parent).map_err(|e| {
+                    std::io::Error::new(
+                        e.kind(),
+                        format!("backend data dir parent {parent:?} must already exist: {e}"),
+                    )
+                })?;
+                if pmeta.file_type().is_symlink() || !pmeta.is_dir() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        format!("backend data dir parent {parent:?} is a symlink or not a directory; refusing"),
+                    ));
                 }
                 std::fs::DirBuilder::new().mode(0o700).create(path)?;
             }
@@ -310,6 +341,9 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let base = std::env::temp_dir().join(format!("cid-datadir-ok-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
+        // The immediate parent must already exist (we no longer create the
+        // parent chain recursively); the volume mount provides it in prod.
+        std::fs::create_dir_all(&base).unwrap();
         let dir = base.join("internal-service-data");
         create_private_data_dir(&dir).expect("should create the data dir");
         let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;

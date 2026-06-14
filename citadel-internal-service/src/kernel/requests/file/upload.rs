@@ -127,10 +127,10 @@ fn sanitize_file_name(raw: &str) -> String {
 enum RootState {
     /// Does not exist yet — the normal first-boot state.
     Absent,
-    /// A private, real directory we may read from / write through.
+    /// A private (0700, no group/other access), real directory owned by us.
     Safe,
-    /// Exists but is unsafe to use (symlink, non-directory, or
-    /// group/other-writable). Carries a human-readable reason.
+    /// Exists but is unsafe to use (symlink, non-directory, or any
+    /// group/other permission bit). Carries a human-readable reason.
     Unsafe(String),
 }
 
@@ -138,9 +138,16 @@ enum RootState {
 /// creating anything. Mitigates CWE-377 (insecure temp file/dir): on a shared
 /// `$TMPDIR`, a local attacker can pre-create the predictable root path as a
 /// symlink (so our `remove_dir_all` sweep deletes through it, or our uploads
-/// write through it) or as a world-writable directory (so they can swap a
-/// per-request subdir for a symlink between materialise and the SDK's open).
-/// We refuse to operate on any such root and only use one we created `0700`.
+/// write through it) or as a non-private directory (so they can read the
+/// unencrypted uploads, or swap a per-request subdir for a symlink between
+/// materialise and the SDK's open).
+///
+/// We require the root to be STRICTLY PRIVATE — `0700`, no group/other bits at
+/// all. Merely "not writable by others" (`0755`) is insufficient: browser
+/// uploads are written as plaintext under this root, so a world-*readable*
+/// root would expose them to other local users. We only ever use a root we
+/// created `0700` ourselves; anything else is rejected so the service fails
+/// closed rather than writing secrets somewhere readable.
 fn classify_root(root: &Path) -> RootState {
     let meta = match std::fs::symlink_metadata(root) {
         Ok(meta) => meta,
@@ -157,11 +164,11 @@ fn classify_root(root: &Path) -> RootState {
     {
         use std::os::unix::fs::PermissionsExt;
         let mode = meta.permissions().mode();
-        // Reject group- or other-writable roots (the bits that would let
-        // another local user tamper with our per-request subdirs).
-        if mode & 0o022 != 0 {
+        // Reject ANY group/other permission bit — the root must be 0700 so
+        // uploads under it are neither readable nor tamperable by other users.
+        if mode & 0o077 != 0 {
             return RootState::Unsafe(format!(
-                "{root:?} is group/other-writable (mode {:o}); expected private 0700",
+                "{root:?} is not private (mode {:o}); expected 0700",
                 mode & 0o7777
             ));
         }
@@ -169,21 +176,88 @@ fn classify_root(root: &Path) -> RootState {
     RootState::Safe
 }
 
-/// Create the browser-transfer root as a private directory. On Unix this is
-/// `0700` so only the service user can populate it; elsewhere we fall back to
-/// the platform default.
-fn create_private_root(root: &Path) -> std::io::Result<()> {
+/// Ensure the shared browser-transfer root exists as a private directory we
+/// own, returning an error if it exists but is unsafe.
+///
+/// The `Absent` branch creates the root with a NON-recursive `0700` create so
+/// the operation fails (rather than silently succeeding) if a symlink or
+/// directory was planted at the path between `classify_root` and here — the
+/// classic create-time TOCTOU. A benign lost race (two concurrent first
+/// uploads) surfaces as `AlreadyExists`, which we resolve by re-classifying:
+/// proceed only if the winner created a private root, else fail closed.
+fn ensure_private_root(root: &Path) -> std::io::Result<()> {
+    match classify_root(root) {
+        RootState::Safe => Ok(()),
+        RootState::Unsafe(reason) => Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("refusing insecure browser-transfer root: {reason}"),
+        )),
+        RootState::Absent => match create_private_dir_exclusive(root) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => match classify_root(root) {
+                RootState::Safe => Ok(()),
+                _ => Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("browser-transfer root {root:?} appeared and is not private"),
+                )),
+            },
+            Err(e) => Err(e),
+        },
+    }
+}
+
+/// Create a single directory with `0700` perms, failing if it already exists
+/// (non-recursive; the parent `$TMPDIR` is assumed present). The exclusivity
+/// is what makes root creation symlink-plant resistant.
+fn create_private_dir_exclusive(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new().mode(0o700).create(dir)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir(dir)
+    }
+}
+
+/// Create a directory (and missing parents) with private `0700` perms. Used
+/// for the per-request subdir, which lives under the already-secured `0700`
+/// root and therefore cannot be tampered with by other users.
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
         std::fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
-            .create(root)
+            .create(dir)
     }
     #[cfg(not(unix))]
     {
-        std::fs::create_dir_all(root)
+        std::fs::create_dir_all(dir)
+    }
+}
+
+/// Write `data` to `path` with private `0600` perms so the materialised
+/// upload is not readable by other local users even if the enclosing dirs
+/// were somehow loosened. On non-Unix we fall back to `std::fs::write`.
+fn write_private_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(data)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, data)
     }
 }
 
@@ -329,6 +403,24 @@ async fn materialize_byte_contents(
     file_name: &str,
     data: Vec<u8>,
 ) -> Result<PathBuf, NetworkError> {
+    materialize_byte_contents_in(
+        &std::env::temp_dir().join(BROWSER_TRANSFER_SUBDIR),
+        file_name,
+        data,
+    )
+    .await
+}
+
+/// Inner materialise that writes under an arbitrary `root`. Split out (like
+/// `sweep_browser_transfers_in`) so tests can use an isolated, private
+/// per-test root instead of the shared production
+/// `$TMPDIR/citadel-browser-transfers/` — which other processes (or a stale
+/// pre-upgrade directory) may have left at non-private perms.
+async fn materialize_byte_contents_in(
+    root: &Path,
+    file_name: &str,
+    data: Vec<u8>,
+) -> Result<PathBuf, NetworkError> {
     let safe_name = sanitize_file_name(file_name);
 
     // Each request gets its own UUID-named subdirectory under the shared
@@ -337,29 +429,21 @@ async fn materialize_byte_contents(
     // visible filename, so the receiver sees the original `file_name`
     // rather than a UUID-mangled stem. Per-request isolation also means
     // two simultaneous uploads with the same name cannot collide.
-    let root = std::env::temp_dir().join(BROWSER_TRANSFER_SUBDIR);
     let request_dir = root.join(Uuid::new_v4().to_string());
     let temp_path = request_dir.join(&safe_name);
 
-    let root_for_blocking = root.clone();
+    let root_for_blocking = root.to_path_buf();
     let request_dir_for_blocking = request_dir.clone();
     let temp_path_for_blocking = temp_path.clone();
     let bytes_len = data.len();
 
     let write_result = tokio::task::spawn_blocking(move || {
-        // Secure the shared root before writing through it (see classify_root).
-        match classify_root(&root_for_blocking) {
-            RootState::Safe => {}
-            RootState::Absent => create_private_root(&root_for_blocking)?,
-            RootState::Unsafe(reason) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    format!("refusing insecure browser-transfer root: {reason}"),
-                ));
-            }
-        }
-        std::fs::create_dir_all(&request_dir_for_blocking)?;
-        std::fs::write(&temp_path_for_blocking, &data)
+        // Secure the shared root, then create the per-request subdir (0700)
+        // and write the payload (0600) so the materialised upload is private
+        // end to end (see classify_root / ensure_private_root).
+        ensure_private_root(&root_for_blocking)?;
+        create_private_dir(&request_dir_for_blocking)?;
+        write_private_file(&temp_path_for_blocking, &data)
     })
     .await;
 
@@ -551,7 +635,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
 #[cfg(test)]
 mod tests {
-    use super::{materialize_byte_contents, sanitize_file_name};
+    use super::{materialize_byte_contents_in, sanitize_file_name};
 
     #[test]
     fn sanitize_strips_path_components() {
@@ -623,17 +707,51 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn classify_root_rejects_world_writable_dir() {
+    fn classify_root_rejects_nonprivate_dir() {
         use super::{classify_root, RootState};
         use std::os::unix::fs::PermissionsExt;
 
         let (base, _guard) = isolated_sweep_root("classify_perms");
         std::fs::create_dir_all(&base).expect("create perms base");
-        let permissive = base.join("permissive");
-        std::fs::create_dir_all(&permissive).expect("create permissive dir");
-        std::fs::set_permissions(&permissive, std::fs::Permissions::from_mode(0o777))
-            .expect("chmod 0777");
-        assert!(matches!(classify_root(&permissive), RootState::Unsafe(_)));
+
+        // Every non-private mode is rejected: world-writable (tamper) AND
+        // merely group/other-READABLE (would expose plaintext uploads).
+        for mode in [0o777, 0o755, 0o750, 0o705, 0o770] {
+            let dir = base.join(format!("mode_{mode:o}"));
+            std::fs::create_dir_all(&dir).expect("create dir");
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).expect("chmod");
+            assert!(
+                matches!(classify_root(&dir), RootState::Unsafe(_)),
+                "mode {mode:o} should be rejected as non-private"
+            );
+        }
+
+        // 0700 is the only accepted mode.
+        let private = base.join("private");
+        std::fs::create_dir_all(&private).expect("create private dir");
+        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+        assert!(matches!(classify_root(&private), RootState::Safe));
+    }
+
+    /// A symlink planted at the root path between classify and create must
+    /// not be traversed: `ensure_private_root` uses an exclusive create, so
+    /// it fails closed rather than writing through the attacker's symlink.
+    #[cfg(unix)]
+    #[test]
+    fn ensure_private_root_refuses_planted_symlink() {
+        use super::ensure_private_root;
+
+        let (base, _guard) = isolated_sweep_root("ensure_symlink");
+        std::fs::create_dir_all(&base).expect("create base");
+        let target = base.join("target");
+        std::fs::create_dir_all(&target).expect("create target");
+
+        // Attacker plants a symlink where the root would be created.
+        let root = base.join("root");
+        std::os::unix::fs::symlink(&target, &root).expect("plant symlink");
+
+        let err = ensure_private_root(&root).expect_err("must refuse symlinked root");
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
     }
 
     /// A symlinked sweep root must be left untouched — the sweep must not
@@ -679,8 +797,9 @@ mod tests {
     #[tokio::test]
     async fn materialize_returns_err_when_write_fails() {
         // 300 bytes well exceeds NAME_MAX on every mainstream filesystem.
+        let (root, _guard) = isolated_private_root("materialize_err");
         let overlong = "a".repeat(300);
-        let result = materialize_byte_contents(&overlong, vec![1, 2, 3]).await;
+        let result = materialize_byte_contents_in(&root, &overlong, vec![1, 2, 3]).await;
         assert!(
             result.is_err(),
             "expected IO error for overlong filename, got Ok({:?})",
@@ -694,33 +813,40 @@ mod tests {
     }
 
     /// Happy-path counterpart to `materialize_returns_err_when_write_fails`.
-    /// A reasonable filename and small payload must produce a path inside
-    /// the configured browser-transfer subdir, with the file actually
-    /// present on disk and containing the bytes we asked for.
+    /// A reasonable filename and small payload must produce a path under the
+    /// given root, with the file actually present on disk, containing the
+    /// bytes we asked for, and written with private 0600 perms.
     #[tokio::test]
     async fn materialize_writes_payload_to_temp_path() {
-        let path = materialize_byte_contents("hello.bin", vec![0xDE, 0xAD, 0xBE, 0xEF])
+        let (root, _guard) = isolated_private_root("materialize_ok");
+        let path = materialize_byte_contents_in(&root, "hello.bin", vec![0xDE, 0xAD, 0xBE, 0xEF])
             .await
             .expect("materialize should succeed");
 
-        // Path lives under our isolated subdir.
-        let parent_components: Vec<_> = path
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-            .collect();
+        // Path lives under the root we provided.
         assert!(
-            parent_components
-                .iter()
-                .any(|c| c == super::BROWSER_TRANSFER_SUBDIR),
-            "path {:?} not under {:?}",
-            path,
-            super::BROWSER_TRANSFER_SUBDIR
+            path.starts_with(&root),
+            "path {path:?} not under root {root:?}"
         );
         assert_eq!(path.file_name().and_then(|n| n.to_str()), Some("hello.bin"));
 
         // File on disk has exactly the bytes we wrote.
         let read_back = std::fs::read(&path).expect("read written temp file");
         assert_eq!(read_back, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+
+        // The payload file is private (0600) and its parent dir is 0700.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let file_mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(file_mode, 0o600, "payload file should be 0600");
+            let dir_mode = std::fs::metadata(path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(dir_mode, 0o700, "request dir should be 0700");
+        }
 
         // Best-effort eager cleanup so the test doesn't lean on the
         // 10-minute deferred TTL. Cleanup of the parent dir is what
@@ -743,6 +869,15 @@ mod tests {
         (root.clone(), IsolatedRootGuard(root))
     }
 
+    /// Like `isolated_sweep_root` but eagerly creates the root as a private
+    /// `0700` directory, matching what production creates — required now that
+    /// `classify_root` rejects any non-private root.
+    fn isolated_private_root(label: &str) -> (std::path::PathBuf, IsolatedRootGuard) {
+        let (root, guard) = isolated_sweep_root(label);
+        super::create_private_dir(&root).expect("create private isolated root");
+        (root, guard)
+    }
+
     struct IsolatedRootGuard(std::path::PathBuf);
     impl Drop for IsolatedRootGuard {
         fn drop(&mut self) {
@@ -757,8 +892,7 @@ mod tests {
         use super::sweep_browser_transfers_in;
         use std::time::Duration;
 
-        let (root, _guard) = isolated_sweep_root("preserves_fresh");
-        std::fs::create_dir_all(&root).expect("create isolated sweep root");
+        let (root, _guard) = isolated_private_root("preserves_fresh");
 
         let fresh = root.join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&fresh).expect("create fresh request dir");
@@ -782,8 +916,7 @@ mod tests {
         use super::sweep_browser_transfers_in;
         use std::time::Duration;
 
-        let (root, _guard) = isolated_sweep_root("removes_stale");
-        std::fs::create_dir_all(&root).expect("create isolated sweep root");
+        let (root, _guard) = isolated_private_root("removes_stale");
 
         let stale = root.join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&stale).expect("create stale request dir");

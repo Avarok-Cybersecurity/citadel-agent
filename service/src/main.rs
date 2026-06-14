@@ -3,7 +3,7 @@ use citadel_internal_service::sweep_stale_browser_transfers;
 use citadel_sdk::prelude::{BackendType, NodeBuilder, NodeType, StackedRatchet};
 use std::error::Error;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use structopt::StructOpt;
 
 #[tokio::main]
@@ -111,10 +111,34 @@ fn resolve_backend(opts: &Options) -> Result<BackendType, Box<dyn Error>> {
     )? {
         BackendChoice::InMemory => Ok(BackendType::InMemory),
         BackendChoice::Filesystem(path) => {
-            // Create the directory up front so the SDK doesn't fail on first write.
-            std::fs::create_dir_all(&path)?;
+            // Create the directory up front so the SDK doesn't fail on first
+            // write. The filesystem backend stores sensitive account/node
+            // state, so make it private (0700) rather than umask-default
+            // (typically 0755, world-readable) on multi-user hosts.
+            create_private_data_dir(&path)?;
             Ok(BackendType::Filesystem(path.to_string_lossy().into_owned()))
         }
+    }
+}
+
+/// Create (or tighten) the filesystem-backend data directory as a private
+/// `0700` directory on Unix. Tightening an already-existing directory is safe
+/// because the service owns its own data dir. Falls back to the platform
+/// default elsewhere.
+fn create_private_data_dir(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(path)?;
+        // Tighten even if the directory pre-existed with looser bits.
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(path)
     }
 }
 

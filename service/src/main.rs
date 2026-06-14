@@ -36,6 +36,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Default stays `in-memory` for `tilt`-style ephemeral dev runs.
     let backend = resolve_backend(&opts)?;
 
+    // The in-memory backend is convenient for ephemeral dev runs but silently
+    // disables P2P file transfer (the SDK refuses `SendObject` unless both
+    // peers use a filesystem backend) and loses all account state on restart.
+    // Surface that loudly at startup so an operator who forgot to set
+    // `INTERNAL_SERVICE_BACKEND=filesystem` in production isn't left guessing
+    // why uploads fail.
+    if matches!(backend, BackendType::InMemory) {
+        citadel_sdk::logging::warn!(
+            target: "citadel",
+            "Internal service starting with the IN-MEMORY backend: account state is \
+             ephemeral and P2P file transfer is DISABLED. Set \
+             INTERNAL_SERVICE_BACKEND=filesystem (with INTERNAL_SERVICE_DATA_DIR) to \
+             enable persistence and file transfer."
+        );
+    }
+
     let mut builder = NodeBuilder::default();
     let mut builder = builder.with_backend(backend).with_node_type(NodeType::Peer);
 

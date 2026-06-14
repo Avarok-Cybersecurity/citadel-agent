@@ -838,6 +838,7 @@ dependencies = [
  "citadel_sdk",
  "env_logger",
  "lazy_static",
+ "libc",
  "parking_lot",
  "structopt",
  "tokio 1.49.0",

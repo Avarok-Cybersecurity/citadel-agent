@@ -125,15 +125,50 @@ fn resolve_backend(opts: &Options) -> Result<BackendType, Box<dyn Error>> {
 /// `0700` directory on Unix. Tightening an already-existing directory is safe
 /// because the service owns its own data dir. Falls back to the platform
 /// default elsewhere.
+///
+/// If the path already exists it must be a real directory we own — never a
+/// symlink. Following a pre-planted symlink would make `set_permissions`
+/// chmod (and the SDK then populate) an attacker-controlled target (CWE-59),
+/// redirecting sensitive account/node state.
 fn create_private_data_dir(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(path)?;
-        // Tighten even if the directory pre-existed with looser bits.
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() || !meta.is_dir() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        format!(
+                            "backend data dir {path:?} is a symlink or not a directory; refusing"
+                        ),
+                    ));
+                }
+                let our_euid = unsafe { libc::geteuid() };
+                if meta.uid() != our_euid {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        format!(
+                            "backend data dir {path:?} is owned by uid {} but we are {our_euid}; refusing",
+                            meta.uid()
+                        ),
+                    ));
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Create parents (may be a fresh mount) then the final
+                // component, both at 0700.
+                if let Some(parent) = path.parent() {
+                    std::fs::DirBuilder::new()
+                        .recursive(true)
+                        .mode(0o700)
+                        .create(parent)?;
+                }
+                std::fs::DirBuilder::new().mode(0o700).create(path)?;
+            }
+            Err(e) => return Err(e),
+        }
+        // Tighten an existing (verified real, owned) directory.
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
     }
     #[cfg(not(unix))]

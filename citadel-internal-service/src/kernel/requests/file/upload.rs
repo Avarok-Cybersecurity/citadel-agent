@@ -499,6 +499,35 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     };
     let remote = this.remote().clone();
 
+    // Validate the target session (and peer, if any) BEFORE resolving the
+    // source. Materialising a `ByteContents` payload writes up to 16 MiB to
+    // disk and keeps it for the cleanup TTL; doing that for a bogus `cid`
+    // would let any local client spam the service into a disk-exhaustion DoS
+    // that only fails *after* the write. This is a cheap early reject — the
+    // `send_request` builder below re-checks under its own lock, which also
+    // covers the rare disconnect-between-validation-and-build TOCTOU.
+    {
+        let lock = this.server_connection_map.read();
+        let rejection: Option<&str> = match lock.get(&cid) {
+            None => Some("upload: Server Connection Not Found"),
+            Some(conn) => match peer_cid {
+                Some(pc) if !conn.peers.contains_key(&pc) => Some("Peer Connection Not Found"),
+                _ => None,
+            },
+        };
+        drop(lock);
+        if let Some(message) = rejection {
+            return Some(HandledRequestResult {
+                response: InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
+                    cid,
+                    message: message.to_string(),
+                    request_id: Some(request_id),
+                }),
+                uuid,
+            });
+        }
+    }
+
     // Resolve the source to a filesystem path. For ByteContents, this also
     // schedules the temp-file cleanup (see `materialize_byte_contents`).
     //

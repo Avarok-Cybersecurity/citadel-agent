@@ -171,24 +171,83 @@ fn resolve_backend(opts: &Options) -> Result<BackendType, Box<dyn Error>> {
 /// access to the parent cannot swap the verified directory for a symlink in a
 /// stat→chmod window (the CWE-59 TOCTOU this function guards against).
 ///
-/// ## Parent chain
-/// We deliberately do NOT walk/validate the full ancestor chain nor create it
-/// recursively: the data dir is operator-supplied configuration (CLI flag /
-/// env var), so the operator — or the container volume mount — owns the parent
-/// chain. On first boot we require only the *immediate* parent to already exist
-/// as a real, non-symlink directory and create just the final component
-/// non-recursively at mode 0700, the proportionate CWE-59 mitigation for a
+/// ## Swap-safe immediate parent
+/// The SDK later reopens the data dir BY PATH, so validating the directory
+/// itself is not enough: if the immediate parent is writable by another user,
+/// they can rename/replace the validated dir with a symlink after we return
+/// (CWE-59). We therefore require the immediate parent to be one only we (or
+/// root) can mutate — a real, non-symlink directory owned by our euid or root,
+/// and either not group/world-writable or carrying the sticky bit (which
+/// restricts rename/delete of entries to their owner, so a shared `/tmp`-style
+/// parent is still safe). We deliberately do NOT walk the full ancestor chain
+/// (the operator / volume mount owns it) nor create it recursively; this
+/// immediate-parent check is the proportionate CWE-59 mitigation for a
 /// config-derived (not request-derived) path.
 fn create_private_data_dir(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
         use std::os::unix::io::AsRawFd;
 
-        // Open the directory ITSELF and operate on the fd for every subsequent
-        // check/mutation, so nothing re-resolves the path. `O_NOFOLLOW` makes a
-        // symlink at `path` fail the open with ELOOP; `O_DIRECTORY` makes a
-        // non-directory fail with ENOTDIR. Both surface in the catch-all arm.
+        let our_euid = unsafe { libc::geteuid() };
+
+        // Validate the IMMEDIATE PARENT first — the SDK reopens the data dir by
+        // path later, so a parent another user can write to lets them swap the
+        // validated dir for a symlink after we return (CWE-59). Requiring a
+        // parent only we or root can mutate makes such a swap impossible for the
+        // dir's whole lifetime, covering both the existing-dir and create cases.
+        //
+        // `Path::new("data").parent()` is `Some("")` (empty), NOT `None`, so a
+        // single-component *relative* data dir maps the empty parent to "."
+        // (CWD); otherwise `symlink_metadata("")` would fail and reject a valid
+        // `--data-dir data`. A truly parent-less path (e.g. "/", which always
+        // exists and is handled as an existing dir) yields `None` → "." fallback.
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let pmeta = std::fs::symlink_metadata(parent).map_err(|e| {
+            std::io::Error::new(
+                e.kind(),
+                format!("backend data dir parent {parent:?} must already exist: {e}"),
+            )
+        })?;
+        if pmeta.file_type().is_symlink() || !pmeta.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "backend data dir parent {parent:?} is a symlink or not a directory; refusing"
+                ),
+            ));
+        }
+        if pmeta.uid() != our_euid && pmeta.uid() != 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "backend data dir parent {parent:?} is owned by uid {} (not us {our_euid} or root); \
+                     refusing — another user could swap the data dir for a symlink",
+                    pmeta.uid()
+                ),
+            ));
+        }
+        let pmode = pmeta.permissions().mode();
+        // Group/other-writable is only safe with the sticky bit, which limits
+        // rename/delete of entries to their owner (the `/tmp` model).
+        if pmode & 0o022 != 0 && pmode & 0o1000 == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "backend data dir parent {parent:?} is group/world-writable without the sticky bit \
+                     (mode {:o}); refusing — another user could swap the data dir for a symlink",
+                    pmode & 0o7777
+                ),
+            ));
+        }
+
+        // Parent is swap-safe. Now handle the dir itself. Open it directly with
+        // `O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC` so a symlink at `path` fails the
+        // open (ELOOP) and a non-directory fails (ENOTDIR), and operate on the
+        // returned fd for every check/mutation so nothing re-resolves the path.
         match std::fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC)
@@ -198,7 +257,6 @@ fn create_private_data_dir(path: &Path) -> std::io::Result<()> {
                 // `File::metadata` is `fstat(fd)`: it describes the very inode
                 // we hold open, not whatever the path resolves to now.
                 let meta = dir.metadata()?;
-                let our_euid = unsafe { libc::geteuid() };
                 if meta.uid() != our_euid {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::PermissionDenied,
@@ -215,37 +273,8 @@ fn create_private_data_dir(path: &Path) -> std::io::Result<()> {
                 Ok(())
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // Don't recursively create the parent CHAIN — that would
-                // follow a pre-planted intermediate symlink and populate the
-                // backend under an attacker-controlled target. Require the
-                // immediate parent to already exist (the operator / volume
-                // mount provides it) and be a real, non-symlink directory,
-                // then create ONLY the final component (non-recursive, 0700).
-                //
-                // `Path::new("data").parent()` is `Some("")` (an empty path),
-                // NOT `None`, so a single-component *relative* data dir must map
-                // the empty parent to "." — otherwise `symlink_metadata("")`
-                // fails and the service refuses to start on a perfectly valid
-                // `--data-dir data`. Only a truly parent-less path (e.g. "/",
-                // which always exists and so never reaches this arm) yields
-                // `None`, in which case "." is a harmless fallback.
-                let parent = path
-                    .parent()
-                    .filter(|p| !p.as_os_str().is_empty())
-                    .unwrap_or_else(|| Path::new("."));
-                let pmeta = std::fs::symlink_metadata(parent).map_err(|e| {
-                    std::io::Error::new(
-                        e.kind(),
-                        format!("backend data dir parent {parent:?} must already exist: {e}"),
-                    )
-                })?;
-                if pmeta.file_type().is_symlink() || !pmeta.is_dir() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        format!("backend data dir parent {parent:?} is a symlink or not a directory; refusing"),
-                    ));
-                }
-                // Create the final component already-private. `DirBuilder`'s
+                // Parent already validated as swap-safe above; create ONLY the
+                // final component (non-recursive) already-private. `DirBuilder`'s
                 // mode is only masked by the umask, and 0o700 has no bits in the
                 // umask's usual 0o077 range, so the result is reliably 0700 with
                 // no follow-up chmod — which also avoids a create-then-chmod
@@ -508,6 +537,42 @@ mod tests {
             std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
             0o700,
             "existing data dir should be tightened to 0700"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A data dir whose immediate parent is group/world-writable WITHOUT the
+    /// sticky bit must be refused — another local user could swap the dir for a
+    /// symlink before the SDK reopens it by path (CWE-59). With the sticky bit
+    /// set (the `/tmp` model) the same parent is acceptable, since only an
+    /// entry's owner can rename/delete it.
+    #[cfg(unix)]
+    #[test]
+    fn create_private_data_dir_rejects_world_writable_nonsticky_parent() {
+        use super::create_private_data_dir;
+        use std::os::unix::fs::PermissionsExt;
+        let base =
+            std::env::temp_dir().join(format!("cid-datadir-wwparent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = base.join("data");
+
+        // World-writable, no sticky bit → unsafe parent → refuse.
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let err = create_private_data_dir(&dir)
+            .expect_err("world-writable non-sticky parent must be refused");
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(
+            !dir.exists(),
+            "must not have created the dir under an unsafe parent"
+        );
+
+        // Sticky bit set (like /tmp) → safe parent → accept and create 0700.
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o1777)).unwrap();
+        create_private_data_dir(&dir).expect("sticky world-writable parent should be accepted");
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
         );
         let _ = std::fs::remove_dir_all(&base);
     }

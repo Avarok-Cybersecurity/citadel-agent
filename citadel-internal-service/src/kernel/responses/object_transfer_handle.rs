@@ -39,7 +39,12 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
         let mut server_connection_map = this.server_connection_map.write();
         if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-            let uuid = connection
+            // Resolve the session's CURRENT TCP connection live from the map
+            // (NOT a stale/captured handler value). This is read under the
+            // write lock right before delivery and reflects any ClaimSession
+            // that re-pointed the session — the same pattern peer_channel_
+            // created.rs uses for its one-shot PeerConnectSuccess delivery.
+            let current_tcp_uuid = connection
                 .associated_localhost_connection
                 .load(Ordering::Relaxed);
 
@@ -83,9 +88,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 // already logs a warning when the UUID isn't in the live
                 // map, which surfaces stale-UUID gaps without exfiltrating
                 // payloads to unrelated sessions.
-                if let Err(err) =
-                    send_response_to_tcp_client(&this.tx_to_localhost_clients, response, uuid)
-                {
+                if let Err(err) = send_response_to_tcp_client(
+                    &this.tx_to_localhost_clients,
+                    response,
+                    current_tcp_uuid,
+                ) {
                     warn!(target: "citadel", "[ObjectTransferHandle] Failed to deliver FileTransferRequestNotification for cid={implicated_cid}, peer_cid={peer_cid}: {err:?}");
                 }
             }

@@ -8,3 +8,167 @@ pub mod respond_register;
 
 // Re-export for use by response handlers
 pub use disconnect::{cleanup_state, DisconnectedConnection};
+
+use citadel_internal_service_types::PeerInformation;
+use citadel_sdk::prelude::{
+    NetworkError, NodeRemote, NodeRequest, NodeResult, PeerCommand, PeerInfo, PeerResponse,
+    PeerSignal, Ratchet,
+};
+use futures::StreamExt;
+use std::collections::HashMap;
+
+/// A peer returned by a server peer-list query, paired with its online flag.
+pub(crate) type PeerWithOnline = (PeerInfo, bool);
+
+/// Convert a server `GetMutuals` / `GetRegisteredPeers` reply into a flat peer
+/// list. A `None` response — the server's normal answer when the account has
+/// **zero** registered/mutual peers (a brand-new account, or one whose
+/// registration hasn't been mutually accepted yet) — maps to an empty list.
+pub(crate) fn peers_from_response(response: Option<PeerResponse>) -> Vec<PeerWithOnline> {
+    match response {
+        Some(PeerResponse::RegisteredCids(peer_info, is_onlines)) => peer_info
+            .into_iter()
+            .zip(is_onlines)
+            .filter_map(|(info, online)| info.map(|info| (info, online)))
+            .collect(),
+        // `None`, or any other response variant, means "no peers".
+        _ => Vec::new(),
+    }
+}
+
+/// Send a peer-list `PeerCommand` to the server and drive its callback
+/// subscription to the single terminal reply, returning the peers `matcher`
+/// extracts.
+///
+/// Why this exists instead of the SDK's `get_local_group_mutual_peers` /
+/// `get_local_group_peers`: those helpers loop on the callback stream and only
+/// match `response: Some(PeerResponse::RegisteredCids(..))`. When the account
+/// has no registered/mutual peers the server legitimately replies
+/// `response: None` (`get_hyperlan_peer_list` / `get_registered_impersonal_cids`
+/// return `None` for an empty set), which those loops ignore — so they await the
+/// stream forever and only unblock via the caller's timeout. That hang is why
+/// both list handlers previously wrapped the SDK call in a 5-second `timeout`
+/// and returned an empty list, adding a 5s stall to every discovery poll for any
+/// user without established peers (i.e. every brand-new account). Here the
+/// `matcher` treats the terminal reply — `Some` or `None` — as authoritative and
+/// returns at once.
+pub(crate) async fn query_server_peer_list<R: Ratchet>(
+    remote: &NodeRemote<R>,
+    cid: u64,
+    command: PeerSignal,
+    matcher: impl Fn(NodeResult<R>) -> Option<Vec<PeerWithOnline>>,
+) -> Result<Vec<PeerWithOnline>, NetworkError> {
+    let request = NodeRequest::PeerCommand(PeerCommand {
+        session_cid: cid,
+        command,
+    });
+    let mut stream = remote.send_callback_subscription(request).await?;
+    while let Some(event) = stream.next().await {
+        if let Some(peers) = matcher(event.into_result()?) {
+            return Ok(peers);
+        }
+    }
+    // The subscription closed before any terminal reply (e.g. the C2S link
+    // dropped mid-query). Degrade to "no peers" rather than erroring the UI.
+    Ok(Vec::new())
+}
+
+/// Build the `cid -> PeerInformation` map both list handlers return from a raw
+/// peer list: drop self, and fall back to the registration-time username cache
+/// only when the server supplied an empty/absent username.
+pub(crate) fn build_peer_information_map(
+    session_cid: u64,
+    peers: Vec<PeerWithOnline>,
+    username_cache: &HashMap<(u64, u64), String>,
+) -> HashMap<u64, PeerInformation> {
+    peers
+        .into_iter()
+        .filter(|(info, _)| info.cid != session_cid)
+        .map(|(info, online_status)| {
+            let username = Some(info.username)
+                .filter(|u| !u.is_empty())
+                .or_else(|| username_cache.get(&(session_cid, info.cid)).cloned());
+            (
+                info.cid,
+                PeerInformation {
+                    cid: info.cid,
+                    online_status,
+                    name: Some(info.full_name),
+                    username,
+                },
+            )
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn peer(cid: u64, username: &str, full_name: &str) -> PeerInfo {
+        PeerInfo {
+            cid,
+            username: username.to_string(),
+            full_name: full_name.to_string(),
+        }
+    }
+
+    /// The crux of the discovery-hang fix: the server's `None` reply (the normal
+    /// "zero registered peers" answer for a brand-new account) must map to an
+    /// empty list. The old SDK helper ignored `None` and hung until a 5s
+    /// timeout; here it is just an empty result.
+    #[test]
+    fn none_response_maps_to_empty_list() {
+        assert!(peers_from_response(None).is_empty());
+    }
+
+    /// A populated reply maps peers with their online flags and drops the
+    /// `None` placeholder entries the protocol can include.
+    #[test]
+    fn registered_cids_response_maps_peers_and_drops_none_entries() {
+        let response = Some(PeerResponse::RegisteredCids(
+            vec![
+                Some(peer(2, "bob", "Bob B")),
+                None,
+                Some(peer(3, "carol", "Carol C")),
+            ],
+            vec![true, false, false],
+        ));
+        let peers = peers_from_response(response);
+        assert_eq!(peers.len(), 2, "the None placeholder entry must be dropped");
+        assert_eq!(peers[0].0.cid, 2);
+        assert!(peers[0].1, "bob should be online");
+        assert_eq!(peers[1].0.cid, 3);
+        assert!(!peers[1].1, "carol should be offline");
+    }
+
+    /// The map drops self, preserves real usernames/names, and falls back to the
+    /// registration-time cache only when the server gave an empty username.
+    #[test]
+    fn build_map_filters_self_and_applies_cache_fallback() {
+        let mut cache = HashMap::new();
+        cache.insert((1u64, 4u64), "cached_dave".to_string());
+        let peers = vec![
+            (peer(1, "me", "Me"), true),     // self (cid == session) -> filtered
+            (peer(2, "bob", "Bob B"), true), // normal username
+            (peer(4, "", "Dave D"), false),  // empty username -> cache fallback
+        ];
+        let map = build_peer_information_map(1, peers, &cache);
+
+        assert!(!map.contains_key(&1), "self must be filtered out");
+        assert_eq!(map.len(), 2);
+
+        let bob = map.get(&2).expect("bob present");
+        assert_eq!(bob.username.as_deref(), Some("bob"));
+        assert_eq!(bob.name.as_deref(), Some("Bob B"));
+        assert!(bob.online_status);
+
+        let dave = map.get(&4).expect("dave present");
+        assert_eq!(
+            dave.username.as_deref(),
+            Some("cached_dave"),
+            "empty server username should fall back to the registration cache"
+        );
+        assert!(!dave.online_status);
+    }
+}

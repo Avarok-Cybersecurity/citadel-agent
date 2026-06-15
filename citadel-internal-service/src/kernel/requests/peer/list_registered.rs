@@ -1,14 +1,15 @@
+use crate::kernel::requests::peer::{
+    build_peer_information_map, peers_from_response, query_server_peer_list,
+};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, ListRegisteredPeersFailure,
-    ListRegisteredPeersResponse, PeerInformation,
+    ListRegisteredPeersResponse,
 };
-use citadel_sdk::logging::{error, info, warn};
-use citadel_sdk::prelude::{ProtocolRemoteExt, Ratchet};
-use std::time::Duration;
-use tokio::time::timeout;
+use citadel_sdk::logging::{error, info};
+use citadel_sdk::prelude::{ClientConnectionType, NodeResult, PeerEvent, PeerSignal, Ratchet};
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -25,71 +26,43 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     );
     let remote = this.remote();
 
-    info!(
-        "[ListRegisteredPeers] Calling get_local_group_mutual_peers for cid={}",
-        cid
-    );
-
-    // Add 5 second timeout to prevent SDK call from hanging indefinitely
-    let result = timeout(
-        Duration::from_secs(5),
-        remote.get_local_group_mutual_peers(cid),
-    )
+    // Ask the server for this session's mutually-registered peers. We drive the
+    // callback subscription ourselves (rather than the SDK's
+    // `get_local_group_mutual_peers`) so that the server's `response: None`
+    // reply — the normal "zero registered peers" answer for a new account — is
+    // handled as an empty list instead of hanging the stream until a timeout.
+    // See `query_server_peer_list` for the full rationale.
+    let signal = PeerSignal::GetMutuals {
+        v_conn_type: ClientConnectionType::Server { session_cid: cid },
+        response: None,
+    };
+    let result = query_server_peer_list(remote, cid, signal, |event| {
+        if let NodeResult::PeerEvent(PeerEvent {
+            event: PeerSignal::GetMutuals { response, .. },
+            ..
+        }) = event
+        {
+            Some(peers_from_response(response))
+        } else {
+            None
+        }
+    })
     .await;
 
-    let sdk_result = match result {
-        Ok(inner) => inner,
-        Err(_) => {
-            warn!("[ListRegisteredPeers] TIMEOUT: get_local_group_mutual_peers took >5s for cid={}, returning empty list", cid);
-            // Return empty list on timeout rather than error - this is likely due to no registered peers
-            let peers = ListRegisteredPeersResponse {
-                cid,
-                peers: std::collections::HashMap::new(),
-                request_id: Some(request_id),
-            };
-            let response = InternalServiceResponse::ListRegisteredPeersResponse(peers);
-            return Some(HandledRequestResult { response, uuid });
-        }
-    };
-
-    match sdk_result {
-        Ok(peers) => {
+    match result {
+        Ok(mutuals) => {
             info!(
                 "[ListRegisteredPeers] SUCCESS: Found {} peers for cid={}",
-                peers.len(),
+                mutuals.len(),
                 cid
             );
-
-            // Get cached usernames for fallback
-            let username_cache = this.peer_username_cache.read();
-
-            let peers = ListRegisteredPeersResponse {
-                cid,
-                peers: peers
-                    .clone()
-                    .into_iter()
-                    .filter(|peer| peer.cid != cid)
-                    .map(|peer| {
-                        // Use SDK username, or fall back to cached username from registration
-                        let username = peer
-                            .username
-                            .clone()
-                            .or_else(|| username_cache.get(&(cid, peer.cid)).cloned());
-                        (
-                            peer.cid,
-                            PeerInformation {
-                                cid: peer.cid,
-                                online_status: peer.is_online,
-                                name: peer.full_name,
-                                username,
-                            },
-                        )
-                    })
-                    .collect(),
-                request_id: Some(request_id),
-            };
-
-            let response = InternalServiceResponse::ListRegisteredPeersResponse(peers);
+            let peers = build_peer_information_map(cid, mutuals, &this.peer_username_cache.read());
+            let response =
+                InternalServiceResponse::ListRegisteredPeersResponse(ListRegisteredPeersResponse {
+                    cid,
+                    peers,
+                    request_id: Some(request_id),
+                });
             Some(HandledRequestResult { response, uuid })
         }
 
@@ -105,7 +78,6 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     message: error_msg,
                     request_id: Some(request_id),
                 });
-
             Some(HandledRequestResult { response, uuid })
         }
     }

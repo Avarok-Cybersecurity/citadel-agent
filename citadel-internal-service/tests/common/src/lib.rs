@@ -481,7 +481,7 @@ pub fn server_test_node_skip_cert_verification<'a, K: NetKernel<R> + 'a, R: Ratc
         .with_node_type(NodeType::Server(bind_addr))
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(
-            ServerUnderlyingProtocol::from_std_tcp_listener(tcp_listener).unwrap(),
+            ServerMode::OrderedReliable(NativeOrderedReliableConfig::from_std_listener(tcp_listener).unwrap()),
         );
 
     (opts)(builder);
@@ -506,7 +506,7 @@ pub fn server_test_node_skip_cert_verification_with_password<
         .with_server_password(server_password)
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(
-            ServerUnderlyingProtocol::from_std_tcp_listener(tcp_listener).unwrap(),
+            ServerMode::OrderedReliable(NativeOrderedReliableConfig::from_std_listener(tcp_listener).unwrap()),
         );
 
     (opts)(builder);

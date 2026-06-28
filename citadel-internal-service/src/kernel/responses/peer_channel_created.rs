@@ -131,7 +131,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         Ok(())
     } else {
         error!(target: "citadel", "[PeerChannelCreated] No connection found for session_cid={} in server_connection_map", session_cid);
-        Err(NetworkError::Generic(format!(
+        Err(NetworkError::generic(format!(
             "No connection found for session_cid={} in connection map",
             session_cid
         )))

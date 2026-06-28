@@ -438,7 +438,7 @@ fn send_response_to_tcp_client(
 
     match map.get(&uuid) {
         Some(sender) => sender.send(response).map_err(|err| {
-            NetworkError::Generic(format!("Failed to send response to TCP client: {err:?}"))
+            NetworkError::generic(format!("Failed to send response to TCP client: {err:?}"))
         }),
         None => {
             // Log a warning instead of returning an error that crashes the service

@@ -16,6 +16,16 @@ use citadel_sdk::prelude::{
 };
 use futures::StreamExt;
 use std::collections::HashMap;
+use std::time::Duration;
+
+/// Generous backstop on a peer-list callback subscription. The server replies
+/// to `GetMutuals` / `GetRegisteredPeers` (with `Some` or `None`) within
+/// milliseconds in normal operation, so this only fires if the subscription
+/// genuinely wedges (a protocol stall that never yields the terminal event).
+/// It is far longer than the old 5-second wrapper — that one fired on every
+/// `response: None` (the bug this refactor fixed); this one only bounds a true
+/// hang so discovery can't block forever.
+const PEER_LIST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A peer returned by a server peer-list query, paired with its online flag.
 pub(crate) type PeerWithOnline = (PeerInfo, bool);
@@ -52,6 +62,13 @@ pub(crate) fn peers_from_response(response: Option<PeerResponse>) -> Vec<PeerWit
 /// user without established peers (i.e. every brand-new account). Here the
 /// `matcher` treats the terminal reply — `Some` or `None` — as authoritative and
 /// returns at once.
+///
+/// Liveness: the loop is bounded by `PEER_LIST_TIMEOUT`, and only an explicit
+/// terminal reply yields `Ok` — a genuine "no peers" result is the server's
+/// `response: None` (handled by the matcher → empty `Ok`). A subscription that
+/// closes before replying, or one that wedges past the timeout, returns `Err`
+/// rather than an empty `Ok`, so a dropped link / protocol stall surfaces as a
+/// discovery failure instead of masquerading as "zero peers".
 pub(crate) async fn query_server_peer_list<R: Ratchet>(
     remote: &NodeRemote<R>,
     cid: u64,
@@ -63,14 +80,27 @@ pub(crate) async fn query_server_peer_list<R: Ratchet>(
         command,
     });
     let mut stream = remote.send_callback_subscription(request).await?;
-    while let Some(event) = stream.next().await {
-        if let Some(peers) = matcher(event.into_result()?) {
-            return Ok(peers);
+
+    let drive = async {
+        while let Some(event) = stream.next().await {
+            if let Some(peers) = matcher(event.into_result()?) {
+                return Ok(Some(peers));
+            }
         }
+        // Stream ended without a terminal reply (e.g. the C2S link dropped).
+        Ok(None)
+    };
+
+    match tokio::time::timeout(PEER_LIST_TIMEOUT, drive).await {
+        Ok(Ok(Some(peers))) => Ok(peers),
+        Ok(Ok(None)) => Err(NetworkError::msg(
+            "peer-list subscription closed before a terminal reply (connection dropped?)",
+        )),
+        Ok(Err(e)) => Err(e),
+        Err(_elapsed) => Err(NetworkError::msg(format!(
+            "peer-list query exceeded {PEER_LIST_TIMEOUT:?} with no server reply",
+        ))),
     }
-    // The subscription closed before any terminal reply (e.g. the C2S link
-    // dropped mid-query). Degrade to "no peers" rather than erroring the UI.
-    Ok(Vec::new())
 }
 
 /// Build the `cid -> PeerInformation` map both list handlers return from a raw

@@ -31,18 +31,30 @@ const PEER_LIST_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) type PeerWithOnline = (PeerInfo, bool);
 
 /// Convert a server `GetMutuals` / `GetRegisteredPeers` reply into a flat peer
-/// list. A `None` response — the server's normal answer when the account has
-/// **zero** registered/mutual peers (a brand-new account, or one whose
-/// registration hasn't been mutually accepted yet) — maps to an empty list.
-pub(crate) fn peers_from_response(response: Option<PeerResponse>) -> Vec<PeerWithOnline> {
+/// list.
+///
+/// Only two replies are authoritative for these commands:
+/// * `None` — the server's normal answer when the account has **zero**
+///   registered/mutual peers (a brand-new account, or one whose registration
+///   hasn't been mutually accepted yet) → `Ok([])`.
+/// * `Some(RegisteredCids(..))` — the populated list → `Ok(peers)`.
+///
+/// Any other `Some(..)` variant is a protocol/authorization anomaly (e.g. a
+/// denial), NOT "zero peers": return `Err` so the handler surfaces a failure
+/// rather than masking it as an empty list.
+pub(crate) fn peers_from_response(
+    response: Option<PeerResponse>,
+) -> Result<Vec<PeerWithOnline>, NetworkError> {
     match response {
-        Some(PeerResponse::RegisteredCids(peer_info, is_onlines)) => peer_info
+        None => Ok(Vec::new()),
+        Some(PeerResponse::RegisteredCids(peer_info, is_onlines)) => Ok(peer_info
             .into_iter()
             .zip(is_onlines)
             .filter_map(|(info, online)| info.map(|info| (info, online)))
-            .collect(),
-        // `None`, or any other response variant, means "no peers".
-        _ => Vec::new(),
+            .collect()),
+        Some(_) => Err(NetworkError::msg(
+            "unexpected peer-list response variant (expected RegisteredCids or None)",
+        )),
     }
 }
 
@@ -63,28 +75,33 @@ pub(crate) fn peers_from_response(response: Option<PeerResponse>) -> Vec<PeerWit
 /// `matcher` treats the terminal reply — `Some` or `None` — as authoritative and
 /// returns at once.
 ///
-/// Liveness: the loop is bounded by `PEER_LIST_TIMEOUT`, and only an explicit
-/// terminal reply yields `Ok` — a genuine "no peers" result is the server's
-/// `response: None` (handled by the matcher → empty `Ok`). A subscription that
-/// closes before replying, or one that wedges past the timeout, returns `Err`
-/// rather than an empty `Ok`, so a dropped link / protocol stall surfaces as a
-/// discovery failure instead of masquerading as "zero peers".
+/// Liveness: `PEER_LIST_TIMEOUT` bounds the WHOLE operation — subscription
+/// creation AND the reply loop — so neither a stalled `send_callback_subscription`
+/// nor a wedged stream can hang discovery. Only an explicit terminal reply
+/// yields `Ok`: a genuine "no peers" result is the server's `response: None`
+/// (matcher → `Ok([])`). A subscription that closes before replying, an
+/// unexpected response variant, or a timeout all return `Err`, so a dropped link
+/// / protocol anomaly surfaces as a discovery failure instead of masquerading as
+/// "zero peers". The `matcher` returns `Some(Ok(..))`/`Some(Err(..))` for the
+/// terminal reply and `None` for unrelated events.
 pub(crate) async fn query_server_peer_list<R: Ratchet>(
     remote: &NodeRemote<R>,
     cid: u64,
     command: PeerSignal,
-    matcher: impl Fn(NodeResult<R>) -> Option<Vec<PeerWithOnline>>,
+    matcher: impl Fn(NodeResult<R>) -> Option<Result<Vec<PeerWithOnline>, NetworkError>>,
 ) -> Result<Vec<PeerWithOnline>, NetworkError> {
     let request = NodeRequest::PeerCommand(PeerCommand {
         session_cid: cid,
         command,
     });
-    let mut stream = remote.send_callback_subscription(request).await?;
 
+    // The subscription creation is INSIDE the timeout: a remote that stalls
+    // while setting up the callback would otherwise hang here unbounded.
     let drive = async {
+        let mut stream = remote.send_callback_subscription(request).await?;
         while let Some(event) = stream.next().await {
-            if let Some(peers) = matcher(event.into_result()?) {
-                return Ok(Some(peers));
+            if let Some(result) = matcher(event.into_result()?) {
+                return result.map(Some);
             }
         }
         // Stream ended without a terminal reply (e.g. the C2S link dropped).
@@ -145,11 +162,13 @@ mod tests {
 
     /// The crux of the discovery-hang fix: the server's `None` reply (the normal
     /// "zero registered peers" answer for a brand-new account) must map to an
-    /// empty list. The old SDK helper ignored `None` and hung until a 5s
-    /// timeout; here it is just an empty result.
+    /// empty (and successful) list. The old SDK helper ignored `None` and hung
+    /// until a 5s timeout; here it is just an empty `Ok`.
     #[test]
     fn none_response_maps_to_empty_list() {
-        assert!(peers_from_response(None).is_empty());
+        assert!(peers_from_response(None)
+            .expect("None is a success")
+            .is_empty());
     }
 
     /// A populated reply maps peers with their online flags and drops the
@@ -164,12 +183,21 @@ mod tests {
             ],
             vec![true, false, false],
         ));
-        let peers = peers_from_response(response);
+        let peers = peers_from_response(response).expect("RegisteredCids is a success");
         assert_eq!(peers.len(), 2, "the None placeholder entry must be dropped");
         assert_eq!(peers[0].0.cid, 2);
         assert!(peers[0].1, "bob should be online");
         assert_eq!(peers[1].0.cid, 3);
         assert!(!peers[1].1, "carol should be offline");
+    }
+
+    /// An unexpected `Some(..)` variant (not `RegisteredCids`) is a protocol
+    /// anomaly, not "zero peers" — it must surface as an error so the handler
+    /// returns a failure instead of masking it as an empty list.
+    #[test]
+    fn unexpected_response_variant_is_an_error() {
+        // `PeerResponse::Decline` is a non-RegisteredCids variant.
+        assert!(peers_from_response(Some(PeerResponse::Decline)).is_err());
     }
 
     /// The map drops self, preserves real usernames/names, and falls back to the

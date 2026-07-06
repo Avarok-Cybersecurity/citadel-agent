@@ -83,7 +83,16 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         request_id: None,
                     });
 
-                // Get the current associated TCP connection (may have changed via ClaimSession)
+                // Get the current associated TCP connection (may have
+                // changed via ClaimSession). Send only to that one client —
+                // a previous version broadcast to every live TCP entry as a
+                // workaround for stale-UUID delivery, but that leaked
+                // P2P message content to any other session multiplexed
+                // through the same internal-service process. The single-
+                // TCP-per-browser architecture invariant means the
+                // session's current `associated_localhost_connection` is
+                // the sole authoritative destination; if it isn't in the
+                // live map, ILM is the layer that retries.
                 let server_lock = server_conn_map.read();
                 let current_tcp_uuid = server_lock
                     .get(&session_cid)
@@ -91,17 +100,18 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     .unwrap_or(associated_tcp_connection);
                 drop(server_lock);
 
-                // Forward to TCP client
-                match tcp_connection_map.read().get(&current_tcp_uuid) {
+                let tcp_map = tcp_connection_map.read();
+                match tcp_map.get(&current_tcp_uuid) {
                     Some(entry) => {
                         if let Err(err) = entry.send(notification) {
-                            error!(target: "citadel", "[PeerChannelCreated] Error sending message to client: {err:?}");
+                            error!(target: "citadel", "[PeerChannelCreated] Failed to send MessageNotification to {current_tcp_uuid}: {err:?}");
                         }
                     }
                     None => {
-                        info!(target: "citadel", "[PeerChannelCreated] TCP connection not found for uuid: {}", current_tcp_uuid);
+                        info!(target: "citadel", "[PeerChannelCreated] Target TCP {current_tcp_uuid} not found in live map; relying on ILM redelivery");
                     }
                 }
+                drop(tcp_map);
             }
 
             info!(target: "citadel", "[PeerChannelCreated] P2P read stream ended for session={} from peer={}", session_cid, peer_cid);
@@ -121,7 +131,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         Ok(())
     } else {
         error!(target: "citadel", "[PeerChannelCreated] No connection found for session_cid={} in server_connection_map", session_cid);
-        Err(NetworkError::Generic(format!(
+        Err(NetworkError::generic(format!(
             "No connection found for session_cid={} in connection map",
             session_cid
         )))

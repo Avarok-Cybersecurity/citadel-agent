@@ -631,6 +631,34 @@ pub async fn ensure_messenger_open(cid_str: String) -> Result<bool, JsValue> {
     }
 }
 
+/// Return the message stream to the shared workspace state after a
+/// `next_message` read so the next call can reuse it.
+///
+/// `next_message` takes the stream out and releases the `RwLock` across
+/// `recv().await`, so by the time we get here the workspace may have been torn
+/// down (`close_connection` sets the state to `None`) or replaced (`restart`
+/// installs a fresh state with its own stream) in response to a dropped
+/// WebSocket. In either case our stream is obsolete and is simply dropped: we
+/// only restore it when the slot is still present and empty. The previous code
+/// `.expect("Workspace stream corrupted")`-ed on the `None` case, turning an
+/// ordinary connection drop into a Rust panic (`RuntimeError: unreachable`) in
+/// the WASM client.
+async fn restore_message_stream(
+    stream: citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
+) {
+    let mut guard = get_workspace_state().write().await;
+    let Some(state) = guard.as_mut() else {
+        // Workspace was torn down (`close_connection`) while we awaited the
+        // message; our stream is obsolete, so drop it instead of panicking.
+        return;
+    };
+    // Only restore if no newer stream has replaced ours (e.g. `restart`
+    // installed a fresh state with its own stream while we awaited).
+    if state.stream.is_none() {
+        state.stream.replace(stream);
+    }
+}
+
 #[wasm_bindgen]
 pub async fn next_message() -> Result<JsValue, JsValue> {
     let workspace_state = get_workspace_state();
@@ -643,22 +671,10 @@ pub async fn next_message() -> Result<JsValue, JsValue> {
             drop(guard); // drop the guard to unblock
             if let Some(response) = stream.recv().await {
                 // Convert to JsValue with custom BigInt handling for large CIDs
-                get_workspace_state()
-                    .write()
-                    .await
-                    .as_mut()
-                    .expect("Workspace stream corrupted")
-                    .stream
-                    .replace(stream);
+                restore_message_stream(stream).await;
                 serialize_response(&response)
             } else {
-                get_workspace_state()
-                    .write()
-                    .await
-                    .as_mut()
-                    .expect("Workspace stream corrupted")
-                    .stream
-                    .replace(stream);
+                restore_message_stream(stream).await;
                 Err(JsValue::from_str("Stream closed"))
             }
         } else {

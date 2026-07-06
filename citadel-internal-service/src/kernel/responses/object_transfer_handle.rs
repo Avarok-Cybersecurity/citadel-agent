@@ -1,7 +1,7 @@
 use crate::kernel::{send_response_to_tcp_client, spawn_tick_updater, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{FileTransferRequestNotification, InternalServiceResponse};
-use citadel_sdk::logging::info;
+use citadel_sdk::logging::{info, warn};
 use citadel_sdk::prelude::{
     NetworkError, ObjectTransferHandle, ObjectTransferOrientation, Ratchet,
 };
@@ -39,7 +39,12 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
         let mut server_connection_map = this.server_connection_map.write();
         if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-            let uuid = connection
+            // Resolve the session's CURRENT TCP connection live from the map
+            // (NOT a stale/captured handler value). This is read under the
+            // write lock right before delivery and reflects any ClaimSession
+            // that re-pointed the session — the same pattern peer_channel_
+            // created.rs uses for its one-shot PeerConnectSuccess delivery.
+            let current_tcp_uuid = connection
                 .associated_localhost_connection
                 .load(Ordering::Relaxed);
 
@@ -71,7 +76,25 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
                 drop(server_connection_map);
 
-                send_response_to_tcp_client(&this.tx_to_localhost_clients, response, uuid)?;
+                // Deliver to the TCP connection currently associated with this
+                // session. A previous version broadcast to every live TCP
+                // entry as a workaround for stale-UUID delivery during
+                // ClaimSession races, but that leaked file metadata to any
+                // other session multiplexed through the same internal
+                // service (one IS process can host sessions for multiple
+                // distinct users). The single-TCP-per-browser architecture
+                // invariant means `associated_localhost_connection` is the
+                // sole authoritative target — `send_response_to_tcp_client`
+                // already logs a warning when the UUID isn't in the live
+                // map, which surfaces stale-UUID gaps without exfiltrating
+                // payloads to unrelated sessions.
+                if let Err(err) = send_response_to_tcp_client(
+                    &this.tx_to_localhost_clients,
+                    response,
+                    current_tcp_uuid,
+                ) {
+                    warn!(target: "citadel", "[ObjectTransferHandle] Failed to deliver FileTransferRequestNotification for cid={implicated_cid}, peer_cid={peer_cid}: {err:?}");
+                }
             }
         }
     } else {

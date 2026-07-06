@@ -19,9 +19,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_node = NodeBuilder::<RatchetType>::default()
         .with_node_type(NodeType::Server(server_addr))
         .with_insecure_skip_cert_verification()
-        .with_underlying_protocol(ServerUnderlyingProtocol::from_std_tcp_listener(
-            server_listener,
-        )?)
+        .with_underlying_protocol(ServerMode::OrderedReliable(
+            NativeOrderedReliableConfig::from_std_listener(server_listener)?,
+        ))
         .build(EmptyKernel::default())?;
 
     tokio::task::spawn(async move {

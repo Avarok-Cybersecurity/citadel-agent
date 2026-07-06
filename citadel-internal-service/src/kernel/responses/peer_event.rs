@@ -44,7 +44,7 @@ async fn send_response_with_fallback<T: IOInterface, R: Ratchet>(
     // First, try the target connection directly
     if let Some(sender) = tcp_map.get(&target_uuid) {
         return sender.send(response).map_err(|err| {
-            NetworkError::Generic(format!("Failed to send response to TCP client: {err:?}"))
+            NetworkError::generic(format!("Failed to send response to TCP client: {err:?}"))
         });
     }
 

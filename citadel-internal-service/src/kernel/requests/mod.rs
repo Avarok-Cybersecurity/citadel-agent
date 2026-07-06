@@ -28,7 +28,7 @@ mod message;
 mod register;
 
 mod connection_management;
-mod file;
+pub(crate) mod file;
 mod group;
 mod local_db;
 pub(crate) mod peer;

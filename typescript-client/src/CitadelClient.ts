@@ -9,8 +9,8 @@ import {
     MessageSendSuccess,
     MessageSendFailure,
     MessageNotification
-} from './types';
-import { isResponseType, isVariant } from './type-guards';
+} from './types/index.js';
+import { isResponseType, isVariant } from './type-guards.js';
 import type { ConnectMode, UdpMode, SessionSecuritySettings, PreSharedKey, SecurityLevel } from '@avarok/citadel-protocol-types';
 
 export interface CitadelClientConfig {

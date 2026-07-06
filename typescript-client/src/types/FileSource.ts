@@ -2,6 +2,11 @@
 
 /**
  * Source for file transfer operations.
- * Allows either a direct file path or a reference to a previously picked file.
+ * Allows either a direct file path, a reference to a previously picked file,
+ * or inline byte contents (for browser-selected files).
  */
-export type FileSource = { "Path": string } | { "PickFileRef": { pick_file_request_id: string, } };
+export type FileSource = { "Path": string } | { "PickFileRef": { pick_file_request_id: string, } } | { "ByteContents": { file_name: string,
+/**
+ * Raw payload bytes of the file.
+ */
+data: number[], } };

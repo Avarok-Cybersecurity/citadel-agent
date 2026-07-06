@@ -33,6 +33,11 @@ parking_lot = { workspace = true, optional = true }
 lazy_static = { workspace = true, optional = true }
 env_logger = "0.10"
 
+# Unix-only: effective-uid lookup for verifying ownership of the
+# filesystem-backend data directory (CWE-59 hardening).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [[example]]
 name = "websocket_internal_service"
 path = "src/websocket_example.rs"

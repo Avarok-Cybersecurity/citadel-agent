@@ -3,6 +3,10 @@
 //! This example generates TypeScript types with automatic dependency resolution
 //! and proper import statements by using ts-rs's built-in export functionality.
 
+// Both imports are only used when the `typescript` feature is enabled —
+// gating them avoids `unused_imports` under default features (clippy CI
+// runs with `-D warnings`).
+#[cfg(feature = "typescript")]
 use citadel_internal_service_types::*;
 
 #[cfg(feature = "typescript")]

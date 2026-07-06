@@ -46,7 +46,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
         Ok(())
     } else {
-        Err(NetworkError::Generic(format!(
+        Err(NetworkError::generic(format!(
             "No connection found for cid in connection map: {cid}"
         )))
     }

@@ -324,8 +324,14 @@ pub struct PickFileFailure {
 }
 
 /// Source for file transfer operations.
-/// Allows either a direct file path or a reference to a previously picked file.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+/// Allows either a direct file path, a reference to a previously picked file,
+/// or inline byte contents (for browser-selected files).
+///
+/// NOTE: the `Debug` below is `custom_debug::Debug` (imported at the top of
+/// this module, shadowing `std`'s), written out explicitly here so it's
+/// obvious the `#[debug(with = ...)]` field attribute on `ByteContents.data`
+/// is supported — the std derive would not accept it.
+#[derive(Serialize, Deserialize, custom_debug::Debug, Clone)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
 pub enum FileSource {
@@ -334,6 +340,49 @@ pub enum FileSource {
     /// Reference to a PickFile result stored in the internal service.
     /// The pick_file_request_id is the request_id from the PickFile response.
     PickFileRef { pick_file_request_id: Uuid },
+    /// Inline byte contents from browser File objects.
+    ///
+    /// The internal service writes these to a temp file before sending.
+    ///
+    /// ## Operational cost (WebSocket / JSON path)
+    /// Over the WebSocket transport, payloads are encoded as JSON
+    /// (`serde_json::to_string`), which encodes `Vec<u8>` as a JSON array
+    /// of decimal integers. Each byte typically expands to 2-4 bytes of
+    /// JSON text plus separators, and the browser must construct an
+    /// equivalent JS `number[]` array in memory. Plan on roughly 3-4x
+    /// the raw byte length for transient memory on both sides during a
+    /// single request, in addition to the materialised `Vec<u8>` itself.
+    ///
+    /// The TCP transport uses `bincode2` (binary framing via
+    /// `SerializingCodec`) and does not incur this expansion - a `Vec<u8>`
+    /// is encoded as length-prefix plus raw bytes (~1:1).
+    ///
+    /// ## Size cap
+    /// The handler caps `data.len()` at 16 MiB. This is the practical
+    /// ceiling for the WebSocket/JSON path, where the ~3-4x expansion
+    /// approaches the WS frame limit. TCP can in principle accept
+    /// larger payloads (the bincode2-framed `LengthDelimitedCodec` cap
+    /// is 64 MiB), but the cap is applied uniformly so behaviour does
+    /// not depend on which transport happens to be in use. The
+    /// browser-side workspace UI applies a much stricter cap (a few MiB)
+    /// before invoking this path. Larger uploads should go through the
+    /// native `PickFile` flow, which streams from disk and bypasses both
+    /// the memory blow-up and the JSON-encoding cost.
+    ByteContents {
+        file_name: String,
+        /// Raw payload bytes of the file.
+        // Rust-only (NOT exported by ts-rs — plain `//` comments are
+        // skipped by ts-rs but the triple-slash `///` block above is
+        // emitted into the generated FileSource.ts as JSDoc): the
+        // `bytes_debug_fmt` formatter on the `#[debug]` attribute
+        // prevents the full payload from landing in `{:?}` log
+        // output — without it a single Debug render of
+        // `FileSource::ByteContents` could dump hundreds of MiB into
+        // the log. See `bytes_debug_fmt` earlier in this file.
+        #[debug(with = bytes_debug_fmt)]
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

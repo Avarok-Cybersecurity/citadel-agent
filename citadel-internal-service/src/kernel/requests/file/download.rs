@@ -5,7 +5,9 @@ use citadel_internal_service_types::{
     DownloadFileFailure, DownloadFileSuccess, InternalServiceRequest, InternalServiceResponse,
 };
 use citadel_sdk::logging::error;
-use citadel_sdk::prelude::{NetworkError, NodeRequest, PullObject, Ratchet, TargetLockedRemote};
+use citadel_sdk::prelude::{
+    NetworkError, NodeRequest, PullObject, Ratchet, TargetLockedRemote, VirtualTargetType,
+};
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -33,17 +35,26 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         match lock.get(&cid) {
             Some(conn) => {
                 if let Some(peer_cid) = peer_cid {
-                    if let Some(peer_conn) = conn.peers.get(&peer_cid) {
-                        if let Some(peer_remote) = &peer_conn.remote {
-                            Ok(NodeRequest::PullObject(PullObject {
-                                v_conn: *peer_remote.user(),
-                                virtual_dir: virtual_directory,
-                                delete_on_pull,
-                                transfer_security_level: security_level,
-                            }))
-                        } else {
-                            Err(NetworkError::msg("Peer connection missing remote (acceptor-only connection cannot download files)"))
-                        }
+                    if conn.peers.contains_key(&peer_cid) {
+                        // Construct the VirtualTargetType directly from the
+                        // CID pair rather than dereferencing
+                        // `peer_conn.remote` (which is `None` on the
+                        // acceptor side, blocking acceptor-side downloads
+                        // — same bug as the upload.rs fix in this PR, and
+                        // matching the pattern already used by the sibling
+                        // `delete_virtual_file.rs:36`). This makes
+                        // download symmetric: both initiator and acceptor
+                        // can pull files from the peer once the P2P
+                        // channel is established.
+                        Ok(NodeRequest::PullObject(PullObject {
+                            v_conn: VirtualTargetType::LocalGroupPeer {
+                                session_cid: cid,
+                                peer_cid,
+                            },
+                            virtual_dir: virtual_directory,
+                            delete_on_pull,
+                            transfer_security_level: security_level,
+                        }))
                     } else {
                         Err(NetworkError::msg("Peer Connection Not Found"))
                     }

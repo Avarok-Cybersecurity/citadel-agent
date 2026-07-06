@@ -35,6 +35,12 @@ rfd = { workspace = true, optional = true }
 # Synchronous RwLock to prevent holding locks across await points
 parking_lot = { workspace = true }
 
+# Unix-only: effective-uid lookup for verifying ownership of the
+# browser-transfer temp root (CWE-377 hardening). Already in the
+# dependency tree transitively; declared here for direct use.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 citadel_sdk = { workspace = true, features=["multi-threaded", "localhost-testing"] }
 citadel-internal-service-test-common = { workspace = true }

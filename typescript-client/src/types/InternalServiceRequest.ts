@@ -3,7 +3,23 @@ import type { ConnectMode,UdpMode,SessionSecuritySettings,SecurityLevel,Transfer
 import type { ConfigCommand } from "./ConfigCommand";
 import type { FileSource } from "./FileSource";
 
-export type InternalServiceRequest = { "Connect": { request_id: string, username: string, password: number[], connect_mode: ConnectMode, udp_mode: UdpMode, keep_alive_timeout: { secs: number; nanos: number } | null, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Register": { request_id: string, server_addr: string, full_name: string, username: string, proposed_password: number[], connect_after_register: boolean, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Message": { request_id: string, message: number[], cid: bigint, peer_cid: bigint | null, security_level: SecurityLevel, } } | { "Disconnect": { request_id: string, cid: bigint, } } | { "Deregister": { request_id: string, cid: bigint, } } | { "SendFile": { request_id: string, 
+export type InternalServiceRequest = { "Connect": { request_id: string, username: string, password: number[], connect_mode: ConnectMode, udp_mode: UdpMode, keep_alive_timeout: { secs: number; nanos: number } | null, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Register": { request_id: string, server_addr: string, full_name: string, username: string, proposed_password: number[], connect_after_register: boolean, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Message": { request_id: string, message: number[], cid: bigint, peer_cid: bigint | null, security_level: SecurityLevel, } } | { "Disconnect": { request_id: string, cid: bigint, } } | { "MediaOpen": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "MediaSend": { request_id: string, cid: bigint, peer_cid: bigint, 
+/**
+ * Which stream within the call: audio, main video, or thumbnail video.
+ */
+track: number, 
+/**
+ * 0 = audio, 1 = video. Mirrors citadel_media's TrackKind.
+ */
+kind: number, 
+/**
+ * Capture time in the track's clock rate, used for A/V sync.
+ */
+timestamp: number, 
+/**
+ * Bit 0 = keyframe, bit 1 = discardable under congestion.
+ */
+flags: number, payload: number[], } } | { "MediaClose": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "Deregister": { request_id: string, cid: bigint, } } | { "SendFile": { request_id: string, 
 /**
  * File source - either a direct path or a reference to a PickFile result.
  * Use FileSource::Path for direct file paths, or FileSource::PickFileRef

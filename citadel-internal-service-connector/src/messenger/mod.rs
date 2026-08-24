@@ -1,3 +1,19 @@
+// This module and its children implement intersession_layer_messaging's `Backend`
+// and `Messenger` traits, whose error type is fixed as `BackendError<T>`.
+// `BackendError::SendFailed` carries the whole undelivered message inline, so
+// with T = WrappedMessage the Err variant is ~288 bytes and clippy's
+// result_large_err (128-byte threshold) fires on all 26 methods.
+//
+// Boxing is not available here: the return type is dictated by the trait, so the
+// only way to satisfy the lint is to change ILM's public error enum, which every
+// consumer of that crate would have to follow. That is a far wider change than
+// the lint is worth, and it would not make anything faster — these are async
+// trait methods whose futures are boxed already.
+//
+// Scoped to this module rather than the crate root so a genuinely oversized
+// error elsewhere in the connector still gets caught.
+#![allow(clippy::result_large_err)]
+
 use crate::connector::InternalServiceConnector;
 use crate::io_interface::IOInterface;
 use crate::messenger::backend::CitadelBackendExt;
@@ -44,27 +60,45 @@ pub async fn sleep_internal(duration: Duration) {
     wasmtimer::tokio::sleep(duration).await;
 }
 
+/// The future did not finish inside the allotted time.
+///
+/// A named type rather than `()`: an `Err(())` tells a caller nothing, cannot
+/// carry a message, and cannot implement `std::error::Error`, so every call site
+/// has to invent its own wording for what went wrong.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct TimedOut {
+    pub after: Duration,
+}
+
+impl std::fmt::Display for TimedOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "operation timed out after {:?}", self.after)
+    }
+}
+
+impl std::error::Error for TimedOut {}
+
 /// Platform-agnostic async timeout function
 /// - Native: Uses tokio::time::timeout
 /// - WASM: Uses wasmtimer::tokio::timeout
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn timeout_internal<F, T>(duration: Duration, future: F) -> Result<T, ()>
+pub async fn timeout_internal<F, T>(duration: Duration, future: F) -> Result<T, TimedOut>
 where
     F: Future<Output = T>,
 {
     citadel_io::tokio::time::timeout(duration, future)
         .await
-        .map_err(|_| ())
+        .map_err(|_| TimedOut { after: duration })
 }
 
 #[cfg(target_arch = "wasm32")]
-pub async fn timeout_internal<F, T>(duration: Duration, future: F) -> Result<T, ()>
+pub async fn timeout_internal<F, T>(duration: Duration, future: F) -> Result<T, TimedOut>
 where
     F: Future<Output = T>,
 {
     wasmtimer::tokio::timeout(duration, future)
         .await
-        .map_err(|_| ())
+        .map_err(|_| TimedOut { after: duration })
 }
 
 /// A multiplexer for the InternalServiceConnector that allows for multiple handles

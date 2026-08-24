@@ -192,7 +192,7 @@ mod tests {
         sink.send(register_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::RegisterSuccess(
-            citadel_internal_service_types::RegisterSuccess { request_id: _, .. },
+            citadel_internal_service_types::RegisterSuccess { .. },
         ) = response_packet
         {
             panic!("Received Unexpected RegisterSuccess");
@@ -213,7 +213,7 @@ mod tests {
         sink.send(register_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::RegisterSuccess(
-            citadel_internal_service_types::RegisterSuccess { request_id: _, .. },
+            citadel_internal_service_types::RegisterSuccess { .. },
         ) = response_packet
         {
             panic!("Received Unexpected RegisterSuccess");
@@ -234,7 +234,7 @@ mod tests {
         sink.send(register_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::RegisterSuccess(
-            citadel_internal_service_types::RegisterSuccess { request_id: _, .. },
+            citadel_internal_service_types::RegisterSuccess { .. },
         ) = response_packet
         {
             info!(target: "citadel", "Successfully Registered to Server using Pre-Shared Key");
@@ -598,6 +598,11 @@ mod tests {
         }
     }
 
+    // Nine parameters because this drives BOTH sides of a peer handshake in one
+    // call — each side needs its own sink, stream and cid — plus the pre-shared
+    // key. Splitting the sides into a struct would only move the same nine
+    // values behind a name that exists for the lint's benefit.
+    #[allow(clippy::too_many_arguments)]
     async fn peer_connect_psk_attempt(
         peer_a_sink: &mut UnboundedSender<InternalServiceRequest>,
         peer_a_stream: &mut UnboundedReceiver<InternalServiceResponse>,

@@ -10,6 +10,9 @@ crate-type = ["cdylib"]
 citadel-internal-service-connector = { workspace = true, features = ["js"]}
 citadel-internal-service-types = { workspace = true }
 citadel_io = { workspace = true, default-features = false }
+# v4 needs a randomness source; on wasm32 that is the JS crypto API, which the
+# "js" feature of getrandom (pulled in transitively) provides.
+uuid = { workspace = true }
 
 # WASM bindings
 wasm-bindgen = "0.2"

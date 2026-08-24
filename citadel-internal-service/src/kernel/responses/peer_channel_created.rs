@@ -57,7 +57,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             // may carry a DIFFERENT channel that also needs its stream consumed.
         }
 
-        // Always add/update the peer connection - insert() replaces existing entries
+        // Upserts in place: the sink is refreshed, but a live media session and
+        // its UDP transport survive — a blind insert here used to drop the
+        // existing entry, whose Drop aborted a mid-call inbound media pump.
         connection.add_peer_connection_channel_only(peer_cid, sink, udp_rx);
         info!(target: "citadel", "[PeerChannelCreated] {} peer {} to session {} (channel only). Total peers: {}",
             if peer_existed { "Updated" } else { "Added" },

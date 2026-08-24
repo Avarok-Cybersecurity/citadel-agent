@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
-use crate::kernel::media::MediaSession;
+use crate::kernel::media::{PeerMediaSession, UdpState};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot::Receiver as OneshotReceiver;
 use uuid::Uuid;
@@ -190,20 +190,22 @@ pub struct PeerConnection<R: Ratchet> {
     remote: Option<PeerRemote<R>>,
     handler_map: HashMap<ObjectId, Option<ObjectTransferHandler>>,
     associated_localhost_connection: Arc<AtomicUuid>,
-    /// The session's UDP channel, held until a call claims it.
-    ///
-    /// It arrives once, with the peer channel, and is consumed by the first
-    /// MediaOpen. Kept here rather than opened eagerly because most peer
-    /// connections never carry a call, and a pump task per peer would cost
-    /// memory for nothing.
-    pub udp_rx: Option<OneshotReceiver<UdpChannel<R>>>,
+    /// Where this peer's UDP transport currently lives. The SDK delivers the
+    /// channel at most once per peer connection, so media sessions borrow the
+    /// halves through this state machine and return them on close — consuming
+    /// them would make every call after the first impossible.
+    pub udp: UdpState<R>,
     /// The live call with this peer, if any. Dropping it stops the inbound pump.
     ///
     /// Boxed because a MediaSession carries the packetizer's 256-entry
     /// per-track sequence table — over a kilobyte — and this struct is stored
     /// per peer whether or not there is ever a call. Inline, every peer paid for
     /// a call almost none of them make.
-    pub media: Option<Box<MediaSession>>,
+    pub media: Option<Box<PeerMediaSession<R>>>,
+    /// Bumped by every media close/teardown. An open that had to await captures
+    /// this first and refuses to install its session if the value moved, so a
+    /// close landing mid-open wins instead of leaving a zombie session.
+    pub media_generation: u64,
 }
 
 #[allow(dead_code)]
@@ -241,17 +243,7 @@ impl<R: Ratchet> Connection<R> {
         remote: PeerRemote<R>,
         udp_rx: Option<OneshotReceiver<UdpChannel<R>>>,
     ) {
-        self.peers.insert(
-            peer_cid,
-            PeerConnection {
-                sink: Arc::new(tokio::sync::Mutex::new(sink)),
-                remote: Some(remote),
-                handler_map: HashMap::new(),
-                associated_localhost_connection: self.associated_localhost_connection.clone(),
-                udp_rx,
-                media: None,
-            },
-        );
+        self.upsert_peer_connection(peer_cid, sink, Some(remote), udp_rx);
     }
 
     /// Add a peer connection without a PeerRemote (for acceptor-side channels)
@@ -261,17 +253,51 @@ impl<R: Ratchet> Connection<R> {
         sink: PeerChannelSendHalf<R>,
         udp_rx: Option<OneshotReceiver<UdpChannel<R>>>,
     ) {
-        self.peers.insert(
-            peer_cid,
-            PeerConnection {
-                sink: Arc::new(tokio::sync::Mutex::new(sink)),
-                remote: None,
-                handler_map: HashMap::new(),
-                associated_localhost_connection: self.associated_localhost_connection.clone(),
-                udp_rx,
-                media: None,
-            },
-        );
+        self.upsert_peer_connection(peer_cid, sink, None, udp_rx);
+    }
+
+    /// Insert-or-update. On update the fresh sink replaces the stale one, but a
+    /// live media session and its UDP transport survive: blind `insert` used to
+    /// replace the whole entry on duplicate PeerChannelCreated events or mid-call
+    /// re-handshakes, and the replaced entry's Drop aborted the call's inbound
+    /// pump — silently destroying a working call.
+    fn upsert_peer_connection(
+        &mut self,
+        peer_cid: u64,
+        sink: PeerChannelSendHalf<R>,
+        remote: Option<PeerRemote<R>>,
+        udp_rx: Option<OneshotReceiver<UdpChannel<R>>>,
+    ) {
+        match self.peers.entry(peer_cid) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let peer = entry.get_mut();
+                peer.sink = Arc::new(tokio::sync::Mutex::new(sink));
+                if remote.is_some() {
+                    peer.remote = remote;
+                }
+                // A fresh UDP offer is adopted only between calls: a live call
+                // keeps the transport it is using, and an open mid-await keeps
+                // its `Opening` marker so its commit logic stays single-owner.
+                if peer.media.is_none() && !matches!(peer.udp, UdpState::Opening) {
+                    if let Some(rx) = udp_rx {
+                        peer.udp = UdpState::Pending(rx);
+                    }
+                }
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(PeerConnection {
+                    sink: Arc::new(tokio::sync::Mutex::new(sink)),
+                    remote,
+                    handler_map: HashMap::new(),
+                    associated_localhost_connection: self
+                        .associated_localhost_connection
+                        .clone(),
+                    udp: UdpState::from_optional_channel(udp_rx),
+                    media: None,
+                    media_generation: 0,
+                });
+            }
+        }
     }
 
     #[allow(dead_code)]

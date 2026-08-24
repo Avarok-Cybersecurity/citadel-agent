@@ -1,9 +1,19 @@
 //! Media session request handlers: open, send, close.
 //!
 //! The transport itself lives in `kernel::media`; this is the request plumbing
-//! that owns the session's lifetime inside a peer connection.
+//! that owns the session's lifetime inside a peer connection. The invariant
+//! all three handlers protect: the peer's UDP halves are issued once per
+//! connection, so they are lent to sessions and re-parked on close, never
+//! consumed. `media_generation` arbitrates open/close races — every close bumps
+//! it, and an open that awaited must see its captured value unchanged before it
+//! may install a session.
 
-use crate::kernel::media::MediaSession;
+mod commit;
+mod open;
+
+pub use open::handle_open;
+
+use crate::kernel::media::{self, UdpState};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -12,10 +22,15 @@ use citadel_internal_service_types::{
     MediaSessionOpened,
 };
 use citadel_sdk::logging::info;
-use citadel_sdk::prelude::Ratchet;
+use citadel_sdk::prelude::{PeerChannelRecvHalf, Ratchet};
 use uuid::Uuid;
 
-fn failed(cid: u64, peer_cid: u64, request_id: Uuid, message: String) -> InternalServiceResponse {
+pub(crate) fn failed(
+    cid: u64,
+    peer_cid: u64,
+    request_id: Uuid,
+    message: String,
+) -> InternalServiceResponse {
     InternalServiceResponse::MediaSessionFailed(MediaSessionFailed {
         cid,
         peer_cid,
@@ -24,110 +39,14 @@ fn failed(cid: u64, peer_cid: u64, request_id: Uuid, message: String) -> Interna
     })
 }
 
-pub async fn handle_open<T: IOInterface, R: Ratchet>(
-    this: &CitadelWorkspaceService<T, R>,
-    uuid: Uuid,
-    request: InternalServiceRequest,
-) -> Option<HandledRequestResult> {
-    let InternalServiceRequest::MediaOpen {
-        request_id,
+pub(crate) fn opened(cid: u64, peer_cid: u64, request_id: Uuid) -> InternalServiceResponse {
+    InternalServiceResponse::MediaSessionOpened(MediaSessionOpened {
         cid,
         peer_cid,
-    } = request
-    else {
-        unreachable!("Should never happen if programmed properly")
-    };
-
-    // Take the UDP receiver out from under the lock and release it before
-    // awaiting. Holding the map's write guard across the await would stall every
-    // other session while this one waits up to five seconds for a UDP channel.
-    let udp_rx = {
-        let mut map = this.server_connection_map.write();
-        match map.get_mut(&cid).and_then(|conn| conn.peers.get_mut(&peer_cid)) {
-            Some(peer) => {
-                if peer.media.is_some() {
-                    // Idempotent rather than an error: both sides of a call can
-                    // race to open, and re-opening would drop the live pump and
-                    // silence the call that is already working.
-                    info!(target: "citadel", "[Media] session already open cid={cid} peer_cid={peer_cid}");
-                    return Some(HandledRequestResult {
-                        response: InternalServiceResponse::MediaSessionOpened(MediaSessionOpened {
-                            cid,
-                            peer_cid,
-                            unreliable: true,
-                            max_frame_bytes: MediaSession::max_frame_bytes(),
-                            request_id: Some(request_id),
-                        }),
-                        uuid,
-                    });
-                }
-                peer.udp_rx.take()
-            }
-            None => {
-                return Some(HandledRequestResult {
-                    response: failed(
-                        cid,
-                        peer_cid,
-                        request_id,
-                        format!("no peer connection to {peer_cid}; connect before starting a call"),
-                    ),
-                    uuid,
-                })
-            }
-        }
-    };
-
-    let Some(udp_rx) = udp_rx else {
-        return Some(HandledRequestResult {
-            response: failed(
-                cid,
-                peer_cid,
-                request_id,
-                "this peer connection has no UDP channel, so it was established with UdpMode \
-                 disabled; reconnect to the peer with UDP enabled to place a call"
-                    .to_string(),
-            ),
-            uuid,
-        });
-    };
-
-    let to_client = this.tx_to_localhost_clients.read().get(&uuid).cloned();
-    let Some(to_client) = to_client else {
-        return Some(HandledRequestResult {
-            response: failed(cid, peer_cid, request_id, "client is gone".to_string()),
-            uuid,
-        });
-    };
-
-    let response = match MediaSession::open(udp_rx, cid, peer_cid, to_client).await {
-        Ok(session) => {
-            let mut map = this.server_connection_map.write();
-            match map.get_mut(&cid).and_then(|conn| conn.peers.get_mut(&peer_cid)) {
-                Some(peer) => {
-                    peer.media = Some(Box::new(session));
-                    InternalServiceResponse::MediaSessionOpened(MediaSessionOpened {
-                        cid,
-                        peer_cid,
-                        unreliable: true,
-                        max_frame_bytes: MediaSession::max_frame_bytes(),
-                        request_id: Some(request_id),
-                    })
-                }
-                // The peer disconnected while we waited for the UDP channel.
-                // Dropping `session` here stops its pump, which is why it is not
-                // leaked by this path.
-                None => failed(
-                    cid,
-                    peer_cid,
-                    request_id,
-                    "peer disconnected while the media session was opening".to_string(),
-                ),
-            }
-        }
-        Err(e) => failed(cid, peer_cid, request_id, e.to_string()),
-    };
-
-    Some(HandledRequestResult { response, uuid })
+        unreliable: true,
+        max_frame_bytes: media::MAX_FRAME_BYTES,
+        request_id: Some(request_id),
+    })
 }
 
 pub async fn handle_send<T: IOInterface, R: Ratchet>(
@@ -149,32 +68,31 @@ pub async fn handle_send<T: IOInterface, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
 
-    // Deliberately synchronous and lock-scoped: packetizing writes to per-track
-    // sequence counters, and the send is a non-blocking queue push. There is no
-    // await here, so the guard cannot be held across one.
-    let result = {
-        let mut map = this.server_connection_map.write();
-        match map
-            .get_mut(&cid)
-            .and_then(|conn| conn.peers.get_mut(&peer_cid))
-            .and_then(|peer| peer.media.as_mut())
-        {
-            Some(session) => session.send_frame(track, kind, timestamp, flags, payload),
-            None => {
-                return Some(HandledRequestResult {
-                    response: failed(
-                        cid,
-                        peer_cid,
-                        request_id,
-                        "no media session with this peer; open one before sending frames"
-                            .to_string(),
-                    ),
-                    uuid,
-                })
-            }
-        }
+    // Frames arrive 30-60 times a second per sender; taking the global write
+    // lock for each one made every frame contend with every other handler.
+    // Instead, a read lock fetches the session's outbound handle, and the
+    // per-session mutex serializes only the packetizer. No await under either.
+    let outbound = {
+        let map = this.server_connection_map.read();
+        map.get(&cid)
+            .and_then(|conn| conn.peers.get(&peer_cid))
+            .and_then(|peer| peer.media.as_ref())
+            .map(|session| session.outbound())
     };
 
+    let Some(outbound) = outbound else {
+        return Some(HandledRequestResult {
+            response: failed(
+                cid,
+                peer_cid,
+                request_id,
+                "no media session with this peer; open one before sending frames".to_string(),
+            ),
+            uuid,
+        });
+    };
+
+    let result = outbound.lock().send_frame(track, kind, timestamp, flags, payload);
     match result {
         // Frames are fire-and-forget: acknowledging every one would put a
         // response on the wire per frame — tens per second per track — for
@@ -201,17 +119,26 @@ pub async fn handle_close<T: IOInterface, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
 
-    {
+    let session = {
         let mut map = this.server_connection_map.write();
-        if let Some(peer) = map
-            .get_mut(&cid)
+        map.get_mut(&cid)
             .and_then(|conn| conn.peers.get_mut(&peer_cid))
-        {
-            // Dropping the session aborts its inbound pump and releases the UDP
-            // halves. The peer connection itself stays up — ending a call must
-            // not end the conversation.
-            peer.media = None;
-        }
+            .and_then(|peer| {
+                // Bumped even when no session exists yet: an open may be
+                // mid-await, and without this it would install a session into a
+                // call the client just ended (a zombie pump streaming frames
+                // forever). The open compares generations before committing.
+                peer.media_generation += 1;
+                peer.media.take()
+            })
+    };
+
+    if let Some(session) = session {
+        // The peer connection itself stays up — ending a call must not end the
+        // conversation. The recovered receive half is re-parked so the NEXT
+        // call on this connection can open (the SDK offers the channel once).
+        let recovered = session.close().await;
+        park_recovered_receive_half(this, cid, peer_cid, recovered);
     }
 
     info!(target: "citadel", "[Media] session closed cid={cid} peer_cid={peer_cid}");
@@ -223,4 +150,29 @@ pub async fn handle_close<T: IOInterface, R: Ratchet>(
         }),
         uuid,
     })
+}
+
+/// Re-parks the receive half recovered from a closed session next to the send
+/// half retained in `UdpState::Lent`, restoring `Idle` for the next call.
+pub(crate) fn park_recovered_receive_half<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    cid: u64,
+    peer_cid: u64,
+    recovered: Option<PeerChannelRecvHalf<R>>,
+) {
+    let mut map = this.server_connection_map.write();
+    // Peer gone: dropping the half tears down a UDP path nobody can use anyway.
+    let Some(peer) = map.get_mut(&cid).and_then(|conn| conn.peers.get_mut(&peer_cid)) else {
+        return;
+    };
+    if let UdpState::Lent { tx } = &peer.udp {
+        peer.udp = match recovered {
+            Some(rx) => UdpState::Idle { tx: tx.clone(), rx },
+            // The pump saw the UDP stream end; there is no path left to lend.
+            None => UdpState::Unavailable,
+        };
+    }
+    // Any other state means a fresh handshake replaced the transport while the
+    // session was closing; the recovered half belongs to the old path and is
+    // correctly dropped here.
 }

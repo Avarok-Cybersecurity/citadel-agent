@@ -758,6 +758,54 @@ pub async fn send_p2p_message_reliable(
     }
 }
 
+/// Send one encoded media frame to a peer.
+///
+/// A dedicated binding rather than send_direct_to_internal_service, purely for
+/// the hot path: frames arrive 30-60 times a second per track, and routing each
+/// through a JsValue and serde-wasm-bindgen would deserialize a whole request
+/// object — payload included — per frame. This takes the bytes directly and
+/// builds the request in Rust.
+///
+/// Fire-and-forget by design. There is no ack to wait for; a frame that cannot
+/// be queued is a frame worth dropping, because by the time a retry arrived it
+/// would be too late to play.
+#[wasm_bindgen]
+pub fn send_media_frame(
+    local_cid_str: String,
+    peer_cid_str: String,
+    track: u8,
+    kind: u8,
+    timestamp: u32,
+    flags: u8,
+    payload: Vec<u8>,
+) -> Result<(), JsValue> {
+    let local_cid: u64 = local_cid_str
+        .parse()
+        .map_err(|e| JsValue::from_str(&format!("Invalid local CID format: {}", e)))?;
+    let peer_cid: u64 = peer_cid_str
+        .parse()
+        .map_err(|e| JsValue::from_str(&format!("Invalid peer CID format: {}", e)))?;
+
+    let request = InternalServiceRequest::MediaSend {
+        request_id: uuid::Uuid::new_v4(),
+        cid: local_cid,
+        peer_cid,
+        track,
+        kind,
+        timestamp,
+        flags,
+        payload,
+    };
+
+    let Some(sink_tx) = SINK_CHANNEL.get() else {
+        return Err(JsValue::from_str("Client not properly initialized"));
+    };
+
+    sink_tx
+        .send(InternalServicePayload::Request(request))
+        .map_err(|e| JsValue::from_str(&format!("Failed to send media frame: {}", e)))
+}
+
 #[wasm_bindgen]
 pub async fn send_direct_to_internal_service(message: JsValue) -> Result<(), JsValue> {
     // Note: Verbose logging removed to reduce console noise

@@ -9,34 +9,9 @@
     "src/**/*",
     "dist/**/*"
   ],
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
-  },
-  "scripts": {
-    "build": "tsc",
-    "clean": "rm -rf dist",
-    "test": "tsc && node --test \"dist/**/*.test.js\""
-  },
+  "main": "src/index.ts",
+  "types": "src/index.ts",
   "sideEffects": [
     "./snippets/*"
-  ],
-  "dependencies": {
-    "@avarok/citadel-protocol-types": "^0.14.0",
-    "ws": "^8.0.0",
-    "uuid": "^9.0.0"
-  },
-  "devDependencies": {
-    "typescript": "^5.0.0",
-    "@types/node": "^20.0.0",
-    "@types/ws": "^8.0.0",
-    "@types/uuid": "^9.0.0"
-  }
+  ]
 }

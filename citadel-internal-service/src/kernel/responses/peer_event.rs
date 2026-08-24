@@ -80,7 +80,6 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     session_cid,
                     peer_cid,
                 },
-            disconnect_response: _,
             ..
         } => {
             // SDK is source of truth - clean up P2P peer state to mirror SDK

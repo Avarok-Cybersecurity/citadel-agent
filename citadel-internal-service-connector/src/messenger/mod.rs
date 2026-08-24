@@ -309,8 +309,12 @@ where
         #[cfg(not(target_arch = "wasm32"))]
         drop(citadel_io::tokio::task::spawn(task));
 
+        // No `drop(..)` here, unlike the native branch above: `spawn` returns a
+        // JoinHandle that is deliberately discarded to detach the task, whereas
+        // `spawn_local` returns `()`, so wrapping it read as if a handle were
+        // being released when there was nothing to release.
         #[cfg(target_arch = "wasm32")]
-        drop(wasm_bindgen_futures::spawn_local(task));
+        wasm_bindgen_futures::spawn_local(task);
 
         Ok(handle)
     }
@@ -927,6 +931,12 @@ where
 {
     ism_to_background_outbound: UnboundedSender<InternalMessage>,
     ism_from_background_inbound: Mutex<UnboundedReceiver<InternalMessage>>,
+    /// Read by the native `connected_peers` impl. The wasm32 impl asks
+    /// TypeScript for the peer list instead and never touches this, so the field
+    /// is genuinely dead on that target and only that one — hence a
+    /// target-scoped allow rather than a blanket one. Do not delete it: the
+    /// native build needs it.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     messenger_ptr: CitadelWorkspaceMessenger<B>,
     stream_key: StreamKey,
 }

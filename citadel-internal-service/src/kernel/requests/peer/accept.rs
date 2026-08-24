@@ -70,7 +70,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     {
         let pending = this.pending_peer_connect_signals.read();
         info!(target: "citadel", "[PeerConnectAccept] Current pending signals count: {}", pending.len());
-        for (key, _) in pending.iter() {
+        for key in pending.keys() {
             info!(target: "citadel", "[PeerConnectAccept]   - Pending signal key: (cid={}, peer_cid={})", key.0, key.1);
         }
     }

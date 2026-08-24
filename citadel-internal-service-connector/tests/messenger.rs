@@ -365,7 +365,6 @@ mod tests {
         Ok(())
     }
 
-
     /// Wait for a MessageNotification from `from_peer` carrying `payload`,
     /// ignoring anything else that arrives first.
     ///

@@ -127,7 +127,7 @@ pub async fn register_and_connect_to_server<
         let response_packet = stream.next().await.unwrap();
 
         if let InternalServiceResponse::RegisterSuccess(
-            citadel_internal_service_types::RegisterSuccess { request_id: _, .. },
+            citadel_internal_service_types::RegisterSuccess { .. },
         ) = response_packet
         {
             info!(

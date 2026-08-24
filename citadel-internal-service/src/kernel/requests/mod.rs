@@ -24,6 +24,7 @@ mod deregister;
 mod disconnect;
 mod get_account_information;
 mod get_sessions;
+mod media;
 mod message;
 mod register;
 
@@ -53,6 +54,10 @@ where
         InternalServiceRequest::Connect { .. } => connect::handle(this, uuid, command).await,
         InternalServiceRequest::Register { .. } => register::handle(this, uuid, command).await,
         InternalServiceRequest::Message { .. } => message::handle(this, uuid, command).await,
+
+        InternalServiceRequest::MediaOpen { .. } => media::handle_open(this, uuid, command).await,
+        InternalServiceRequest::MediaSend { .. } => media::handle_send(this, uuid, command).await,
+        InternalServiceRequest::MediaClose { .. } => media::handle_close(this, uuid, command).await,
 
         InternalServiceRequest::Disconnect { .. } => disconnect::handle(this, uuid, command).await,
 

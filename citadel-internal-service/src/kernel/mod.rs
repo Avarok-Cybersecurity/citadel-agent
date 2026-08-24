@@ -25,9 +25,12 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
+use crate::kernel::media::MediaSession;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::oneshot::Receiver as OneshotReceiver;
 use uuid::Uuid;
 
+pub(crate) mod media;
 pub(crate) mod ext;
 pub(crate) mod requests;
 pub(crate) mod responses;
@@ -187,6 +190,20 @@ pub struct PeerConnection<R: Ratchet> {
     remote: Option<PeerRemote<R>>,
     handler_map: HashMap<ObjectId, Option<ObjectTransferHandler>>,
     associated_localhost_connection: Arc<AtomicUuid>,
+    /// The session's UDP channel, held until a call claims it.
+    ///
+    /// It arrives once, with the peer channel, and is consumed by the first
+    /// MediaOpen. Kept here rather than opened eagerly because most peer
+    /// connections never carry a call, and a pump task per peer would cost
+    /// memory for nothing.
+    pub udp_rx: Option<OneshotReceiver<UdpChannel<R>>>,
+    /// The live call with this peer, if any. Dropping it stops the inbound pump.
+    ///
+    /// Boxed because a MediaSession carries the packetizer's 256-entry
+    /// per-track sequence table — over a kilobyte — and this struct is stored
+    /// per peer whether or not there is ever a call. Inline, every peer paid for
+    /// a call almost none of them make.
+    pub media: Option<Box<MediaSession>>,
 }
 
 #[allow(dead_code)]
@@ -222,6 +239,7 @@ impl<R: Ratchet> Connection<R> {
         peer_cid: u64,
         sink: PeerChannelSendHalf<R>,
         remote: PeerRemote<R>,
+        udp_rx: Option<OneshotReceiver<UdpChannel<R>>>,
     ) {
         self.peers.insert(
             peer_cid,
@@ -230,6 +248,8 @@ impl<R: Ratchet> Connection<R> {
                 remote: Some(remote),
                 handler_map: HashMap::new(),
                 associated_localhost_connection: self.associated_localhost_connection.clone(),
+                udp_rx,
+                media: None,
             },
         );
     }
@@ -239,6 +259,7 @@ impl<R: Ratchet> Connection<R> {
         &mut self,
         peer_cid: u64,
         sink: PeerChannelSendHalf<R>,
+        udp_rx: Option<OneshotReceiver<UdpChannel<R>>>,
     ) {
         self.peers.insert(
             peer_cid,
@@ -247,6 +268,8 @@ impl<R: Ratchet> Connection<R> {
                 remote: None,
                 handler_map: HashMap::new(),
                 associated_localhost_connection: self.associated_localhost_connection.clone(),
+                udp_rx,
+                media: None,
             },
         );
     }

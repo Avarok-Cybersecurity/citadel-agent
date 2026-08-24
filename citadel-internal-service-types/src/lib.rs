@@ -199,6 +199,93 @@ pub struct MessageNotification {
     pub request_id: Option<Uuid>,
 }
 
+/// A media session is live and frames may now be sent.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct MediaSessionOpened {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub peer_cid: u64,
+    /// True when frames travel over UDP. False means the peer connected without
+    /// UdpMode Enabled and there is no datagram path — the caller should tell
+    /// the user the call cannot start rather than silently sending nothing.
+    pub unreliable: bool,
+    /// Largest frame the transport will accept, so the encoder can be capped to
+    /// something that will actually fit rather than failing per frame.
+    pub max_frame_bytes: u32,
+    pub request_id: Option<Uuid>,
+}
+
+/// A media session could not be opened. Carries why, because "call failed" with
+/// no reason is the least actionable thing a user can be told.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct MediaSessionFailed {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub peer_cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct MediaSessionClosed {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub peer_cid: u64,
+    pub request_id: Option<Uuid>,
+}
+
+/// One decoded-ready media frame, reassembled and released in order.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct MediaFrameNotification {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub peer_cid: u64,
+    pub track: u8,
+    pub kind: u8,
+    pub sequence: u32,
+    pub timestamp: u32,
+    pub flags: u8,
+    #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[debug(with = bytes_debug_fmt)]
+    pub payload: Vec<u8>,
+    /// Always None: frames are unsolicited, and like MessageNotification they are
+    /// routed to the right tab by `cid`, never by the request that started the
+    /// call. The field exists because every response variant carries one.
+    pub request_id: Option<Uuid>,
+}
+
+/// Frames were lost and the buffer has moved past them.
+///
+/// Reported rather than hidden: a video decoder that has missed frames produces
+/// garbage until the next keyframe, so the receiver needs this to know it should
+/// ask for one instead of rendering corruption.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct MediaGapNotification {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub peer_cid: u64,
+    pub track: u8,
+    pub missing_from: u32,
+    pub missing_to: u32,
+    /// Always None; routed by `cid`, as above.
+    pub request_id: Option<Uuid>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
@@ -1121,6 +1208,11 @@ pub enum InternalServiceResponse {
     MessageSendSuccess(MessageSendSuccess),
     MessageSendFailure(MessageSendFailure),
     MessageNotification(MessageNotification),
+    MediaSessionOpened(MediaSessionOpened),
+    MediaSessionFailed(MediaSessionFailed),
+    MediaSessionClosed(MediaSessionClosed),
+    MediaFrameNotification(MediaFrameNotification),
+    MediaGapNotification(MediaGapNotification),
     DisconnectNotification(DisconnectNotification),
     DisconnectFailure(DisconnectFailure),
     DeregisterSuccess(DeregisterSuccess),
@@ -1255,6 +1347,57 @@ pub enum InternalServiceRequest {
         request_id: Uuid,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
+    },
+
+    /// Open a media (audio/video) session with an already-connected peer.
+    ///
+    /// Media rides the session's UDP channel, NOT the reliable peer channel the
+    /// messages above use. Two reasons: a call must not queue behind chat, and
+    /// on a reliable ordered channel congestion turns into unbounded latency
+    /// rather than loss, which is far worse for a call than a dropped frame.
+    ///
+    /// Requires the peer connection to have been established with UdpMode
+    /// Enabled; the response reports failure if no UDP channel arrives.
+    MediaOpen {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+    },
+
+    /// Send one encoded media frame to a peer.
+    ///
+    /// The payload is opaque: encoding and decoding happen in the browser via
+    /// WebCodecs, because that is the only path to hardware acceleration and
+    /// this crate's WASM build has neither threads nor SIMD. The service only
+    /// fragments, orders and transports.
+    MediaSend {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        /// Which stream within the call: audio, main video, or thumbnail video.
+        track: u8,
+        /// 0 = audio, 1 = video. Mirrors citadel_media's TrackKind.
+        kind: u8,
+        /// Capture time in the track's clock rate, used for A/V sync.
+        timestamp: u32,
+        /// Bit 0 = keyframe, bit 1 = discardable under congestion.
+        flags: u8,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[debug(with = bytes_debug_fmt)]
+        payload: Vec<u8>,
+    },
+
+    /// Tear down a media session, releasing the UDP channel and its pump task.
+    MediaClose {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
     },
     /// Deregister from the server - permanently removes the account
     Deregister {

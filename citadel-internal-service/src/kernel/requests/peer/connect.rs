@@ -111,6 +111,12 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 Ok(connect_result) => match connect_result {
                     Ok(peer_connect_success) => {
                         info!(target: "citadel", "[PeerConnect] connect_to_peer_custom succeeded!");
+                        let mut peer_connect_success = peer_connect_success;
+                        // Taken before the channel is split and the struct is
+                        // consumed. This is the only moment the UDP channel is
+                        // offered; dropping it here would mean no call with this
+                        // peer could ever use a datagram path.
+                        let udp_rx = peer_connect_success.udp_channel_rx.take();
                         let (sink, mut stream) = peer_connect_success.channel.split();
                         {
                             let mut map = this.server_connection_map.write();
@@ -119,6 +125,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                                     peer_cid,
                                     sink,
                                     peer_connect_success.remote,
+                                    udp_rx,
                                 );
                                 info!(target: "citadel", "[PeerConnect] Added peer {} to cid {}'s peers. Total peers: {}", peer_cid, cid, conn.peers.len());
                             } else {

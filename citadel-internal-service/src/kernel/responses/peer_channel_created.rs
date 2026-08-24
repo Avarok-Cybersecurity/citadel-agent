@@ -23,6 +23,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     peer_channel_created: PeerChannelCreated<R>,
 ) -> Result<(), NetworkError> {
+    // Taken before the channel is consumed: this is the acceptor side's only
+    // offer of a UDP channel, and a call needs it to avoid running media over the
+    // reliable path.
+    let udp_rx = peer_channel_created.udp_rx_opt;
     let channel = *peer_channel_created.channel;
     let session_cid = channel.get_session_cid();
     let peer_cid = channel.get_peer_cid();
@@ -54,7 +58,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         }
 
         // Always add/update the peer connection - insert() replaces existing entries
-        connection.add_peer_connection_channel_only(peer_cid, sink);
+        connection.add_peer_connection_channel_only(peer_cid, sink, udp_rx);
         info!(target: "citadel", "[PeerChannelCreated] {} peer {} to session {} (channel only). Total peers: {}",
             if peer_existed { "Updated" } else { "Added" },
             peer_cid, session_cid, connection.peers.len());

@@ -230,10 +230,19 @@ impl intersession_layer_messaging::local_delivery::LocalDelivery<WrappedMessage>
                 fp ^= *b as u64;
                 fp = fp.wrapping_mul(0x100_0000_01b3);
             }
+            // Field ORDER matters here, not just content. CI truncates console
+            // lines around 348 chars, and two 20-digit CIDs ahead of the
+            // fingerprint meant every one of these lines was cut off exactly at
+            // `len=` — 26 of them logged, not one readable. The join key goes
+            // first, and the CIDs are trimmed to their last 6 digits, which is
+            // plenty to tell two peers apart in one run.
             ::log::info!(
                 target: "ism",
-                "[ILM-DELIVER] msg_id={msg_id} cid={} peer={} len={} fp={:016x}",
-                n.cid, n.peer_cid, n.message.len(), fp
+                "[ILM-DELIVER] fp={:016x} msg_id={msg_id} len={} cid=..{} peer=..{}",
+                fp,
+                n.message.len(),
+                n.cid % 1_000_000,
+                n.peer_cid % 1_000_000
             );
         }
 

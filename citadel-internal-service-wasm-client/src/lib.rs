@@ -181,6 +181,9 @@ static SINK_CHANNEL: OnceCell<mpsc::UnboundedSender<InternalServicePayload>> = O
 struct WorkspaceState {
     messenger: CitadelWorkspaceMessenger<CitadelWorkspaceBackend>,
     stream: Option<citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>>,
+    // Messages rescued from a stream that was replaced while `next_message` had
+    // it checked out. Without this they were dropped with the receiver.
+    pending: std::collections::VecDeque<InternalServiceResponse>,
     // Wrapped in Arc so we can clone handles and release the RwLock before long async operations
     connections: Arc<DashMap<u64, Arc<MessengerTx<CitadelWorkspaceBackend>>>>,
     // Track CIDs that are currently being opened to prevent duplicate multiplex calls
@@ -371,6 +374,7 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
     let state = WorkspaceState {
         messenger,
         stream: Some(stream),
+        pending: std::collections::VecDeque::new(),
         connections,
         pending_opens,
         shutdown_tx,
@@ -644,18 +648,48 @@ pub async fn ensure_messenger_open(cid_str: String) -> Result<bool, JsValue> {
 /// ordinary connection drop into a Rust panic (`RuntimeError: unreachable`) in
 /// the WASM client.
 async fn restore_message_stream(
-    stream: citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
+    mut stream: citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
 ) {
     let mut guard = get_workspace_state().write().await;
     let Some(state) = guard.as_mut() else {
         // Workspace was torn down (`close_connection`) while we awaited the
-        // message; our stream is obsolete, so drop it instead of panicking.
+        // message; our stream is obsolete. There is nowhere left to put its
+        // contents, but say so rather than letting them vanish silently - these
+        // are messages ILM already reported as delivered.
+        let mut lost = 0usize;
+        while stream.try_recv().is_ok() {
+            lost += 1;
+        }
+        if lost > 0 {
+            console_log!(
+                "[WASM] Workspace torn down while {} delivered message(s) were still queued",
+                lost
+            );
+        }
         return;
     };
-    // Only restore if no newer stream has replaced ours (e.g. `restart`
-    // installed a fresh state with its own stream while we awaited).
+
     if state.stream.is_none() {
         state.stream.replace(stream);
+        return;
+    }
+
+    // A newer stream replaced ours - `restart` installing a fresh state while we
+    // awaited. Letting our receiver fall out of scope here discarded EVERY
+    // message still queued in it, which is the reconnect message loss: ILM
+    // reports the message delivered (it did send into the channel) and the
+    // client never sees it, with no drop logged anywhere because it never
+    // reached JS. Rescue them instead.
+    let mut rescued = 0usize;
+    while let Ok(msg) = stream.try_recv() {
+        state.pending.push_back(msg);
+        rescued += 1;
+    }
+    if rescued > 0 {
+        console_log!(
+            "[WASM] Rescued {} queued message(s) from a replaced stream",
+            rescued
+        );
     }
 }
 
@@ -667,6 +701,11 @@ pub async fn next_message() -> Result<JsValue, JsValue> {
     // Take the stream so that the open_p2p_connection and send_p2p_connection functions
     // are not blocked while listening
     if let Some(state) = guard.as_mut() {
+        // Rescued messages go out before anything new is awaited, so a reconnect
+        // cannot leave them stranded behind later traffic.
+        if let Some(response) = state.pending.pop_front() {
+            return serialize_response(&response);
+        }
         if let Some(mut stream) = state.stream.take() {
             drop(guard); // drop the guard to unblock
             if let Some(response) = stream.recv().await {

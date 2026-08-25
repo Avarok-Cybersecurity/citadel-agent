@@ -92,7 +92,9 @@ pub async fn handle_send<T: IOInterface, R: Ratchet>(
         });
     };
 
-    let result = outbound.lock().send_frame(track, kind, timestamp, flags, payload);
+    let result = outbound
+        .lock()
+        .send_frame(track, kind, timestamp, flags, payload);
     match result {
         // Frames are fire-and-forget: acknowledging every one would put a
         // response on the wire per frame — tens per second per track — for
@@ -162,7 +164,10 @@ pub(crate) fn park_recovered_receive_half<T: IOInterface, R: Ratchet>(
 ) {
     let mut map = this.server_connection_map.write();
     // Peer gone: dropping the half tears down a UDP path nobody can use anyway.
-    let Some(peer) = map.get_mut(&cid).and_then(|conn| conn.peers.get_mut(&peer_cid)) else {
+    let Some(peer) = map
+        .get_mut(&cid)
+        .and_then(|conn| conn.peers.get_mut(&peer_cid))
+    else {
         return;
     };
     if let UdpState::Lent { tx } = &peer.udp {

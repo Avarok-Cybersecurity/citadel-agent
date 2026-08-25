@@ -30,7 +30,11 @@ fn client_channel() -> (ClientTx, ClientRx) {
 }
 
 /// Packetizes one frame and renders its fragments as on-the-wire datagrams.
-fn frame_datagrams(packetizer: &mut Packetizer, timestamp: u32, payload: Vec<u8>) -> Vec<SecBuffer> {
+fn frame_datagrams(
+    packetizer: &mut Packetizer,
+    timestamp: u32,
+    payload: Vec<u8>,
+) -> Vec<SecBuffer> {
     packetizer
         .packetize(
             TrackId(0),
@@ -69,13 +73,7 @@ async fn pump_returns_receive_half_on_shutdown() {
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let (client_tx, _client_rx) = client_channel();
 
-    let pump = tokio::spawn(pump_inbound(
-        datagram_rx,
-        shutdown_rx,
-        1,
-        2,
-        client_tx,
-    ));
+    let pump = tokio::spawn(pump_inbound(datagram_rx, shutdown_rx, 1, 2, client_tx));
     shutdown_tx.send(()).expect("pump alive");
     let recovered = pump.await.expect("pump join");
     assert!(recovered.is_some(), "orderly close must return the rx half");
@@ -87,13 +85,7 @@ async fn pump_reports_dead_path_when_stream_ends() {
     let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let (client_tx, _client_rx) = client_channel();
 
-    let pump = tokio::spawn(pump_inbound(
-        datagram_rx,
-        shutdown_rx,
-        1,
-        2,
-        client_tx,
-    ));
+    let pump = tokio::spawn(pump_inbound(datagram_rx, shutdown_rx, 1, 2, client_tx));
     drop(datagram_tx);
     let recovered = pump.await.expect("pump join");
     assert!(recovered.is_none(), "an exhausted rx must not be re-parked");
@@ -105,13 +97,7 @@ async fn pump_delivers_reassembled_frames_in_order() {
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let (client_tx, mut client_rx) = client_channel();
 
-    let pump = tokio::spawn(pump_inbound(
-        datagram_rx,
-        shutdown_rx,
-        11,
-        22,
-        client_tx,
-    ));
+    let pump = tokio::spawn(pump_inbound(datagram_rx, shutdown_rx, 11, 22, client_tx));
     feed_two_frames(&datagram_tx).await;
 
     let notification = tokio::time::timeout(Duration::from_secs(5), client_rx.recv())
@@ -139,13 +125,7 @@ async fn pump_survives_client_loss_and_returns_receive_half() {
     let (client_tx, client_rx) = client_channel();
     drop(client_rx); // the browser's WebSocket dropped
 
-    let pump = tokio::spawn(pump_inbound(
-        datagram_rx,
-        shutdown_rx,
-        1,
-        2,
-        client_tx,
-    ));
+    let pump = tokio::spawn(pump_inbound(datagram_rx, shutdown_rx, 1, 2, client_tx));
     // Delivery of the first frame fails against the dead client, which must end
     // the pump WITHOUT consuming the receive half.
     feed_two_frames(&datagram_tx).await;
@@ -164,14 +144,7 @@ async fn session_close_recovers_receive_half_and_reports_dead_pump() {
     let owner = Uuid::new_v4();
 
     let outbound = MediaOutbound::new(FakeSink(fragment_tx)).expect("outbound");
-    let session = MediaSession::start(
-        outbound,
-        datagram_rx,
-        1,
-        2,
-        owner,
-        client_tx,
-    );
+    let session = MediaSession::start(outbound, datagram_rx, 1, 2, owner, client_tx);
     assert_eq!(session.owner(), owner);
     assert!(session.pump_alive());
     let recovered = session.close().await;

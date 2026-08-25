@@ -60,7 +60,10 @@ pub(super) fn finish_first_open<T: IOInterface, R: Ratchet>(
     generation: u64,
 ) -> InternalServiceResponse {
     let mut map = this.server_connection_map.write();
-    let Some(peer) = map.get_mut(&cid).and_then(|conn| conn.peers.get_mut(&peer_cid)) else {
+    let Some(peer) = map
+        .get_mut(&cid)
+        .and_then(|conn| conn.peers.get_mut(&peer_cid))
+    else {
         // Whatever arrived is dropped along with the peer, which is the correct
         // teardown for a connection that no longer exists.
         return failed(
@@ -142,7 +145,10 @@ pub(super) fn rebuild_after_stale<T: IOInterface, R: Ratchet>(
 ) -> InternalServiceResponse {
     {
         let mut map = this.server_connection_map.write();
-        let Some(peer) = map.get_mut(&cid).and_then(|conn| conn.peers.get_mut(&peer_cid)) else {
+        let Some(peer) = map
+            .get_mut(&cid)
+            .and_then(|conn| conn.peers.get_mut(&peer_cid))
+        else {
             return failed(
                 cid,
                 peer_cid,
@@ -152,7 +158,10 @@ pub(super) fn rebuild_after_stale<T: IOInterface, R: Ratchet>(
         };
 
         if peer.media_generation == generation && peer.media.is_none() {
-            return match (recovered, std::mem::replace(&mut peer.udp, UdpState::Opening)) {
+            return match (
+                recovered,
+                std::mem::replace(&mut peer.udp, UdpState::Opening),
+            ) {
                 (Some(rx), UdpState::Lent { tx }) => {
                     start_session(peer, tx, rx, cid, peer_cid, uuid, request_id, to_client)
                 }

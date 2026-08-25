@@ -7,7 +7,7 @@ use citadel_internal_service_types::{
 };
 use citadel_sdk::prelude::{
     GroupBroadcast, GroupBroadcastCommand, GroupChannelCreated, GroupEvent, NodeRequest,
-    NodeResult, Ratchet, TargetLockedRemote,
+    NodeResult, Ratchet,
 };
 use futures::StreamExt;
 use std::sync::atomic::Ordering;
@@ -47,7 +47,15 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         command: group_request,
     });
 
-    // Extract peer_remote and uuid inside lock block, then drop before await
+    // Extract the localhost-connection uuid inside the lock block, then drop
+    // before await. A peer connection to the inviter is deliberately NOT
+    // required: AcceptMembership is a client-to-server broadcast command (the
+    // SERVER owns group membership; compare create.rs, which builds its remote
+    // from the node remote for the same reason). Requiring a peer remote meant
+    // every invitee whose P2P connection was ACCEPTED rather than initiated —
+    // an acceptor-only connection carries no remote, and the group creator is
+    // normally the one who dialled — could never answer any invitation, so
+    // membership silently never formed.
     let remote_result = {
         let server_connection_map = this.server_connection_map.read();
         match server_connection_map.get(&cid) {
@@ -55,25 +63,15 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 let uuid = connection
                     .associated_localhost_connection
                     .load(Ordering::Relaxed);
-                match connection.peers.get(&peer_cid) {
-                    Some(peer_connection) => match &peer_connection.remote {
-                        Some(peer_remote) => Ok((peer_remote.clone(), uuid)),
-                        None => Err("Could Not Respond to Group Request - Peer connection missing remote (acceptor-only connection)".to_string()),
-                    },
-                    None => Err("Could Not Respond to Group Request - Peer Connection not found".to_string()),
-                }
+                Ok((this.remote().clone(), uuid))
             }
             None => Err("Could Not Respond to Group Request - Connection not found".to_string()),
         }
     }; // Lock dropped here - BEFORE any await
 
     let response = match remote_result {
-        Ok((peer_remote, uuid)) => {
-            match peer_remote
-                .remote()
-                .send_callback_subscription(request)
-                .await
-            {
+        Ok((remote, uuid)) => {
+            match remote.send_callback_subscription(request).await {
                 Ok(mut subscription) => {
                     let mut result = false;
                     if invitation {

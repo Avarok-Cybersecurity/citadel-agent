@@ -1,4 +1,5 @@
 use crate::kernel::ext::IOInterfaceExt;
+use crate::kernel::media::{PeerMediaSession, UdpState};
 use crate::kernel::requests::{handle_request, HandledRequestResult};
 use citadel_internal_service_connector::connector::{
     InternalServiceConnector, WrappedSink, WrappedStream,
@@ -25,13 +26,12 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
-use crate::kernel::media::{PeerMediaSession, UdpState};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot::Receiver as OneshotReceiver;
 use uuid::Uuid;
 
-pub(crate) mod media;
 pub(crate) mod ext;
+pub(crate) mod media;
 pub(crate) mod requests;
 pub(crate) mod responses;
 
@@ -289,9 +289,7 @@ impl<R: Ratchet> Connection<R> {
                     sink: Arc::new(tokio::sync::Mutex::new(sink)),
                     remote,
                     handler_map: HashMap::new(),
-                    associated_localhost_connection: self
-                        .associated_localhost_connection
-                        .clone(),
+                    associated_localhost_connection: self.associated_localhost_connection.clone(),
                     udp: UdpState::from_optional_channel(udp_rx),
                     media: None,
                     media_generation: 0,

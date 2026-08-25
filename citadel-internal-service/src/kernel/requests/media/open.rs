@@ -56,7 +56,10 @@ pub async fn handle_open<T: IOInterface, R: Ratchet>(
 
     let path = {
         let mut map = this.server_connection_map.write();
-        let Some(peer) = map.get_mut(&cid).and_then(|conn| conn.peers.get_mut(&peer_cid)) else {
+        let Some(peer) = map
+            .get_mut(&cid)
+            .and_then(|conn| conn.peers.get_mut(&peer_cid))
+        else {
             return Some(HandledRequestResult {
                 response: failed(
                     cid,
@@ -157,4 +160,3 @@ pub async fn handle_open<T: IOInterface, R: Ratchet>(
 
     Some(HandledRequestResult { response, uuid })
 }
-

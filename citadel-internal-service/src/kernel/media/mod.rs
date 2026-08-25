@@ -21,11 +21,13 @@
 //! resource of the peer connection: sessions borrow them and hand them back,
 //! so the second and every later call on the same connection can still open.
 
+pub(crate) mod lane;
 pub(crate) mod pump;
 #[cfg(test)]
 mod tests;
 mod udp_state;
 
+pub use lane::{media_lane, MediaLaneRx, MediaLaneTx, MEDIA_LANE_CAPACITY};
 pub use udp_state::UdpState;
 
 use bytes::BytesMut;
@@ -167,6 +169,7 @@ where
         peer_cid: u64,
         owner: Uuid,
         to_client: UnboundedSender<InternalServiceResponse>,
+        media_lane: MediaLaneTx,
     ) -> Self {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let pump = tokio::task::spawn(pump::pump_inbound(
@@ -175,6 +178,7 @@ where
             cid,
             peer_cid,
             to_client,
+            media_lane,
         ));
         info!(target: "citadel", "[Media] session open cid={cid} peer_cid={peer_cid}");
         Self {

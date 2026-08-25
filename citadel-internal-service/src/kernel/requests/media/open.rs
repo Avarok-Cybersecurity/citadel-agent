@@ -46,8 +46,11 @@ pub async fn handle_open<T: IOInterface, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
 
+    // Both lanes to this client, resolved together: a session with one and not
+    // the other could deliver control but no media, or the reverse.
+    let media_lane = this.media_lanes.read().get(&uuid).cloned();
     let to_client = this.tx_to_localhost_clients.read().get(&uuid).cloned();
-    let Some(to_client) = to_client else {
+    let (Some(to_client), Some(media_lane)) = (to_client, media_lane) else {
         return Some(HandledRequestResult {
             response: failed(cid, peer_cid, request_id, "client is gone".to_string()),
             uuid,
@@ -111,6 +114,7 @@ pub async fn handle_open<T: IOInterface, R: Ratchet>(
                     uuid,
                     request_id,
                     to_client.clone(),
+                    media_lane.clone(),
                 ))),
                 // Distinguished from "no UDP path": the channel exists, it is
                 // just held by a concurrent open or a close still in flight.
@@ -149,7 +153,8 @@ pub async fn handle_open<T: IOInterface, R: Ratchet>(
             // on this peer connection forever after one failed open.
             let outcome = tokio::time::timeout(UDP_WAIT, &mut rx).await;
             finish_first_open(
-                this, cid, peer_cid, uuid, request_id, to_client, rx, outcome, generation,
+                this, cid, peer_cid, uuid, request_id, to_client, media_lane, rx, outcome,
+                generation,
             )
         }
         OpenPath::RebuildStale {
@@ -158,7 +163,7 @@ pub async fn handle_open<T: IOInterface, R: Ratchet>(
         } => {
             let recovered = session.close().await;
             rebuild_after_stale(
-                this, cid, peer_cid, uuid, request_id, to_client, recovered, generation,
+                this, cid, peer_cid, uuid, request_id, to_client, media_lane, recovered, generation,
             )
         }
     };

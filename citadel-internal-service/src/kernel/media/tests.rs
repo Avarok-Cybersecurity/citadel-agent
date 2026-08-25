@@ -2,6 +2,7 @@
 //! borrow-and-return contract for the UDP receive half, frame delivery through
 //! reassembly + jitter, and the outbound packetization path via a fake sink.
 
+use super::lane::media_lane;
 use super::pump::pump_inbound;
 use super::{FragmentSink, MediaOutbound, MediaSession, MEDIA_CONFIG};
 use bytes::BytesMut;
@@ -72,8 +73,16 @@ async fn pump_returns_receive_half_on_shutdown() {
     let (_datagram_tx, datagram_rx) = futures_mpsc::unbounded::<SecBuffer>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let (client_tx, _client_rx) = client_channel();
+    let (lane_tx, _lane_rx) = media_lane(8);
 
-    let pump = tokio::spawn(pump_inbound(datagram_rx, shutdown_rx, 1, 2, client_tx));
+    let pump = tokio::spawn(pump_inbound(
+        datagram_rx,
+        shutdown_rx,
+        1,
+        2,
+        client_tx,
+        lane_tx,
+    ));
     shutdown_tx.send(()).expect("pump alive");
     let recovered = pump.await.expect("pump join");
     assert!(recovered.is_some(), "orderly close must return the rx half");
@@ -84,8 +93,16 @@ async fn pump_reports_dead_path_when_stream_ends() {
     let (datagram_tx, datagram_rx) = futures_mpsc::unbounded::<SecBuffer>();
     let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let (client_tx, _client_rx) = client_channel();
+    let (lane_tx, _lane_rx) = media_lane(8);
 
-    let pump = tokio::spawn(pump_inbound(datagram_rx, shutdown_rx, 1, 2, client_tx));
+    let pump = tokio::spawn(pump_inbound(
+        datagram_rx,
+        shutdown_rx,
+        1,
+        2,
+        client_tx,
+        lane_tx,
+    ));
     drop(datagram_tx);
     let recovered = pump.await.expect("pump join");
     assert!(recovered.is_none(), "an exhausted rx must not be re-parked");
@@ -95,15 +112,26 @@ async fn pump_reports_dead_path_when_stream_ends() {
 async fn pump_delivers_reassembled_frames_in_order() {
     let (datagram_tx, datagram_rx) = futures_mpsc::unbounded::<SecBuffer>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-    let (client_tx, mut client_rx) = client_channel();
+    let (client_tx, _client_rx) = client_channel();
+    // Read from the media lane, not the control channel: frames were moved onto
+    // their own bounded queue, and asserting on the old one would pass only for
+    // as long as nothing was actually separated.
+    let (lane_tx, mut lane_rx) = media_lane(8);
 
-    let pump = tokio::spawn(pump_inbound(datagram_rx, shutdown_rx, 11, 22, client_tx));
+    let pump = tokio::spawn(pump_inbound(
+        datagram_rx,
+        shutdown_rx,
+        11,
+        22,
+        client_tx,
+        lane_tx,
+    ));
     feed_two_frames(&datagram_tx).await;
 
-    let notification = tokio::time::timeout(Duration::from_secs(5), client_rx.recv())
+    let notification = tokio::time::timeout(Duration::from_secs(5), lane_rx.recv())
         .await
         .expect("frame within deadline")
-        .expect("client channel open");
+        .expect("media lane open");
     match notification {
         InternalServiceResponse::MediaFrameNotification(frame) => {
             assert_eq!(frame.cid, 11);
@@ -124,8 +152,19 @@ async fn pump_survives_client_loss_and_returns_receive_half() {
     let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let (client_tx, client_rx) = client_channel();
     drop(client_rx); // the browser's WebSocket dropped
+                     // The lane is closed on the same event, and it is the lane the frame path
+                     // now consults to discover the client is gone.
+    let (lane_tx, _lane_rx) = media_lane(8);
+    lane_tx.close();
 
-    let pump = tokio::spawn(pump_inbound(datagram_rx, shutdown_rx, 1, 2, client_tx));
+    let pump = tokio::spawn(pump_inbound(
+        datagram_rx,
+        shutdown_rx,
+        1,
+        2,
+        client_tx,
+        lane_tx,
+    ));
     // Delivery of the first frame fails against the dead client, which must end
     // the pump WITHOUT consuming the receive half.
     feed_two_frames(&datagram_tx).await;
@@ -144,7 +183,15 @@ async fn session_close_recovers_receive_half_and_reports_dead_pump() {
     let owner = Uuid::new_v4();
 
     let outbound = MediaOutbound::new(FakeSink(fragment_tx)).expect("outbound");
-    let session = MediaSession::start(outbound, datagram_rx, 1, 2, owner, client_tx);
+    let session = MediaSession::start(
+        outbound,
+        datagram_rx,
+        1,
+        2,
+        owner,
+        client_tx,
+        media_lane(8).0,
+    );
     assert_eq!(session.owner(), owner);
     assert!(session.pump_alive());
     let recovered = session.close().await;

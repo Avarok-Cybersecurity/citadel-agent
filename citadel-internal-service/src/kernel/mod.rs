@@ -1,5 +1,7 @@
 use crate::kernel::ext::IOInterfaceExt;
-use crate::kernel::media::{PeerMediaSession, UdpState};
+use crate::kernel::media::{
+    media_lane, MediaLaneTx, PeerMediaSession, UdpState, MEDIA_LANE_CAPACITY,
+};
 use crate::kernel::requests::{handle_request, HandledRequestResult};
 use citadel_internal_service_connector::connector::{
     InternalServiceConnector, WrappedSink, WrappedStream,
@@ -47,6 +49,15 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     /// like websocket clients for browser clients.
     pub tx_to_localhost_clients:
         Arc<RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+    /// The bounded, latest-frame lane to each localhost client, for media only.
+    ///
+    /// Parallel to `tx_to_localhost_clients` rather than replacing it: the two
+    /// carry traffic with opposite requirements. Control must arrive, so it
+    /// queues without limit; media must be timely, so it is capped and the
+    /// oldest frame is evicted when a client falls behind. One queue cannot
+    /// honour both, and sharing the unbounded one meant a slow browser
+    /// accumulated stale video until the connection ended.
+    pub media_lanes: Arc<RwLock<HashMap<Uuid, MediaLaneTx>>>,
     pub orphan_sessions: Arc<RwLock<HashMap<Uuid, bool>>>, // Maps TCP connection ID to orphan mode
     /// Stores pending PeerConnect signals awaiting UI acceptance.
     /// Key is (session_cid, peer_cid), value is the original PeerSignal for responding.
@@ -70,6 +81,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             remote: self.remote.clone(),
             server_connection_map: self.server_connection_map.clone(),
             tx_to_localhost_clients: self.tx_to_localhost_clients.clone(),
+            media_lanes: self.media_lanes.clone(),
             orphan_sessions: self.orphan_sessions.clone(),
             pending_peer_connect_signals: self.pending_peer_connect_signals.clone(),
             pending_peer_registrations: self.pending_peer_registrations.clone(),
@@ -86,6 +98,7 @@ impl<T: IOInterface, R: Ratchet> From<T> for CitadelWorkspaceService<T, R> {
             remote: None,
             server_connection_map: Arc::new(RwLock::new(Default::default())),
             tx_to_localhost_clients: Arc::new(RwLock::new(Default::default())),
+            media_lanes: Arc::new(RwLock::new(Default::default())),
             orphan_sessions: Arc::new(RwLock::new(Default::default())),
             pending_peer_connect_signals: Arc::new(RwLock::new(Default::default())),
             pending_peer_registrations: Arc::new(RwLock::new(Default::default())),
@@ -417,20 +430,29 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
         let tcp_connection_map = &self.tx_to_localhost_clients;
+        let media_lanes = &self.media_lanes;
         let server_connection_map = &self.server_connection_map;
 
         let listener_task = async move {
             while let Some((sink, stream)) = io.next_connection().await {
                 let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel::<InternalServiceResponse>();
+                // Media gets a second, bounded lane to the same socket. Created
+                // here beside the reliable one so every connection has both for
+                // its whole life, rather than appearing when a call starts and
+                // needing a null case everywhere else.
+                let (media_tx, media_rx) = media_lane(MEDIA_LANE_CAPACITY);
                 let id = Uuid::new_v4();
                 tcp_connection_map.write().insert(id, tx1);
+                media_lanes.write().insert(id, media_tx);
                 io.spawn_connection_handler(
                     sink,
                     stream,
                     tx.clone(),
                     rx1,
+                    media_rx,
                     id,
                     tcp_connection_map.clone(),
+                    media_lanes.clone(),
                     server_connection_map.clone(),
                     self.orphan_sessions.clone(),
                 );
@@ -456,6 +478,9 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
                             // The TCP connection no longer exists. Delete it from both maps
                             error!(target: "citadel", "Failed to send response to TCP client: {err:?}");
                             this.tx_to_localhost_clients.write().remove(&uuid);
+                            if let Some(lane) = this.media_lanes.write().remove(&uuid) {
+                                lane.close();
+                            }
                             this.server_connection_map.write().retain(|_, v| {
                                 v.associated_localhost_connection.load(Ordering::Relaxed) != uuid
                             });

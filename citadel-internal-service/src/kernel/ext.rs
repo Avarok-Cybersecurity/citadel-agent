@@ -1,3 +1,4 @@
+use crate::kernel::media::{MediaLaneRx, MediaLaneTx};
 use crate::kernel::{send_to_kernel, sink_send_payload, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -23,8 +24,10 @@ pub trait IOInterfaceExt: IOInterface {
         mut stream: Self::Stream,
         to_kernel: UnboundedSender<(InternalServiceRequest, Uuid)>,
         mut from_kernel: UnboundedReceiver<InternalServiceResponse>,
+        mut media_from_kernel: MediaLaneRx,
         conn_id: Uuid,
         tcp_connection_map: Arc<RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+        media_lanes: Arc<RwLock<HashMap<Uuid, MediaLaneTx>>>,
         server_connection_map: Arc<RwLock<HashMap<u64, Connection<R>>>>,
         orphan_sessions: Arc<RwLock<HashMap<Uuid, bool>>>,
     ) {
@@ -41,7 +44,35 @@ pub trait IOInterfaceExt: IOInterface {
                     return;
                 }
 
-                while let Some(kernel_response) = from_kernel.recv().await {
+                // Media rides its own bounded lane, drained here alongside the
+                // reliable one. Two queues, one socket: control cannot be
+                // dropped and media cannot be allowed to accumulate, and a
+                // single queue can only offer one of those.
+                let mut media_open = true;
+                loop {
+                    let kernel_response = tokio::select! {
+                        // Biased, and control first. A call saturating the
+                        // socket must never delay a session close or a response
+                        // the client is blocked waiting on -- under exactly the
+                        // congestion this lane exists for, an unbiased select
+                        // would hand roughly half the socket to stale video.
+                        biased;
+                        response = from_kernel.recv() => match response {
+                            Some(response) => response,
+                            // The reliable side ending is the connection
+                            // ending; queued media has no one left to reach.
+                            None => break,
+                        },
+                        frame = media_from_kernel.recv(), if media_open => match frame {
+                            Some(frame) => frame,
+                            None => {
+                                // Disable the branch rather than break: control
+                                // traffic outlives any one call.
+                                media_open = false;
+                                continue;
+                            }
+                        },
+                    };
                     debug!(target: "citadel", "Sending kernel response to client: {:?}", kernel_response);
                     if let Err(err) = sink_send_payload::<Self>(kernel_response, &mut sink).await {
                         error!(target: "citadel", "Failed to send to client: {err:?}");
@@ -75,6 +106,12 @@ pub trait IOInterfaceExt: IOInterface {
             }
 
             tcp_connection_map.write().remove(&conn_id);
+            // The lane goes with the connection. Closing it as well as dropping
+            // it means a pump still holding a producer handle learns the client
+            // is gone and stops, instead of filling a queue nobody will read.
+            if let Some(lane) = media_lanes.write().remove(&conn_id) {
+                lane.close();
+            }
 
             // ALWAYS preserve sessions when TCP drops.
             //

@@ -4,7 +4,7 @@
 //! anything. Split from `open.rs` piecewise to respect the file-size limit.
 
 use super::{failed, opened, park_recovered_receive_half};
-use crate::kernel::media::{MediaOutbound, PeerMediaSession, UdpState, UDP_WAIT};
+use crate::kernel::media::{MediaLaneTx, MediaOutbound, PeerMediaSession, UdpState, UDP_WAIT};
 use crate::kernel::{CitadelWorkspaceService, PeerConnection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::InternalServiceResponse;
@@ -30,10 +30,12 @@ pub(super) fn start_session<R: Ratchet>(
     owner: Uuid,
     request_id: Uuid,
     to_client: ClientSender,
+    media_lane: MediaLaneTx,
 ) -> InternalServiceResponse {
     match MediaOutbound::new(tx.clone()) {
         Ok(outbound) => {
-            let session = PeerMediaSession::start(outbound, rx, cid, peer_cid, owner, to_client);
+            let session =
+                PeerMediaSession::start(outbound, rx, cid, peer_cid, owner, to_client, media_lane);
             peer.udp = UdpState::Lent { tx };
             peer.media = Some(Box::new(session));
             opened(cid, peer_cid, request_id)
@@ -55,6 +57,7 @@ pub(super) fn finish_first_open<T: IOInterface, R: Ratchet>(
     uuid: Uuid,
     request_id: Uuid,
     to_client: ClientSender,
+    media_lane: MediaLaneTx,
     rx: OneshotReceiver<UdpChannel<R>>,
     outcome: ChannelOutcome<R>,
     generation: u64,
@@ -108,7 +111,9 @@ pub(super) fn finish_first_open<T: IOInterface, R: Ratchet>(
     match outcome {
         Ok(Ok(channel)) => {
             let (tx, rx) = channel.split();
-            start_session(peer, tx, rx, cid, peer_cid, uuid, request_id, to_client)
+            start_session(
+                peer, tx, rx, cid, peer_cid, uuid, request_id, to_client, media_lane,
+            )
         }
         Ok(Err(_)) => {
             peer.udp = UdpState::Unavailable;
@@ -147,6 +152,7 @@ pub(super) fn rebuild_after_stale<T: IOInterface, R: Ratchet>(
     uuid: Uuid,
     request_id: Uuid,
     to_client: ClientSender,
+    media_lane: MediaLaneTx,
     recovered: Option<PeerChannelRecvHalf<R>>,
     generation: u64,
 ) -> InternalServiceResponse {
@@ -169,9 +175,9 @@ pub(super) fn rebuild_after_stale<T: IOInterface, R: Ratchet>(
                 recovered,
                 std::mem::replace(&mut peer.udp, UdpState::Opening),
             ) {
-                (Some(rx), UdpState::Lent { tx }) => {
-                    start_session(peer, tx, rx, cid, peer_cid, uuid, request_id, to_client)
-                }
+                (Some(rx), UdpState::Lent { tx }) => start_session(
+                    peer, tx, rx, cid, peer_cid, uuid, request_id, to_client, media_lane,
+                ),
                 (None, UdpState::Lent { .. }) => {
                     peer.udp = UdpState::Unavailable;
                     failed(

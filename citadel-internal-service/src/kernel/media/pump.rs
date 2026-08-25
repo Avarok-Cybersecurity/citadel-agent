@@ -6,6 +6,7 @@
 //! down at the protocol level. `Some(rx)` on exit means the half is reusable by
 //! a later call; `None` means the stream itself ended and the path is gone.
 
+use super::lane::{MediaLaneTx, PushOutcome};
 use super::MEDIA_CONFIG;
 use citadel_internal_service_types::{
     InternalServiceResponse, MediaFrameNotification, MediaGapNotification,
@@ -13,7 +14,7 @@ use citadel_internal_service_types::{
 use citadel_sdk::citadel_media::{
     JitterBuffer, MediaInstant, PopResult, ReassembleOutcome, Reassembler,
 };
-use citadel_sdk::logging::{info, warn};
+use citadel_sdk::logging::{debug, info, warn};
 use citadel_sdk::prelude::SecBuffer;
 use futures::StreamExt;
 use std::time::Instant;
@@ -26,6 +27,7 @@ pub(crate) async fn pump_inbound<S>(
     cid: u64,
     peer_cid: u64,
     to_client: UnboundedSender<InternalServiceResponse>,
+    media_lane: MediaLaneTx,
 ) -> Option<S>
 where
     S: futures::Stream<Item = SecBuffer> + Unpin,
@@ -81,7 +83,7 @@ where
         loop {
             match jitter.pop_ready(now) {
                 PopResult::Frame(frame) => {
-                    if !send_frame_to_client(&to_client, cid, peer_cid, &frame) {
+                    if !send_frame_to_client(&media_lane, cid, peer_cid, &frame) {
                         // Client gone (typically a WebSocket reconnect). The
                         // receive half is still healthy — hand it back so the
                         // reconnected client's re-open can rebuild the session.
@@ -111,7 +113,7 @@ where
                             request_id: None,
                         },
                     ));
-                    if !send_frame_to_client(&to_client, cid, peer_cid, &next) {
+                    if !send_frame_to_client(&media_lane, cid, peer_cid, &next) {
                         break 'pump;
                     }
                 }
@@ -125,25 +127,44 @@ where
 }
 
 /// Returns false once the client is gone, which is the pump's signal to stop.
+///
+/// Frames go on the bounded lane, gaps on the reliable one. A dropped frame
+/// costs a sixtieth of a second; a dropped gap leaves the receiver's decoder
+/// emitting garbage because it never learned to ask for a keyframe. They travel
+/// the same socket and must not share a drop policy.
 fn send_frame_to_client(
-    to_client: &UnboundedSender<InternalServiceResponse>,
+    media_lane: &MediaLaneTx,
     cid: u64,
     peer_cid: u64,
     frame: &citadel_sdk::citadel_media::MediaFrame,
 ) -> bool {
-    to_client
-        .send(InternalServiceResponse::MediaFrameNotification(
-            MediaFrameNotification {
-                cid,
-                peer_cid,
-                track: frame.header.track.0,
-                kind: frame.header.kind as u8,
-                sequence: frame.header.sequence,
-                timestamp: frame.header.timestamp,
-                flags: frame.header.flags.bits(),
-                payload: frame.payload.to_vec(),
-                request_id: None,
-            },
-        ))
-        .is_ok()
+    let outcome = media_lane.push(InternalServiceResponse::MediaFrameNotification(
+        MediaFrameNotification {
+            cid,
+            peer_cid,
+            track: frame.header.track.0,
+            kind: frame.header.kind as u8,
+            sequence: frame.header.sequence,
+            timestamp: frame.header.timestamp,
+            flags: frame.header.flags.bits(),
+            payload: frame.payload.to_vec(),
+            request_id: None,
+        },
+    ));
+
+    match outcome {
+        PushOutcome::Closed => false,
+        // Logged once per eviction at debug: this is expected behaviour under
+        // congestion, not a fault, and the running total is on the lane for
+        // anyone who wants the rate rather than the events.
+        PushOutcome::DroppedOldest => {
+            debug!(
+                target: "citadel",
+                "[Media] client behind, evicting oldest frame cid={cid} peer_cid={peer_cid} dropped_total={}",
+                media_lane.dropped()
+            );
+            true
+        }
+        PushOutcome::Queued => true,
+    }
 }

@@ -647,6 +647,26 @@ pub async fn ensure_messenger_open(cid_str: String) -> Result<bool, JsValue> {
 /// `.expect("Workspace stream corrupted")`-ed on the `None` case, turning an
 /// ordinary connection drop into a Rust panic (`RuntimeError: unreachable`) in
 /// the WASM client.
+/// Move everything still queued in `stream` onto `sink`, returning how many were
+/// moved.
+///
+/// This exists as its own function because the alternative - letting the
+/// receiver fall out of scope - is silent and lossy: a dropped tokio
+/// `UnboundedReceiver` takes every message still queued in it, with no error and
+/// no log. Order is preserved, so rescued messages stay ahead of traffic that
+/// arrives after them.
+fn drain_queued<T>(
+    stream: &mut citadel_io::tokio::sync::mpsc::UnboundedReceiver<T>,
+    sink: &mut std::collections::VecDeque<T>,
+) -> usize {
+    let mut moved = 0usize;
+    while let Ok(msg) = stream.try_recv() {
+        sink.push_back(msg);
+        moved += 1;
+    }
+    moved
+}
+
 async fn restore_message_stream(
     mut stream: citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
 ) {
@@ -656,10 +676,8 @@ async fn restore_message_stream(
         // message; our stream is obsolete. There is nowhere left to put its
         // contents, but say so rather than letting them vanish silently - these
         // are messages ILM already reported as delivered.
-        let mut lost = 0usize;
-        while stream.try_recv().is_ok() {
-            lost += 1;
-        }
+        let mut discarded = std::collections::VecDeque::new();
+        let lost = drain_queued(&mut stream, &mut discarded);
         if lost > 0 {
             console_log!(
                 "[WASM] Workspace torn down while {} delivered message(s) were still queued",
@@ -680,11 +698,7 @@ async fn restore_message_stream(
     // reports the message delivered (it did send into the channel) and the
     // client never sees it, with no drop logged anywhere because it never
     // reached JS. Rescue them instead.
-    let mut rescued = 0usize;
-    while let Ok(msg) = stream.try_recv() {
-        state.pending.push_back(msg);
-        rescued += 1;
-    }
+    let rescued = drain_queued(&mut stream, &mut state.pending);
     if rescued > 0 {
         console_log!(
             "[WASM] Rescued {} queued message(s) from a replaced stream",
@@ -906,5 +920,47 @@ pub fn is_initialized() -> bool {
         guard.is_some()
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod drain_queued_tests {
+    use super::drain_queued;
+    use std::collections::VecDeque;
+
+    #[test]
+    fn moves_every_queued_message_in_order() {
+        // The regression: these are messages ILM has already reported as
+        // delivered. Dropping the receiver loses them with no error anywhere.
+        let (tx, mut rx) = citadel_io::tokio::sync::mpsc::unbounded_channel();
+        for i in 0..3 {
+            tx.send(i).unwrap();
+        }
+        let mut sink = VecDeque::new();
+        assert_eq!(drain_queued(&mut rx, &mut sink), 3);
+        // Order matters: rescued messages are replayed before newer traffic, so
+        // reversing them here would reorder a conversation on every reconnect.
+        assert_eq!(sink.into_iter().collect::<Vec<_>>(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn appends_rather_than_replacing_what_the_sink_already_holds() {
+        // The sink is the live pending queue, which may already hold messages
+        // rescued from an earlier replacement.
+        let (tx, mut rx) = citadel_io::tokio::sync::mpsc::unbounded_channel();
+        tx.send(9).unwrap();
+        let mut sink: VecDeque<i32> = VecDeque::from(vec![7, 8]);
+        assert_eq!(drain_queued(&mut rx, &mut sink), 1);
+        assert_eq!(sink.into_iter().collect::<Vec<_>>(), vec![7, 8, 9]);
+    }
+
+    #[test]
+    fn reports_nothing_moved_for_an_empty_queue() {
+        // Guards the log line: claiming a rescue that did not happen would be
+        // as misleading as the silent loss it replaced.
+        let (_tx, mut rx) = citadel_io::tokio::sync::mpsc::unbounded_channel::<i32>();
+        let mut sink = VecDeque::new();
+        assert_eq!(drain_queued(&mut rx, &mut sink), 0);
+        assert!(sink.is_empty());
     }
 }

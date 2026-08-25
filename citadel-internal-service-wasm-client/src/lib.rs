@@ -679,8 +679,15 @@ async fn restore_message_stream(
         let mut discarded = std::collections::VecDeque::new();
         let lost = drain_queued(&mut stream, &mut discarded);
         if lost > 0 {
+            // Tagged ILM, not WASM. These lines describe the fate of messages
+            // ILM has already reported as delivered, and the integration
+            // harness captures console output by keyword — the list is
+            // ['P2P', 'error', 'Error', 'ILM'], so a '[WASM]' prefix was
+            // dropped before it reached any log. The diagnostic existed, ran,
+            // and could never be read, which is why the reconnect loss stayed
+            // unfalsifiable across several CI runs.
             console_log!(
-                "[WASM] Workspace torn down while {} delivered message(s) were still queued",
+                "[ILM-RESCUE] workspace torn down while {} delivered message(s) were still queued",
                 lost
             );
         }
@@ -701,7 +708,7 @@ async fn restore_message_stream(
     let rescued = drain_queued(&mut stream, &mut state.pending);
     if rescued > 0 {
         console_log!(
-            "[WASM] Rescued {} queued message(s) from a replaced stream",
+            "[ILM-RESCUE] rescued {} queued message(s) from a replaced stream",
             rescued
         );
     }

@@ -74,6 +74,13 @@ pub(super) fn finish_first_open<T: IOInterface, R: Ratchet>(
         );
     };
 
+    // The await is over either way, so the claim is released here rather than on
+    // the success path alone: leaving it set after a failed open would let the
+    // dead connection keep authority over the next open's cancellation.
+    if peer.media_pending_owner == Some(uuid) {
+        peer.media_pending_owner = None;
+    }
+
     // Ours only if no close bumped the generation AND no re-handshake replaced
     // the transport out from under our `Opening` marker.
     if peer.media_generation != generation || !matches!(peer.udp, UdpState::Opening) {

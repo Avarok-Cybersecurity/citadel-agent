@@ -206,6 +206,17 @@ pub struct PeerConnection<R: Ratchet> {
     /// this first and refuses to install its session if the value moved, so a
     /// close landing mid-open wins instead of leaving a zombie session.
     pub media_generation: u64,
+    /// The localhost connection whose `MediaOpen` is currently awaiting a UDP
+    /// channel, if one is.
+    ///
+    /// A close bumps `media_generation` even when no session exists yet, so
+    /// that a close landing mid-open cancels it rather than letting a zombie
+    /// pump install itself. That bump is unauthenticated on its own: once a
+    /// reconnect hands the client a fresh uuid, a delayed `MediaClose` from the
+    /// dead connection would cancel the NEW connection's open. Recording who is
+    /// opening lets the close tell "the owner changed its mind" from "a stale
+    /// connection is cancelling someone else's call".
+    pub media_pending_owner: Option<Uuid>,
 }
 
 #[allow(dead_code)]
@@ -293,6 +304,7 @@ impl<R: Ratchet> Connection<R> {
                     udp: UdpState::from_optional_channel(udp_rx),
                     media: None,
                     media_generation: 0,
+                    media_pending_owner: None,
                 });
             }
         }

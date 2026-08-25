@@ -13,7 +13,7 @@ mod open;
 
 pub use open::handle_open;
 
-use crate::kernel::media::{self, UdpState};
+use crate::kernel::media::{self, PeerMediaSession, UdpState};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -72,24 +72,44 @@ pub async fn handle_send<T: IOInterface, R: Ratchet>(
     // lock for each one made every frame contend with every other handler.
     // Instead, a read lock fetches the session's outbound handle, and the
     // per-session mutex serializes only the packetizer. No await under either.
-    let outbound = {
+    // Ownership is checked here, not only at open. A reconnect replaces the
+    // session while the previous localhost connection may still have frames in
+    // flight; without this, those late frames are injected into the NEW call,
+    // which the new owner neither started nor can see the source of.
+    let lookup = {
         let map = this.server_connection_map.read();
         map.get(&cid)
             .and_then(|conn| conn.peers.get(&peer_cid))
             .and_then(|peer| peer.media.as_ref())
-            .map(|session| session.outbound())
+            .map(|session| (session.owner(), session.outbound()))
     };
 
-    let Some(outbound) = outbound else {
-        return Some(HandledRequestResult {
-            response: failed(
-                cid,
-                peer_cid,
-                request_id,
-                "no media session with this peer; open one before sending frames".to_string(),
-            ),
-            uuid,
-        });
+    let outbound = match lookup {
+        Some((owner, outbound)) if owner == uuid => outbound,
+        Some(_) => {
+            return Some(HandledRequestResult {
+                response: failed(
+                    cid,
+                    peer_cid,
+                    request_id,
+                    "this media session belongs to another connection; open your own before \
+                     sending frames"
+                        .to_string(),
+                ),
+                uuid,
+            });
+        }
+        None => {
+            return Some(HandledRequestResult {
+                response: failed(
+                    cid,
+                    peer_cid,
+                    request_id,
+                    "no media session with this peer; open one before sending frames".to_string(),
+                ),
+                uuid,
+            });
+        }
     };
 
     let result = outbound
@@ -121,18 +141,52 @@ pub async fn handle_close<T: IOInterface, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
 
-    let session = {
+    enum Close<R: Ratchet> {
+        /// Nothing here belongs to this connection, so nothing may be disturbed.
+        NotYours,
+        Took(Option<Box<PeerMediaSession<R>>>),
+    }
+
+    let outcome = {
         let mut map = this.server_connection_map.write();
-        map.get_mut(&cid)
+        match map
+            .get_mut(&cid)
             .and_then(|conn| conn.peers.get_mut(&peer_cid))
-            .and_then(|peer| {
-                // Bumped even when no session exists yet: an open may be
-                // mid-await, and without this it would install a session into a
-                // call the client just ended (a zombie pump streaming frames
-                // forever). The open compares generations before committing.
-                peer.media_generation += 1;
-                peer.media.take()
-            })
+        {
+            None => Close::Took(None),
+            Some(peer) => {
+                let authorised = close_authorised(
+                    peer.media.as_ref().map(|session| session.owner()),
+                    peer.media_pending_owner,
+                    uuid,
+                );
+
+                if authorised {
+                    // Bumped even when no session exists yet: an open may be
+                    // mid-await, and without this it would install a session
+                    // into a call the client just ended (a zombie pump
+                    // streaming frames forever). The open compares generations
+                    // before committing.
+                    peer.media_generation += 1;
+                    peer.media_pending_owner = None;
+                    Close::Took(peer.media.take())
+                } else {
+                    Close::NotYours
+                }
+            }
+        }
+    };
+
+    let Close::Took(session) = outcome else {
+        return Some(HandledRequestResult {
+            response: failed(
+                cid,
+                peer_cid,
+                request_id,
+                "this media session belongs to another connection".to_string(),
+            ),
+            uuid,
+        });
     };
 
     if let Some(session) = session {
@@ -180,4 +234,80 @@ pub(crate) fn park_recovered_receive_half<T: IOInterface, R: Ratchet>(
     // Any other state means a fresh handshake replaced the transport while the
     // session was closing; the recovered half belongs to the old path and is
     // correctly dropped here.
+}
+
+/// Whether `requester` may tear down whatever media state a peer currently has.
+///
+/// Split out from `handle_close` because the interesting cases are all about
+/// which uuid holds the session, and reaching them through the real handler
+/// would mean constructing a whole service, a peer connection and a live UDP
+/// path to assert one boolean.
+///
+/// An established session names its owner outright. With no session yet, the
+/// only thing a close can affect is an open still awaiting its channel, so that
+/// open's owner decides. With neither, there is nothing to cancel and the
+/// generation bump is a no-op, so it costs nothing to allow.
+pub(crate) fn close_authorised(
+    session_owner: Option<Uuid>,
+    pending_owner: Option<Uuid>,
+    requester: Uuid,
+) -> bool {
+    match (session_owner, pending_owner) {
+        (Some(owner), _) => owner == requester,
+        (None, Some(pending)) => pending == requester,
+        (None, None) => true,
+    }
+}
+
+#[cfg(test)]
+mod authorisation_tests {
+    use super::close_authorised;
+    use uuid::Uuid;
+
+    /// The case the reconnect bug turns on: the client's uuid is replaced, the
+    /// new connection opens a call, and a `MediaClose` from the dead connection
+    /// finally arrives. It must not end a call it does not own.
+    #[test]
+    fn a_stale_connection_cannot_close_the_new_owners_session() {
+        let old_owner = Uuid::new_v4();
+        let new_owner = Uuid::new_v4();
+
+        assert!(!close_authorised(Some(new_owner), None, old_owner));
+        assert!(close_authorised(Some(new_owner), None, new_owner));
+    }
+
+    /// Same race, one step earlier: the new owner's open is still awaiting its
+    /// UDP channel, so there is no session yet -- only the pending claim stands
+    /// between a stale close and a cancelled call.
+    #[test]
+    fn a_stale_connection_cannot_cancel_the_new_owners_pending_open() {
+        let old_owner = Uuid::new_v4();
+        let new_owner = Uuid::new_v4();
+
+        assert!(!close_authorised(None, Some(new_owner), old_owner));
+        assert!(close_authorised(None, Some(new_owner), new_owner));
+    }
+
+    /// A live session outranks a stale claim: the claim is cleared on commit,
+    /// but if one were ever left behind it must not grant authority over a
+    /// session that names someone else.
+    #[test]
+    fn the_established_session_owner_wins_over_a_leftover_claim() {
+        let owner = Uuid::new_v4();
+        let stale_claim = Uuid::new_v4();
+
+        assert!(!close_authorised(
+            Some(owner),
+            Some(stale_claim),
+            stale_claim
+        ));
+        assert!(close_authorised(Some(owner), Some(stale_claim), owner));
+    }
+
+    /// Closing when nothing is open stays a harmless no-op rather than an
+    /// error, so an idempotent hang-up from any connection still succeeds.
+    #[test]
+    fn closing_nothing_is_allowed() {
+        assert!(close_authorised(None, None, Uuid::new_v4()));
+    }
 }

@@ -91,10 +91,15 @@ pub async fn handle_open<T: IOInterface, R: Ratchet>(
             }
         } else {
             match std::mem::replace(&mut peer.udp, UdpState::Opening) {
-                UdpState::Pending(rx) => OpenPath::AwaitChannel {
-                    rx,
-                    generation: peer.media_generation,
-                },
+                UdpState::Pending(rx) => {
+                    // Claimed before the await so a close arriving from a stale
+                    // connection can tell whose open it would be cancelling.
+                    peer.media_pending_owner = Some(uuid);
+                    OpenPath::AwaitChannel {
+                        rx,
+                        generation: peer.media_generation,
+                    }
+                }
                 // Reopen on parked halves: nothing to wait for, so the whole
                 // open commits under this one lock and cannot race a close.
                 UdpState::Idle { tx, rx } => OpenPath::Done(Box::new(start_session(

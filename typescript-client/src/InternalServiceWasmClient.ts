@@ -324,7 +324,18 @@ export class InternalServiceWasmClient {
         try {
             console.log('Loading WASM module...');
 
-            // Import the WASM JS module using relative path from src/ to package root
+            // Imported from the PACKAGE, not from /wasm/.
+            //
+            // Tried and reverted: pointing this at the served /wasm/ copy makes
+            // `vite build` stop needing an uncommitted wasm-pack artefact, and
+            // the production build does succeed. But Vite refuses to let source
+            // import anything under /public — "copied as-is during build
+            // without going through the plugin transforms" — so the dev server
+            // answers 500 and WASM never initialises. Prod-only verification
+            // would have shipped that.
+            //
+            // The CI consequence (bundle-budget and PWA gates cannot build
+            // without a prior WASM build) belongs in CI, not here.
             // @ts-ignore - Dynamic import of WASM glue code
             const wasmModule = await import('../citadel_internal_service_wasm_client.js');
 

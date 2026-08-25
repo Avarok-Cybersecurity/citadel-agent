@@ -375,16 +375,24 @@ export class InternalServiceWasmClient {
                     // proper way to detect WebSocket death.
                     const message = await this.wasmModule.next_message();
 
-                    // Check stop flag before processing
-                    if (this.shouldStopProcessing) {
-                        console.log('[InternalServiceWasmClient] Stop flag set, exiting message loop');
-                        break;
-                    }
-
                     // Reset consecutive error counter on successful message
                     this.consecutiveStreamErrors = 0;
 
+                    // Delivered BEFORE the stop flag is honoured, deliberately.
+                    //
+                    // This message has already been taken off the Rust channel and
+                    // serialized -- it exists nowhere else. Breaking here dropped it on
+                    // the floor, and `stopMessageProcessing()` is called on every
+                    // teardown and reconnect, so the race is routine rather than
+                    // exotic. Handing it to the handler and THEN exiting loses
+                    // nothing; the loop still stops on the same tick.
                     this.handleMessage(message);
+
+                    // Check stop flag after the in-hand message is safe
+                    if (this.shouldStopProcessing) {
+                        console.log('[ILM] [InternalServiceWasmClient] Stop flag set, exiting message loop after delivering the in-flight message');
+                        break;
+                    }
                 } catch (error) {
                     // Check stop flag - if set, exit gracefully
                     if (this.shouldStopProcessing) {

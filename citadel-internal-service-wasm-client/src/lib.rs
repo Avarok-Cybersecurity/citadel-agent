@@ -900,13 +900,41 @@ pub async fn close_connection() -> Result<(), JsValue> {
     let workspace_state = get_workspace_state();
     let mut guard = workspace_state.write().await;
 
-    if let Some(state) = guard.take() {
+    if let Some(mut state) = guard.take() {
         // Close all P2P connections
         state.connections.clear();
 
+        // Count what teardown is about to destroy, and say so.
+        //
+        // Dropping WorkspaceState drops the receiver AND `pending` — every
+        // message ILM has already reported as delivered but that JavaScript has
+        // not yet taken. Nothing logged that, and the [ILM-RESCUE] probe does
+        // NOT cover it: that only runs when a `next_message` call had the
+        // stream checked out at the moment it was replaced. During recovery the
+        // loop is usually parked in backoff with the stream sitting in the
+        // state, so this teardown is the common case and was entirely silent.
+        //
+        // Zero rescues therefore never meant zero loss, which is exactly the
+        // wrong conclusion to invite from a diagnostic.
+        let mut discarded = std::collections::VecDeque::new();
+        let queued = state
+            .stream
+            .as_mut()
+            .map(|stream| drain_queued(stream, &mut discarded))
+            .unwrap_or(0);
+        let already_pending = state.pending.len();
+        if queued > 0 || already_pending > 0 {
+            // ILM-prefixed so the integration harness's keyword filter keeps it.
+            console_log!(
+                "[ILM-TEARDOWN] closing with {} queued and {} pending message(s) still undelivered",
+                queued,
+                already_pending
+            );
+        }
+
         // Note: CitadelWorkspaceMessenger doesn't have a close() method
         // The connection will be cleaned up when the state is dropped
-        console_log!("WASM client connection closed");
+        console_log!("[ILM-TEARDOWN] WASM client connection closed");
         Ok(())
     } else {
         Err(JsValue::from_str("Workspace not initialized"))

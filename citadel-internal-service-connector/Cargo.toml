@@ -24,6 +24,13 @@ parking_lot = { workspace = true }
 itertools = { workspace = true }
 bytes = "1.8.0"
 citadel_logging = { workspace = true }
+# The `log` FACADE, distinct from citadel_logging above, which wraps tracing.
+# messenger/mod.rs does `use citadel_logging as log`, so every `log::info!` in
+# that file is a tracing macro needing a subscriber — and the WASM client
+# installs only `console_log`, a `log`-facade logger. The result was that every
+# diagnostic in that file was invisible in the browser while ILM's lines (which
+# use the real facade) came through, which read like the code never running.
+log = { version = "0.4", default-features = false }
 citadel_sdk = { workspace = true, optional = true }
 
 # WebSocket dependencies

@@ -209,7 +209,7 @@ impl intersession_layer_messaging::local_delivery::LocalDelivery<WrappedMessage>
         let InternalServicePayload::Response(response) = message.contents else {
             // Logged, not silent: ILM records this as a delivery failure but the
             // reason never reached anyone.
-            log::info!(target: "ism", "[ILM-DELIVER] msg_id={msg_id} REJECTED: payload was not a Response");
+            ::log::info!(target: "ism", "[ILM-DELIVER] msg_id={msg_id} REJECTED: payload was not a Response");
             return Err(DeliveryError::BadInput);
         };
 
@@ -230,7 +230,7 @@ impl intersession_layer_messaging::local_delivery::LocalDelivery<WrappedMessage>
                 fp ^= *b as u64;
                 fp = fp.wrapping_mul(0x100_0000_01b3);
             }
-            log::info!(
+            ::log::info!(
                 target: "ism",
                 "[ILM-DELIVER] msg_id={msg_id} cid={} peer={} len={} fp={:016x}",
                 n.cid, n.peer_cid, n.message.len(), fp
@@ -406,7 +406,7 @@ where
                     // TODO: Add support for group messaging
                     InternalServiceResponse::MessageNotification(mut message) => {
                         // DEBUG: Log ALL MessageNotification arrivals to trace P2P message flow
-                        log::info!(target: "citadel", "[P2P-DEBUG] MessageNotification arrived: cid={}, peer_cid={}, msg_len={}",
+                        ::log::info!(target: "ism", "[P2P-DEBUG] MessageNotification arrived: cid={}, peer_cid={}, msg_len={}",
                             message.cid, message.peer_cid, message.message.len());
                         // deserialize and relay to ISM
                         match bincode2::deserialize::<WireWrapper>(&message.message) {
@@ -441,7 +441,7 @@ where
                                         {
                                             log::error!(target: "citadel", "Error forwarding ISM MessageNotification to JS: {err:?}");
                                         } else {
-                                            log::info!(target: "citadel", "[P2P-DEBUG] FORWARDED ISM MessageNotification to JS: cid={}, peer_cid={}, unwrapped_len={}",
+                                            ::log::info!(target: "ism", "[P2P-DEBUG] FORWARDED ISM MessageNotification to JS: cid={}, peer_cid={}, unwrapped_len={}",
                                                 message.cid, message.peer_cid, message.message.len());
                                         }
 

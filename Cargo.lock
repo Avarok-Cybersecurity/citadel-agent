@@ -665,6 +665,7 @@ dependencies = [
  "intersession-layer-messaging",
  "itertools 0.13.0",
  "js-sys",
+ "log",
  "parking_lot",
  "rand 0.8.5",
  "serde",

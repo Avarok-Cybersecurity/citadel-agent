@@ -205,9 +205,37 @@ impl intersession_layer_messaging::local_delivery::LocalDelivery<WrappedMessage>
     for LocalDeliveryTx
 {
     async fn deliver(&self, message: WrappedMessage) -> Result<(), DeliveryError> {
+        let msg_id = message.message_id();
         let InternalServicePayload::Response(response) = message.contents else {
+            // Logged, not silent: ILM records this as a delivery failure but the
+            // reason never reached anyone.
+            log::info!(target: "ism", "[ILM-DELIVER] msg_id={msg_id} REJECTED: payload was not a Response");
             return Err(DeliveryError::BadInput);
         };
+
+        // The join key the reconnect-loss investigation has been missing.
+        //
+        // ILM logs msg_id with no content; the client logs content with no
+        // msg_id, so no one can say which delivery carried which message. Length
+        // cannot bridge them either — the offline test's three messages are the
+        // same length and differ by one digit. This prints a content
+        // fingerprint next to the id; the client prints the same fingerprint on
+        // receipt, and the two sides finally line up.
+        //
+        // Deliberately target: "ism". The messenger's existing `target: "citadel"`
+        // lines do not appear in these runs at all, whereas every ILM line does.
+        if let InternalServiceResponse::MessageNotification(n) = &response {
+            let mut fp: u64 = 0xcbf2_9ce4_8422_2325;
+            for b in &n.message {
+                fp ^= *b as u64;
+                fp = fp.wrapping_mul(0x100_0000_01b3);
+            }
+            log::info!(
+                target: "ism",
+                "[ILM-DELIVER] msg_id={msg_id} cid={} peer={} len={} fp={:016x}",
+                n.cid, n.peer_cid, n.message.len(), fp
+            );
+        }
 
         self.final_tx
             .send(response)

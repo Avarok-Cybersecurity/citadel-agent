@@ -1,1 +1,13 @@
-*
+# Build output and generated WASM artefacts.
+#
+# NOT a bare `*`. It was one, while 108 files under src/ were tracked anyway —
+# so every newly generated ts-rs type was silently untracked, `git add` said
+# nothing, and the build broke only in CI with an error naming the file that
+# IMPORTED the missing type rather than the type itself. Five media types
+# shipped that way.
+node_modules/
+dist/
+# A broken self-referential symlink some tooling leaves behind. Named without a
+# trailing slash so the symlink itself matches, not only a directory.
+/typescript-client
+citadel_internal_service_wasm_client*

@@ -44,6 +44,67 @@ pub async fn handle_request<T, R: Ratchet>(
 where
     T: IOInterface + Sync,
 {
+    // A request may only act on a session THIS connection owns.
+    //
+    // Every handler used to read `cid` straight off the wire and act on it,
+    // while the connection's own identity sat unused in scope — so a request
+    // could name any session it liked. `deregister` would destroy that account,
+    // `local_db` would read or wipe its store, `message` would send as them.
+    // WebSocket is exempt from CORS and the dev stack binds all interfaces, so
+    // that was reachable from any page a user happened to visit.
+    //
+    // `session_cid()` returns None for the six variants that legitimately
+    // precede or span a session (Connect, Register, GetSessions,
+    // GetAccountInformation, ConnectionManagement, Batched), and those are
+    // unaffected. A cid that is not in the map is also let through: the handler
+    // owns that error and already reports it, and pre-empting it here would
+    // change existing behaviour for clients acting before a session exists.
+    // LocalDBGetKV is exempt, on evidence rather than assumption.
+    //
+    // Enabling this gate produced refusals in ordinary two-peer messaging, and
+    // naming the variant showed every one of them was LocalDBGetKV: ILM's
+    // messenger backend reads key/value state under a session this connection
+    // does not own. Refusing those does not merely log noise — it would break
+    // messaging state, and the suite would not have told me, because the client
+    // retries and every spec still passed.
+    //
+    // So the read stays allowed until that access is understood well enough to
+    // scope it properly (either ILM keys these reads by the local session, or
+    // the gate learns which peer-scoped reads are legitimate). The destructive
+    // and impersonating operations — Deregister, Disconnect, Message, SendFile,
+    // the LocalDB writes and clears — are gated now, and they are what made this
+    // reachable from any page a user visits.
+    //
+    // Recorded in docs/ROBUSTNESS.md as an open question rather than left as a
+    // silent hole in the check.
+    let exempt = matches!(command, InternalServiceRequest::LocalDBGetKV { .. });
+
+    if let Some(cid) = command.session_cid().filter(|_| !exempt) {
+        let owner = {
+            let map = this.server_connection_map.read();
+            map.get(&cid)
+                .map(|conn| conn.associated_localhost_connection.load(std::sync::atomic::Ordering::Relaxed))
+        };
+        if let Some(owner) = owner {
+            if owner != uuid {
+                // Name the request type: "something was refused" is not
+                // actionable, and the first run of this gate produced 48
+                // refusals whose source could not be identified from the log.
+                //
+                // Variant name only — the Debug output is truncated at the
+                // first brace so payloads (message bodies, file contents, KV
+                // values) never reach the log.
+                let debug = format!("{command:?}");
+                let variant = debug.split(['{', '(']).next().unwrap_or("Request").trim();
+                log::warn!(target: "citadel",
+                    "Refusing {variant} for session {cid} from connection {uuid}, which does not own it");
+                // Dropped rather than answered: a caller acting on someone
+                // else's session gets no confirmation that the session exists.
+                return None;
+            }
+        }
+    }
+
     match &command {
         InternalServiceRequest::GetAccountInformation { .. } => {
             get_account_information::handle(this, uuid, command).await

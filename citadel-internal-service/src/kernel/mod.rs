@@ -505,7 +505,29 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
     }
 
     async fn on_node_event_received(&self, message: NodeResult<R>) -> Result<(), NetworkError> {
-        responses::handle_node_result(self, message).await
+        // Log and continue. Returning Err here does NOT fail one event — the
+        // SDK's KernelExecutor treats it as fatal:
+        //
+        //   if let Err(err) = kernel_ref.on_node_event_received(message).await {
+        //       log::error!(target: "citadel", "Kernel threw an error: {:?}. Will end", err);
+        //       citadel_server_remote.clone().shutdown().await?;
+        //
+        // so ONE failed delivery shut down the entire local agent — every
+        // session for every account multiplexed through it — and with the
+        // default in-memory backend, every account with it.
+        //
+        // The reachable triggers are ordinary: a P2P channel arriving for a
+        // session that was just removed from the map (connect.rs removes and
+        // then sleeps 200ms before reconnecting), or a send to a tcp entry
+        // whose receiver was dropped a moment ago because a tab closed. Neither
+        // means the node cannot continue; both used to end it.
+        //
+        // Err is reserved for conditions that genuinely mean this kernel cannot
+        // keep running. A per-session routing failure is not one.
+        if let Err(error) = responses::handle_node_result(self, message).await {
+            error!(target: "citadel", "[Kernel] Failed to handle node event: {error:?}. Continuing — this is not fatal to the agent.");
+        }
+        Ok(())
     }
 
     async fn on_stop(&mut self) -> Result<(), NetworkError> {

@@ -82,8 +82,10 @@ where
     if let Some(cid) = command.session_cid().filter(|_| !exempt) {
         let owner = {
             let map = this.server_connection_map.read();
-            map.get(&cid)
-                .map(|conn| conn.associated_localhost_connection.load(std::sync::atomic::Ordering::Relaxed))
+            map.get(&cid).map(|conn| {
+                conn.associated_localhost_connection
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            })
         };
         if let Some(owner) = owner {
             if owner != uuid {

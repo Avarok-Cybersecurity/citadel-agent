@@ -239,11 +239,23 @@ where
             > = FuturesOrdered::new();
 
             for cmd in commands.clone() {
-                // Get the request_id from the inner command for the recursive call
-                let cmd_uuid = cmd.request_id().copied().unwrap_or_else(Uuid::new_v4);
+                // The CONNECTION uuid, not the inner command's request_id.
+                //
+                // `handle_request`'s second parameter is the localhost
+                // connection id everywhere else — it is what the session
+                // ownership gate compares against, and what handlers use to
+                // find this client in tx_to_localhost_clients. Passing a
+                // request_id there meant every session-scoped sub-command in a
+                // batch was silently refused (a random uuid can never equal
+                // the real connection's), and a client that learned another
+                // connection's uuid could have named it to pass the gate.
+                //
+                // Nothing is lost: the batch arm maps to `result.response` and
+                // discards the returned uuid, and each handler takes its
+                // response's request_id from the command itself.
                 let fut = Box::pin(async move {
                     // Recursive call to handle each command
-                    handle_request(this, cmd_uuid, cmd)
+                    handle_request(this, uuid, cmd)
                         .await
                         .map(|result| result.response)
                 })

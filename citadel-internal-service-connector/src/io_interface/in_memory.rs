@@ -3,8 +3,12 @@ use async_trait::async_trait;
 use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
 };
-use citadel_logging as log;
+// The `log` FACADE, not citadel_logging (which wraps tracing). The WASM client
+// installs console_log -- a log-facade logger -- and no tracing subscriber
+// anywhere, so every `log::` macro here went nowhere in the browser. The
+// dependency was already added for this fix; the `use` was never changed.
 use futures::Sink;
+use log;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 

@@ -24,7 +24,10 @@ use citadel_internal_service_types::{
 };
 use citadel_io::tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use citadel_io::tokio::sync::Mutex;
-use citadel_logging as log;
+// The `log` FACADE, not citadel_logging (which wraps tracing). The WASM client
+// installs console_log -- a log-facade logger -- and no tracing subscriber
+// anywhere, so every `log::` macro here went nowhere in the browser. The
+// dependency was already added for this fix; the `use` was never changed.
 use dashmap::DashMap;
 use futures::future::Either;
 use futures::{SinkExt, StreamExt};
@@ -32,6 +35,7 @@ use intersession_layer_messaging::{
     DeliveryError, MessageMetadata, NetworkError, Payload, UnderlyingSessionTransport, ILM,
 };
 use itertools::Itertools;
+use log;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};

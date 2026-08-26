@@ -14,4 +14,4 @@ target/
 ./.idea/*
 target_ide/
 **/node_modules/
-citadel-internal-service/filesystem/
+citadel-internal-service/filesystem/*.bak

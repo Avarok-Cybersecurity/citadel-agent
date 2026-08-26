@@ -1877,3 +1877,55 @@ mod tests {
         let _ = InternalServicePayload::name();
     }
 }
+
+impl InternalServiceRequest {
+    /// The session this request acts on, when it names one.
+    ///
+    /// Used to check that the caller owns the session before the request is
+    /// dispatched. Every handler previously took `cid` straight off the wire and
+    /// acted on it, while the connection's own identity sat unused in scope — so
+    /// a request could name any session it liked. WebSocket is exempt from CORS,
+    /// which made that reachable from any page a user happened to visit.
+    ///
+    /// `None` for the six variants that legitimately precede or span a session:
+    /// Connect, Register, GetSessions, GetAccountInformation,
+    /// ConnectionManagement (which is how a session is claimed in the first
+    /// place) and Batched (whose inner commands are each checked on dispatch).
+    pub fn session_cid(&self) -> Option<u64> {
+        match self {
+            Self::Message { cid, .. } => Some(*cid),
+            Self::Disconnect { cid, .. } => Some(*cid),
+            Self::MediaOpen { cid, .. } => Some(*cid),
+            Self::MediaSend { cid, .. } => Some(*cid),
+            Self::MediaClose { cid, .. } => Some(*cid),
+            Self::Deregister { cid, .. } => Some(*cid),
+            Self::SendFile { cid, .. } => Some(*cid),
+            Self::RespondFileTransfer { cid, .. } => Some(*cid),
+            Self::DownloadFile { cid, .. } => Some(*cid),
+            Self::DeleteVirtualFile { cid, .. } => Some(*cid),
+            Self::PickFile { cid, .. } => Some(*cid),
+            Self::ListAllPeers { cid, .. } => Some(*cid),
+            Self::ListRegisteredPeers { cid, .. } => Some(*cid),
+            Self::PeerConnect { cid, .. } => Some(*cid),
+            Self::PeerDisconnect { cid, .. } => Some(*cid),
+            Self::PeerConnectAccept { cid, .. } => Some(*cid),
+            Self::PeerRegister { cid, .. } => Some(*cid),
+            Self::PeerRegisterRespond { cid, .. } => Some(*cid),
+            Self::LocalDBGetKV { cid, .. } => Some(*cid),
+            Self::LocalDBSetKV { cid, .. } => Some(*cid),
+            Self::LocalDBDeleteKV { cid, .. } => Some(*cid),
+            Self::LocalDBGetAllKV { cid, .. } => Some(*cid),
+            Self::LocalDBClearAllKV { cid, .. } => Some(*cid),
+            Self::GroupCreate { cid, .. } => Some(*cid),
+            Self::GroupLeave { cid, .. } => Some(*cid),
+            Self::GroupEnd { cid, .. } => Some(*cid),
+            Self::GroupMessage { cid, .. } => Some(*cid),
+            Self::GroupInvite { cid, .. } => Some(*cid),
+            Self::GroupRespondRequest { cid, .. } => Some(*cid),
+            Self::GroupKick { cid, .. } => Some(*cid),
+            Self::GroupListGroupsFor { cid, .. } => Some(*cid),
+            Self::GroupRequestJoin { cid, .. } => Some(*cid),
+            _ => None,
+        }
+    }
+}

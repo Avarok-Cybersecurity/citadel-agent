@@ -16,7 +16,8 @@ use futures::{Sink, Stream};
 // use send_wrapper::SendWrapper;  // Not needed with channel-based approach
 use ws_stream_wasm::{WsMessage, WsMeta};
 // use futures_util::{SinkExt as FuturesSinkExt, StreamExt as FuturesStreamExt};
-use once_cell::sync::OnceCell;
+use once_cell::sync::{Lazy, OnceCell};
+use std::sync::RwLock as StdRwLock;
 use wasm_bindgen::prelude::*;
 
 // WASM exports and logging setup - defined early for use in functions below
@@ -176,7 +177,25 @@ use citadel_internal_service_connector::messenger::backend::CitadelWorkspaceBack
 
 // Global state management
 static WORKSPACE_STATE: OnceCell<Arc<RwLock<Option<WorkspaceState>>>> = OnceCell::new();
-static SINK_CHANNEL: OnceCell<mpsc::UnboundedSender<InternalServicePayload>> = OnceCell::new();
+/// The WebSocket sink, replaced on every (re)connect.
+///
+/// Was a `OnceCell`, which made reconnection impossible AND destructive:
+/// `restart()` calls `close_connection()` first and then re-runs the connect
+/// path, where `OnceCell::set` returns `Err` because the cell was already
+/// populated by the original `init()`. So every restart tore down a working
+/// client and then failed with "Failed to store sink channel", leaving nothing
+/// running — and every subsequent attempt failed the same way. The recovery
+/// path in InternalServiceWasmClient therefore could never succeed; it retried
+/// until it gave up.
+///
+/// A re-settable holder is the whole fix: connect writes, teardown clears.
+static SINK_CHANNEL: Lazy<StdRwLock<Option<mpsc::UnboundedSender<InternalServicePayload>>>> =
+    Lazy::new(|| StdRwLock::new(None));
+
+/// The current sink, if a connection is up.
+fn sink_channel() -> Option<mpsc::UnboundedSender<InternalServicePayload>> {
+    SINK_CHANNEL.read().ok().and_then(|guard| guard.clone())
+}
 
 struct WorkspaceState {
     messenger: CitadelWorkspaceMessenger<CitadelWorkspaceBackend>,
@@ -272,9 +291,11 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
         mpsc::unbounded_channel::<std::io::Result<InternalServicePayload>>();
 
     // Store the sink channel globally for direct message sending
-    SINK_CHANNEL
-        .set(sink_tx.clone())
-        .map_err(|_| JsValue::from_str("Failed to store sink channel"))?;
+    // Replace, not set-once: a restart must be able to install a new sink.
+    match SINK_CHANNEL.write() {
+        Ok(mut guard) => *guard = Some(sink_tx.clone()),
+        Err(_) => return Err(JsValue::from_str("Sink channel lock poisoned")),
+    }
 
     // Connect to WebSocket and spawn communication task
     let (_ws_meta, ws_stream) = WsMeta::connect(&ws_url, None)
@@ -857,7 +878,7 @@ pub fn send_media_frame(
         payload,
     };
 
-    let Some(sink_tx) = SINK_CHANNEL.get() else {
+    let Some(sink_tx) = sink_channel() else {
         return Err(JsValue::from_str("Client not properly initialized"));
     };
 
@@ -875,7 +896,7 @@ pub async fn send_direct_to_internal_service(message: JsValue) -> Result<(), JsV
     // debug_log!("Deserialized request: {:?}", request);
 
     // Use direct WebSocket channel instead of bypasser to avoid workspace lock
-    if let Some(sink_tx) = SINK_CHANNEL.get() {
+    if let Some(sink_tx) = sink_channel() {
         let payload = InternalServicePayload::Request(request);
         match sink_tx.send(payload) {
             Ok(()) => {
@@ -896,6 +917,12 @@ pub async fn send_direct_to_internal_service(message: JsValue) -> Result<(), JsV
 #[wasm_bindgen]
 pub async fn close_connection() -> Result<(), JsValue> {
     console_log!("Closing WASM client connection");
+
+    // Drop the sink first, so a subsequent connect installs a fresh one rather
+    // than failing against a stale handle. Without this, reconnection was dead.
+    if let Ok(mut guard) = SINK_CHANNEL.write() {
+        *guard = None;
+    }
 
     let workspace_state = get_workspace_state();
     let mut guard = workspace_state.write().await;

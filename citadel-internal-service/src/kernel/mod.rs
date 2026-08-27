@@ -32,6 +32,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot::Receiver as OneshotReceiver;
 use uuid::Uuid;
 
+pub(crate) mod credential_fingerprint;
 pub(crate) mod ext;
 pub(crate) mod media;
 pub(crate) mod requests;
@@ -199,6 +200,13 @@ pub struct Connection<R: Ratchet> {
     /// request_id instead of the meaningless TCP-connection uuid fallback.
     /// See kernel/revfs_correlation.rs for the mechanism.
     pub revfs_correlations: revfs_correlation::RevfsCorrelations,
+    /// The client-side password hash this session was opened with.
+    ///
+    /// Consulted when a later `Connect` names this session's username, so the
+    /// session cannot be handed over -- message stream and all -- to a caller
+    /// who only knew the username. See kernel/credential_fingerprint.rs for why
+    /// this is a recorded fingerprint rather than a local credential check.
+    pub credential_fingerprint: Option<Vec<u8>>,
 }
 
 #[allow(dead_code)]
@@ -252,6 +260,7 @@ impl<R: Ratchet> Connection<R> {
         associated_tcp_connection: Arc<AtomicUuid>,
         username: String,
         server_address: String,
+        credential_fingerprint: Option<Vec<u8>>,
     ) -> Self {
         Connection {
             peers: HashMap::new(),
@@ -264,6 +273,7 @@ impl<R: Ratchet> Connection<R> {
             server_address,
             picked_files: HashMap::new(),
             revfs_correlations: revfs_correlation::RevfsCorrelations::default(),
+            credential_fingerprint,
         }
     }
 

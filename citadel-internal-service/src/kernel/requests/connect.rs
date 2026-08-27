@@ -52,6 +52,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     };
     let remote = this.remote();
 
+    // The SDK takes ownership of the password when it carries it to the server,
+    // so the fingerprint has to be derived from a copy taken here.
+    let password_for_fingerprint = password.clone();
+
     // GUARD 1: Prevent duplicate concurrent connection attempts for same username
     // This fixes TOCTOU race conditions where two Connect requests arrive simultaneously
     {
@@ -95,6 +99,49 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         };
 
         if sdk_active {
+            // Prove the caller knows the password before handing them the
+            // session. This branch never reaches the SDK, so nothing else in it
+            // ever looks at the password: it used to re-point the session's
+            // message stream to the caller and return the real CID on the
+            // strength of a username alone. Any client of this agent's socket
+            // could name a live username and take over its stream.
+            //
+            // See kernel/credential_fingerprint.rs for why this is a recorded
+            // fingerprint and not a local credential check -- the short version
+            // is that authentication belongs to the server, re-connecting here
+            // would reset the ratchet this branch exists to protect, and the
+            // SDK's client-side `validate_credentials` rejects every password.
+            let presented = crate::kernel::credential_fingerprint::derive(
+                &remote,
+                &username,
+                password_for_fingerprint,
+            )
+            .await;
+            let authorized = {
+                let lock = this.server_connection_map.read();
+                lock.get(&cid).is_some_and(|conn| {
+                    crate::kernel::credential_fingerprint::matches(
+                        conn.credential_fingerprint.as_ref(),
+                        presented.as_ref(),
+                    )
+                })
+            };
+
+            if !authorized {
+                citadel_sdk::logging::warn!(target: "citadel", "[Connect] REFUSED reuse of session {} for user {}: the password does not match the one that opened it", cid, username);
+                cleanup_username(this, &username);
+                // Deliberately the same message a wrong password on a fresh
+                // account gets, and no CID: telling the caller that a session
+                // exists for this username would make the handler an oracle for
+                // who is signed in on this agent.
+                let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                    cid: 0,
+                    message: "Invalid username or password".to_string(),
+                    request_id: Some(request_id),
+                });
+                return Some(HandledRequestResult { response, uuid });
+            }
+
             // Session is active in both internal state and SDK - inform frontend
             citadel_sdk::logging::info!(target: "citadel", "[Connect] Session {} already active for user {} - returning SessionAlreadyActive", cid, username);
 
@@ -190,12 +237,22 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 .map(|cnac| cnac.get_connect_info().addr.to_string())
                 .unwrap_or_default();
 
+            // Recorded from the password the SERVER just accepted, so a later
+            // reuse request has something to prove itself against.
+            let fingerprint = crate::kernel::credential_fingerprint::derive(
+                &remote,
+                &username,
+                password_for_fingerprint,
+            )
+            .await;
+
             let connection_struct = Connection::new(
                 sink,
                 client_server_remote,
                 Arc::new(AtomicUuid::new(uuid)),
                 username,
                 server_address,
+                fingerprint,
             );
             this.server_connection_map
                 .write()

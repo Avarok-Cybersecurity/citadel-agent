@@ -112,7 +112,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             // would reset the ratchet this branch exists to protect, and the
             // SDK's client-side `validate_credentials` rejects every password.
             let presented = crate::kernel::credential_fingerprint::derive(
-                &remote,
+                remote,
                 &username,
                 password_for_fingerprint,
             )
@@ -240,7 +240,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             // Recorded from the password the SERVER just accepted, so a later
             // reuse request has something to prove itself against.
             let fingerprint = crate::kernel::credential_fingerprint::derive(
-                &remote,
+                remote,
                 &username,
                 password_for_fingerprint,
             )

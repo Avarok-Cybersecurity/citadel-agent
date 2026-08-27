@@ -32,7 +32,7 @@
 //! session it admits you to is the one that password opened, which is the
 //! property that matters here.
 
-use citadel_sdk::prelude::{NodeRemote, ProtocolRemoteExt, Ratchet, SecBuffer};
+use citadel_sdk::prelude::{NodeRemote, Ratchet, SecBuffer};
 
 /// The client-side hash of `password` for `username`, or `None` when no such
 /// proof can be produced.

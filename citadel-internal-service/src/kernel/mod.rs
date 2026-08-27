@@ -36,6 +36,7 @@ pub(crate) mod ext;
 pub(crate) mod media;
 pub(crate) mod requests;
 pub(crate) mod responses;
+pub(crate) mod revfs_correlation;
 
 pub type RatchetType = StackedRatchet;
 
@@ -193,6 +194,11 @@ pub struct Connection<R: Ratchet> {
     /// Key is the request_id from the PickFile request.
     /// Used to resolve FileSource::PickFileRef in SendFile commands.
     pub picked_files: HashMap<Uuid, PickedFileInfo>,
+    /// Pending REVFS pull/push request ids, consumed when the matching
+    /// ObjectTransferHandle arrives so its ticks carry the browser's
+    /// request_id instead of the meaningless TCP-connection uuid fallback.
+    /// See kernel/revfs_correlation.rs for the mechanism.
+    pub revfs_correlations: revfs_correlation::RevfsCorrelations,
 }
 
 #[allow(dead_code)]
@@ -257,6 +263,7 @@ impl<R: Ratchet> Connection<R> {
             groups: HashMap::new(),
             server_address,
             picked_files: HashMap::new(),
+            revfs_correlations: revfs_correlation::RevfsCorrelations::default(),
         }
     }
 

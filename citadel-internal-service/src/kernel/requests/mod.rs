@@ -522,13 +522,28 @@ mod ownership_gate_tests {
         let id = Uuid::new_v4();
         for command in [
             InternalServiceRequest::LocalDBSetKV {
-                request_id: id, cid: 1, peer_cid: None, key: "k".into(), value: vec![],
+                request_id: id,
+                cid: 1,
+                peer_cid: None,
+                key: "k".into(),
+                value: vec![],
             },
             InternalServiceRequest::LocalDBDeleteKV {
-                request_id: id, cid: 1, peer_cid: None, key: "k".into(),
+                request_id: id,
+                cid: 1,
+                peer_cid: None,
+                key: "k".into(),
             },
-            InternalServiceRequest::LocalDBClearAllKV { request_id: id, cid: 1, peer_cid: None },
-            InternalServiceRequest::LocalDBGetAllKV { request_id: id, cid: 1, peer_cid: None },
+            InternalServiceRequest::LocalDBClearAllKV {
+                request_id: id,
+                cid: 1,
+                peer_cid: None,
+            },
+            InternalServiceRequest::LocalDBGetAllKV {
+                request_id: id,
+                cid: 1,
+                peer_cid: None,
+            },
         ] {
             assert!(
                 requires_owned_session(&command),
@@ -548,7 +563,10 @@ mod ownership_gate_tests {
             "received_messages-123",
             "last_received_from-123",
         ] {
-            assert!(is_ilm_key(key), "{key} is a key ILM reads on the happy path");
+            assert!(
+                is_ilm_key(key),
+                "{key} is a key ILM reads on the happy path"
+            );
         }
     }
 

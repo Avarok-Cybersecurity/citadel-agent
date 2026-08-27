@@ -3,7 +3,7 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{FileTransferRequestNotification, InternalServiceResponse};
 use citadel_sdk::logging::{info, warn};
 use citadel_sdk::prelude::{
-    NetworkError, ObjectTransferHandle, ObjectTransferOrientation, Ratchet,
+    NetworkError, ObjectTransferHandle, ObjectTransferOrientation, Ratchet, TransferType,
 };
 use std::sync::atomic::Ordering;
 
@@ -49,14 +49,60 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 .load(Ordering::Relaxed);
 
             if is_revfs_pull {
+                // Reclaim the browser's DownloadFile request_id (registered in
+                // requests/file/download.rs — PullObject cannot carry it). The
+                // browser correlates ticks by that id; with `None` here the
+                // ticks fell back to the TCP-connection uuid, matched nothing,
+                // and every completed download was reported as a 30s-timeout
+                // failure. `peer_cid` is the same scope key download.rs
+                // registered under: the peer's cid for P2P, 0 for c2s
+                // (handle.source == C2S_IDENTITY_CID).
+                let request_id = connection.revfs_correlations.take_pull(peer_cid);
                 spawn_tick_updater(
                     object_transfer_handler,
                     implicated_cid,
                     Some(peer_cid),
                     &mut server_connection_map,
                     this.tx_to_localhost_clients.clone(),
-                    None,
+                    request_id,
                 );
+            } else if matches!(
+                metadata.transfer_type,
+                TransferType::RemoteEncryptedVirtualFilesystem { .. }
+            ) {
+                // A REVFS *push* from a peer: accept it here, without asking
+                // the browser. REVFS storage writes are an internal protocol
+                // mechanism — the uploader's page has already recorded the
+                // file and synced the tree op — not a user-facing transfer
+                // offer. Nothing in the UI answers the accept prompt for
+                // them, so pending this like a standard transfer meant no
+                // bytes were EVER streamed: both trees listed a downloadable
+                // file that existed nowhere, and the uploader's Sender
+                // handle (whose TransferComplete the browser now awaits)
+                // never arrived, because the receiver only acks the file
+                // header after acceptance. The server kernel auto-accepts
+                // for exactly the same reason; this mirrors it for the
+                // peer-hosted scope.
+                let mut handler = object_transfer_handler;
+                match handler.accept() {
+                    Ok(()) => {
+                        info!(target: "citadel", "Auto-accepted inbound REVFS push from peer {peer_cid} for cid {implicated_cid}");
+                        // Drain the status stream so reception completes; the
+                        // receiving browser issued no request, so there is no
+                        // request_id to stamp these ticks with.
+                        spawn_tick_updater(
+                            handler,
+                            implicated_cid,
+                            Some(peer_cid),
+                            &mut server_connection_map,
+                            this.tx_to_localhost_clients.clone(),
+                            None,
+                        );
+                    }
+                    Err(err) => {
+                        warn!(target: "citadel", "[ObjectTransferHandle] Failed to auto-accept REVFS push from peer {peer_cid} for cid {implicated_cid}: {err:?}");
+                    }
+                }
             } else {
                 // Send an update to the TCP client that way they can choose to accept or reject the transfer
                 let response = InternalServiceResponse::FileTransferRequestNotification(
@@ -102,13 +148,31 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         // we know the opposite node agreed to the connection thus we can spawn
         let mut server_connection_map = this.server_connection_map.write();
         info!(target: "citadel", "Sender Obtained ObjectTransferHandler");
+        // A REVFS push's Sender ticks are the uploader's ONLY completion
+        // signal (SendFileRequestSuccess just means "queued"), so reclaim the
+        // browser's SendFile request_id registered in requests/file/upload.rs.
+        // The scope key mirrors upload.rs: for a c2s push the handle carries
+        // source == receiver == session_cid, so the computed `peer_cid` here
+        // IS `implicated_cid` — which is what upload.rs registered under
+        // (`peer_cid.unwrap_or(cid)`). Standard file transfers register
+        // nothing, so they keep the legacy TCP-uuid fallback.
+        let request_id = if matches!(
+            object_transfer_handler.metadata.transfer_type,
+            TransferType::RemoteEncryptedVirtualFilesystem { .. }
+        ) {
+            server_connection_map
+                .get_mut(&implicated_cid)
+                .and_then(|conn| conn.revfs_correlations.take_push(peer_cid))
+        } else {
+            None
+        };
         spawn_tick_updater(
             object_transfer_handler,
             implicated_cid,
             Some(peer_cid),
             &mut server_connection_map,
             this.tx_to_localhost_clients.clone(),
-            None,
+            request_id,
         );
     }
 

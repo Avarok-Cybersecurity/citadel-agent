@@ -10,8 +10,9 @@ mod tests {
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_types::{
         DeleteVirtualFileSuccess, DownloadFileFailure, DownloadFileSuccess, FileSource,
-        FileTransferRequestNotification, FileTransferStatusNotification, InternalServiceRequest,
-        InternalServiceResponse, SendFileRequestFailure, SendFileRequestSuccess,
+        FileTransferRequestNotification, FileTransferStatusNotification,
+        FileTransferTickNotification, InternalServiceRequest, InternalServiceResponse,
+        SendFileRequestFailure, SendFileRequestSuccess,
     };
     use citadel_sdk::logging::info;
     use citadel_sdk::prelude::*;
@@ -24,7 +25,76 @@ mod tests {
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
     use std::time::Duration;
+    use tokio::sync::mpsc::UnboundedReceiver;
     use uuid::Uuid;
+
+    /// Drains one service's REVFS tick stream to its terminal status,
+    /// asserting every tick carries the REQUESTING CLIENT's request_id.
+    ///
+    /// This is the wire contract the browser depends on: `PullObject` /
+    /// `SendObject` cannot carry a request id, so the kernel threads it
+    /// through `kernel/revfs_correlation.rs` (registered by the DownloadFile /
+    /// SendFile handlers, reclaimed when the ObjectTransferHandle arrives).
+    /// Before that registry, ticks fell back to the TCP-connection uuid and
+    /// the client's correlation matched nothing — every completed REVFS
+    /// download reported failure after its 30s timeout, and a REVFS upload
+    /// had no completion signal at all.
+    ///
+    /// When `cmp_path` is given, the terminal is ReceptionComplete and the
+    /// received file must match its contents; otherwise the terminal is the
+    /// sender's TransferComplete.
+    async fn exhaust_revfs_ticks_asserting_request_id(
+        svc: &mut UnboundedReceiver<InternalServiceResponse>,
+        expected_request_id: Uuid,
+        cmp_path: Option<PathBuf>,
+    ) {
+        let mut received_path = None;
+        loop {
+            let response = svc.recv().await.unwrap();
+            let InternalServiceResponse::FileTransferTickNotification(
+                FileTransferTickNotification {
+                    status, request_id, ..
+                },
+            ) = response
+            else {
+                // Same tolerance as exhaust_stream_to_file_completion: other
+                // signals may interleave; only the tick stream is under test.
+                citadel_sdk::logging::warn!(target: "citadel", "Unexpected signal {response:?}");
+                continue;
+            };
+            assert_eq!(
+                request_id,
+                Some(expected_request_id),
+                "REVFS ticks must carry the requesting client's request_id;                  the TCP-uuid fallback matches nothing client-side"
+            );
+            match status {
+                ObjectTransferStatus::ReceptionBeginning(path, _) => received_path = Some(path),
+                ObjectTransferStatus::TransferComplete => {
+                    assert!(
+                        cmp_path.is_none(),
+                        "Expected a reception terminal, got the sender's TransferComplete"
+                    );
+                    return;
+                }
+                ObjectTransferStatus::ReceptionComplete => {
+                    let cmp = cmp_path.expect("Expected a sender terminal, got ReceptionComplete");
+                    let cmp_data = tokio::fs::read(cmp).await.unwrap();
+                    let streamed_data =
+                        tokio::fs::read(received_path.expect("No ReceptionBeginning tick"))
+                            .await
+                            .unwrap();
+                    assert_eq!(
+                        cmp_data.as_slice(),
+                        streamed_data.as_slice(),
+                        "Pulled file does not match the original"
+                    );
+                    return;
+                }
+                ObjectTransferStatus::Fail(err) => panic!("REVFS transfer failed: {err}"),
+                _ => {}
+            }
+        }
+    }
 
     #[tokio::test]
     async fn test_internal_service_standard_file_transfer_c2s() -> Result<(), Box<dyn Error>> {
@@ -241,8 +311,9 @@ mod tests {
             // Push file to REVFS
             let file_to_send = PathBuf::from("../resources/test.txt");
             let virtual_path = PathBuf::from("/vfs/test.txt");
+            let push_request_id = Uuid::new_v4();
             let file_transfer_command = InternalServiceRequest::SendFile {
-                request_id: Uuid::new_v4(),
+                request_id: push_request_id,
                 source: FileSource::Path(file_to_send.clone()),
                 cid: *cid,
                 transfer_type: TransferType::RemoteEncryptedVirtualFilesystem {
@@ -263,17 +334,22 @@ mod tests {
                 panic!("Send File Failure: {message:?}")
             }
 
-            // Wait for the sender to complete the transfer
-            exhaust_stream_to_file_completion(file_to_send.clone(), from_service).await;
+            // Wait for the sender to complete the transfer. The Sender ticks
+            // are the uploader's only real completion signal
+            // (SendFileRequestSuccess above just means "queued") and must be
+            // correlated to the SendFile request_id — c2s pushes register
+            // under the session's own cid in kernel/revfs_correlation.rs.
+            exhaust_revfs_ticks_asserting_request_id(from_service, push_request_id, None).await;
 
             // Download/Pull file from REVFS - Don't delete on pull
+            let download_request_id = Uuid::new_v4();
             let file_download_command = InternalServiceRequest::DownloadFile {
                 virtual_directory: virtual_path.clone(),
                 security_level: None,
                 delete_on_pull: false,
                 cid: *cid,
                 peer_cid: None,
-                request_id: Uuid::new_v4(),
+                request_id: download_request_id,
             };
             to_service.send(file_download_command).unwrap();
             let download_file_response = from_service.recv().await.unwrap();
@@ -286,8 +362,17 @@ mod tests {
                 panic!("Download File Failure: {message:?}")
             }
 
-            // Exhaust the download request
-            exhaust_stream_to_file_completion(file_to_send.clone(), from_service).await;
+            // Exhaust the download request. The reception ticks must carry
+            // the DownloadFile request_id (SERVER_SCOPE registration in
+            // kernel/revfs_correlation.rs) — the browser settles its download
+            // on the ReceptionComplete tick correlated by that id; with the
+            // old TCP-uuid fallback every completed download reported failure.
+            exhaust_revfs_ticks_asserting_request_id(
+                from_service,
+                download_request_id,
+                Some(file_to_send.clone()),
+            )
+            .await;
 
             // Delete file from REVFS
             let file_delete_command = InternalServiceRequest::DeleteVirtualFile {
@@ -345,13 +430,14 @@ mod tests {
 
         let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
         let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
-        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0_usize).unwrap();
+        let (_to_service_b, from_service_b, cid_b) = peer_two.get_mut(0_usize).unwrap();
 
         // Push file to REVFS on peer
         let file_to_send = PathBuf::from("../resources/test.txt");
         let virtual_path = PathBuf::from("/vfs/test.txt");
+        let push_request_id = Uuid::new_v4();
         let send_file_to_service_b_payload = InternalServiceRequest::SendFile {
-            request_id: Uuid::new_v4(),
+            request_id: push_request_id,
             source: FileSource::Path(file_to_send.clone()),
             cid: *cid_a,
             transfer_type: TransferType::RemoteEncryptedVirtualFilesystem {
@@ -365,46 +451,35 @@ mod tests {
         let deserialized_service_a_payload_response = from_service_a.recv().await.unwrap();
         info!(target: "citadel","{deserialized_service_a_payload_response:?}");
 
-        if let InternalServiceResponse::SendFileRequestSuccess(SendFileRequestSuccess { .. }) =
+        let InternalServiceResponse::SendFileRequestSuccess(SendFileRequestSuccess { .. }) =
             &deserialized_service_a_payload_response
-        {
-            info!(target:"citadel", "File Transfer Request {cid_b}");
-            let deserialized_service_a_payload_response = from_service_b.recv().await.unwrap();
-            if let InternalServiceResponse::FileTransferRequestNotification(
-                FileTransferRequestNotification { metadata, .. },
-            ) = deserialized_service_a_payload_response
-            {
-                let file_transfer_accept_payload = InternalServiceRequest::RespondFileTransfer {
-                    cid: *cid_b,
-                    peer_cid: *cid_a,
-                    object_id: metadata.object_id,
-                    accept: true,
-                    download_location: None,
-                    request_id: Uuid::new_v4(),
-                };
-                to_service_b.send(file_transfer_accept_payload).unwrap();
-                info!(target:"citadel", "Accepted File Transfer {cid_b}");
-            } else {
-                panic!("File Transfer P2P Failure");
-            }
-        } else {
+        else {
             panic!("File Transfer Request failed: {deserialized_service_a_payload_response:?}");
-        }
+        };
 
-        let deserialized_service_a_payload_response = from_service_a.recv().await.unwrap();
-        info!(target: "citadel","{deserialized_service_a_payload_response:?}");
-
+        // B's internal service AUTO-ACCEPTS REVFS pushes (see
+        // responses/object_transfer_handle.rs): a REVFS storage write is an
+        // internal protocol mechanism, not a user-facing transfer offer, and
+        // no client ever answered the old accept prompt — so the bytes were
+        // never streamed while the uploader's tree already listed the file.
+        // B therefore receives no FileTransferRequestNotification and sends
+        // no RespondFileTransfer; its first events are the reception ticks.
         exhaust_stream_to_file_completion(file_to_send.clone(), from_service_b).await;
-        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_a).await;
+
+        // A's Sender ticks complete the upload and must carry the SendFile
+        // request_id (kernel/revfs_correlation.rs) — the browser resolves its
+        // upload on the TransferComplete tick correlated by that id.
+        exhaust_revfs_ticks_asserting_request_id(from_service_a, push_request_id, None).await;
 
         // Download P2P REVFS file - without delete on pull
+        let download_request_id = Uuid::new_v4();
         let download_file_command = InternalServiceRequest::DownloadFile {
             virtual_directory: virtual_path.clone(),
             security_level: None,
             delete_on_pull: false,
             cid: *cid_a,
             peer_cid: Some(*cid_b),
-            request_id: Uuid::new_v4(),
+            request_id: download_request_id,
         };
         to_service_a.send(download_file_command).unwrap();
         let download_file_response = from_service_a.recv().await.unwrap();
@@ -420,8 +495,16 @@ mod tests {
             }
         }
 
+        // B is the byte-holder answering the pull; it issued no request, so
+        // its ticks keep the legacy uuid fallback. A's reception ticks must
+        // carry the DownloadFile request_id (kernel/revfs_correlation.rs).
         exhaust_stream_to_file_completion(file_to_send.clone(), from_service_b).await;
-        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_a).await;
+        exhaust_revfs_ticks_asserting_request_id(
+            from_service_a,
+            download_request_id,
+            Some(file_to_send.clone()),
+        )
+        .await;
 
         // Delete file on Peer REVFS
         let delete_file_command = InternalServiceRequest::DeleteVirtualFile {
@@ -664,7 +747,7 @@ mod tests {
         // so the `peer_conn.remote == None` branch is the one being
         // exercised.
         let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
-        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
+        let (_to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
         let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0_usize).unwrap();
 
         let file_to_send = PathBuf::from("../resources/test.txt");
@@ -675,8 +758,9 @@ mod tests {
 
         // B (acceptor) uploads to A's REVFS — exercises the
         // `upload.rs` `LocalGroupPeer` fix.
+        let push_request_id = Uuid::new_v4();
         let send_from_b = InternalServiceRequest::SendFile {
-            request_id: Uuid::new_v4(),
+            request_id: push_request_id,
             source: FileSource::Path(file_to_send.clone()),
             cid: *cid_b,
             transfer_type: TransferType::RemoteEncryptedVirtualFilesystem {
@@ -695,37 +779,23 @@ mod tests {
             panic!("Acceptor-side SendFile failed: {send_resp:?}");
         };
 
-        // A receives the request and accepts.
-        let inbound = from_service_a.recv().await.unwrap();
-        let InternalServiceResponse::FileTransferRequestNotification(
-            FileTransferRequestNotification { metadata, .. },
-        ) = inbound
-        else {
-            panic!("Peer A didn't get the file-transfer notification: {inbound:?}");
-        };
-        to_service_a
-            .send(InternalServiceRequest::RespondFileTransfer {
-                cid: *cid_a,
-                peer_cid: *cid_b,
-                object_id: metadata.object_id,
-                accept: true,
-                download_location: None,
-                request_id: Uuid::new_v4(),
-            })
-            .unwrap();
-
+        // A's internal service auto-accepts the REVFS push (see
+        // responses/object_transfer_handle.rs and the note in
+        // test_internal_service_peer_revfs) — no notification, no
+        // RespondFileTransfer; A's first events are the reception ticks.
         exhaust_stream_to_file_completion(file_to_send.clone(), from_service_a).await;
-        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_b).await;
+        exhaust_revfs_ticks_asserting_request_id(from_service_b, push_request_id, None).await;
 
         // B (acceptor) pulls the same file back from A's REVFS —
         // exercises the `download.rs` `LocalGroupPeer` fix.
+        let download_request_id = Uuid::new_v4();
         let download_from_b = InternalServiceRequest::DownloadFile {
             virtual_directory: virtual_path.clone(),
             security_level: None,
             delete_on_pull: false,
             cid: *cid_b,
             peer_cid: Some(*cid_a),
-            request_id: Uuid::new_v4(),
+            request_id: download_request_id,
         };
         to_service_b.send(download_from_b).unwrap();
 
@@ -740,8 +810,15 @@ mod tests {
             other => panic!("Unexpected response to acceptor-side DownloadFile: {other:?}"),
         }
 
+        // A answers the pull with the stored bytes; B's reception ticks must
+        // carry the DownloadFile request_id (kernel/revfs_correlation.rs).
         exhaust_stream_to_file_completion(file_to_send.clone(), from_service_a).await;
-        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_b).await;
+        exhaust_revfs_ticks_asserting_request_id(
+            from_service_b,
+            download_request_id,
+            Some(file_to_send.clone()),
+        )
+        .await;
 
         Ok(())
     }

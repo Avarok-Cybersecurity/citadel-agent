@@ -170,7 +170,7 @@ pub(super) fn rebuild_after_stale<T: IOInterface, R: Ratchet>(
             );
         };
 
-        if peer.media_generation == generation && peer.media.is_none() {
+        if super::open_may_commit(generation, peer.media_generation, peer.media.is_some()) {
             return match (
                 recovered,
                 std::mem::replace(&mut peer.udp, UdpState::Opening),

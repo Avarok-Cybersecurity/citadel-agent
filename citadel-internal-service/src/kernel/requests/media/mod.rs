@@ -85,7 +85,7 @@ pub async fn handle_send<T: IOInterface, R: Ratchet>(
     };
 
     let outbound = match lookup {
-        Some((owner, outbound)) if owner == uuid => outbound,
+        Some((owner, outbound)) if send_authorised(Some(owner), uuid) => outbound,
         Some(_) => {
             return Some(HandledRequestResult {
                 response: failed(
@@ -236,6 +236,38 @@ pub(crate) fn park_recovered_receive_half<T: IOInterface, R: Ratchet>(
     // correctly dropped here.
 }
 
+/// Whether `requester` may push frames into an established media session.
+///
+/// Split out for the same reason as `close_authorised`, and it had the same
+/// gap: reaching this through the real handler means a service, a peer
+/// connection and a live UDP path, so nothing tested it and removing the
+/// comparison would have gone unnoticed. What it prevents is a stale
+/// connection -- one whose uuid was replaced by a reconnect, or a second tab
+/// that never opened a call -- injecting audio and video frames into somebody
+/// else's live call on the same peer pair.
+pub(crate) fn send_authorised(session_owner: Option<Uuid>, requester: Uuid) -> bool {
+    session_owner == Some(requester)
+}
+
+/// Whether an open that has finished awaiting its channel may still install a
+/// session.
+///
+/// `generation` is the value the open recorded before it began waiting. A close
+/// arriving during the wait bumps the peer's generation precisely so this
+/// comparison fails: the client believes the call is over, and installing a
+/// session then would leave a pump decoding frames into a call nobody is in --
+/// a zombie that streams forever.
+///
+/// `already_installed` is the second half: two opens racing must not both
+/// commit, or the later one strands the earlier one's pump.
+pub(crate) fn open_may_commit(
+    generation_at_open: u64,
+    generation_now: u64,
+    already_installed: bool,
+) -> bool {
+    generation_at_open == generation_now && !already_installed
+}
+
 /// Whether `requester` may tear down whatever media state a peer currently has.
 ///
 /// Split out from `handle_close` because the interesting cases are all about
@@ -261,8 +293,42 @@ pub(crate) fn close_authorised(
 
 #[cfg(test)]
 mod authorisation_tests {
-    use super::close_authorised;
+    use super::{close_authorised, open_may_commit, send_authorised};
     use uuid::Uuid;
+
+    /// The reconnect case, on the SEND path. A connection whose uuid was
+    /// replaced must not be able to push frames into the call its replacement
+    /// opened -- that is audio and video injected into somebody's live call.
+    #[test]
+    fn a_stale_connection_cannot_send_into_the_call_that_replaced_it() {
+        let dead = Uuid::new_v4();
+        let live = Uuid::new_v4();
+
+        assert!(!send_authorised(Some(live), dead));
+        assert!(send_authorised(Some(live), live));
+    }
+
+    /// A second tab that never opened a call has no session to send into.
+    #[test]
+    fn sending_needs_a_session_at_all() {
+        assert!(!send_authorised(None, Uuid::new_v4()));
+    }
+
+    /// A close during the open's await bumps the generation precisely so the
+    /// open cannot commit. Without the comparison the pump starts decoding
+    /// into a call the client has already ended, and never stops.
+    #[test]
+    fn a_close_during_the_await_cancels_the_open() {
+        assert!(!open_may_commit(7, 8, false));
+        assert!(open_may_commit(7, 7, false));
+    }
+
+    /// Two opens racing must not both commit; the second would strand the
+    /// first one's pump.
+    #[test]
+    fn an_open_does_not_replace_a_session_that_already_committed() {
+        assert!(!open_may_commit(7, 7, true));
+    }
 
     /// The case the reconnect bug turns on: the client's uuid is replaced, the
     /// new connection opens a call, and a `MediaClose` from the dead connection

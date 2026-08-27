@@ -341,8 +341,18 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
                     match message {
                         WsMessage::Text(text) => {
                             // DEBUG: Log raw JSON for ListRegisteredPeersResponse to trace HashMap data
+                            //
+                            // Sliced by byte, this panicked when byte 500 fell
+                            // mid-codepoint -- a registered peer with an emoji
+                            // or CJK username near that offset was enough. The
+                            // panic lands in the WebSocket read loop, so a debug
+                            // log line killed the user's connection to their own
+                            // agent.
                             if text.contains("ListRegisteredPeersResponse") {
-                                console_log!("[WASM-DEBUG] Raw JSON (ListRegisteredPeersResponse): {}", &text[..text.len().min(500)]);
+                                console_log!(
+                                    "[WASM-DEBUG] Raw JSON (ListRegisteredPeersResponse): {}",
+                                    truncate_on_char_boundary(&text, 500)
+                                );
                             }
 
                             match serde_json::from_str::<InternalServicePayload>(&text) {
@@ -1024,5 +1034,56 @@ mod drain_queued_tests {
         let mut sink = VecDeque::new();
         assert_eq!(drain_queued(&mut rx, &mut sink), 0);
         assert!(sink.is_empty());
+    }
+}
+
+/// Truncate to at most `max_bytes`, never splitting a codepoint.
+///
+/// Byte slicing a string that came off the wire panics the moment a multi-byte
+/// character straddles the cut. Same helper as the internal service's file
+/// upload path, which learned this first.
+fn truncate_on_char_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+#[cfg(test)]
+mod truncate_tests {
+    use super::truncate_on_char_boundary;
+
+    #[test]
+    fn does_not_split_a_codepoint() {
+        // 'é' is two bytes; cutting at 1 must fall back to 0, not panic.
+        assert_eq!(truncate_on_char_boundary("é", 1), "");
+        assert_eq!(truncate_on_char_boundary("aé", 2), "a");
+        assert_eq!(truncate_on_char_boundary("aé", 3), "aé");
+    }
+
+    #[test]
+    fn returns_the_whole_string_when_it_fits() {
+        assert_eq!(truncate_on_char_boundary("hello", 500), "hello");
+    }
+
+    #[test]
+    fn survives_a_username_of_emoji_at_the_cut() {
+        // The shape that reached the read loop: a long frame whose byte 500
+        // lands inside a 4-byte emoji.
+        let padded = format!("{}{}", "x".repeat(498), "🙂🙂");
+        // The fixture is adversarial only if the naive slice would have blown
+        // up on it -- otherwise this test passes against the bug it names.
+        assert!(
+            !padded.is_char_boundary(500),
+            "fixture does not cut a codepoint"
+        );
+
+        let cut = truncate_on_char_boundary(&padded, 500);
+        assert!(cut.len() <= 500);
+        assert!(padded.starts_with(cut));
     }
 }

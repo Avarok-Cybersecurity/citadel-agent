@@ -113,9 +113,19 @@ impl CitadelWorkspaceBackend {
                 ))),
             }
         } else {
-            // If we get no response, initialize a new map as a fallback
-            citadel_logging::warn!(target: "citadel", "[GET_MAP] No response received for {} map, initializing new one", prefix);
-            Ok(State::new())
+            // A timeout is NOT "the map is empty".
+            //
+            // This used to return an empty map, and every caller here is a
+            // read-modify-write over the WHOLE queue: get the map, change one
+            // entry, write it back. So one slow LocalDB read during a send
+            // replaced the entire pending queue with a map containing only the
+            // new message — silently erasing every other queued message, each of
+            // whose senders had already been shown "sent". Genuine absence is a
+            // different answer ("Key not found", handled above) and still
+            // initializes.
+            Err(BackendError::StorageError(format!(
+                "Timed out reading the {prefix} map; refusing to treat that as an empty queue"
+            )))
         }
     }
 
@@ -182,9 +192,13 @@ impl CitadelWorkspaceBackend {
             citadel_logging::debug!(target: "citadel", "[UPDATE_MAP] Updated {} map successfully", prefix);
             Ok(())
         } else {
-            // If we get no response, assume the update worked
-            citadel_logging::warn!(target: "citadel", "[UPDATE_MAP] No response received when updating {} map, assuming success", prefix);
-            Ok(())
+            // Reporting success for a write we never saw acknowledged tells the
+            // sender their message is durably queued when it may not be. Fail,
+            // so the caller marks it failed and the user can retry — a visible
+            // failure beats a checkmark on a message that is gone.
+            Err(BackendError::StorageError(format!(
+                "Timed out writing the {prefix} map; the change may not be stored"
+            )))
         }
     }
 
@@ -318,19 +332,11 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         citadel_logging::debug!(target: "citadel", "[STORE_OUTBOUND] Storing outbound message: source_id={}, destination_id={}, message_id={}",
             message.source_id, message.destination_id, message.message_id);
 
-        let mut outbound = match self.get_outbound_map().await {
-            Ok(map) => map,
-            Err(e) => {
-                // If we get a delivery error, log it and create a new map
-                let err_str = format!("{e:?}");
-                if err_str.contains("Failed to deliver message") {
-                    citadel_logging::warn!(target: "citadel", "[STORE_OUTBOUND] Failed to get outbound map due to delivery error, creating new one");
-                    State::new()
-                } else {
-                    return Err(e);
-                }
-            }
-        };
+        // Propagated, not swallowed. This used to substitute an empty map when
+        // the read failed to reach the agent, and the very next line writes
+        // that map back — so a momentary connection failure erased the whole
+        // pending queue. The caller can retry; it cannot un-erase.
+        let mut outbound = self.get_outbound_map().await?;
 
         let peer_messages = outbound.entry(peer_cid).or_insert_with(HashMap::new);
         peer_messages.insert(message_id, message);
@@ -365,19 +371,11 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         citadel_logging::debug!(target: "citadel", "[STORE_INBOUND] Storing inbound message: source_id={}, destination_id={}, message_id={}",
             message.source_id, message.destination_id, message.message_id);
 
-        let mut inbound = match self.get_inbound_map().await {
-            Ok(map) => map,
-            Err(e) => {
-                // If we get a delivery error, log it and create a new map
-                let err_str = format!("{e:?}");
-                if err_str.contains("Failed to deliver message") {
-                    citadel_logging::warn!(target: "citadel", "[STORE_INBOUND] Failed to get inbound map due to delivery error, creating new one");
-                    State::new()
-                } else {
-                    return Err(e);
-                }
-            }
-        };
+        // Propagated, not swallowed. This used to substitute an empty map when
+        // the read failed to reach the agent, and the very next line writes
+        // that map back — so a momentary connection failure erased the whole
+        // pending queue. The caller can retry; it cannot un-erase.
+        let mut inbound = self.get_inbound_map().await?;
 
         let peer_messages = inbound.entry(peer_cid).or_insert_with(HashMap::new);
         peer_messages.insert(message_id, message);
@@ -402,19 +400,11 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         peer_id: u64,
         message_id: u64,
     ) -> Result<(), BackendError<WrappedMessage>> {
-        let mut inbound = match self.get_inbound_map().await {
-            Ok(map) => map,
-            Err(e) => {
-                // If we get a delivery error, log it and create a new map
-                let err_str = format!("{e:?}");
-                if err_str.contains("Failed to deliver message") {
-                    citadel_logging::warn!(target: "citadel", "[CLEAR_INBOUND] Failed to get inbound map due to delivery error, creating new one");
-                    State::new()
-                } else {
-                    return Err(e);
-                }
-            }
-        };
+        // Propagated, not swallowed. This used to substitute an empty map when
+        // the read failed to reach the agent, and the very next line writes
+        // that map back — so a momentary connection failure erased the whole
+        // pending queue. The caller can retry; it cannot un-erase.
+        let mut inbound = self.get_inbound_map().await?;
 
         if let Some(peer_messages) = inbound.get_mut(&peer_id) {
             peer_messages.remove(&message_id);
@@ -440,19 +430,11 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         peer_id: u64,
         message_id: u64,
     ) -> Result<(), BackendError<WrappedMessage>> {
-        let mut outbound = match self.get_outbound_map().await {
-            Ok(map) => map,
-            Err(e) => {
-                // If we get a delivery error, log it and create a new map
-                let err_str = format!("{e:?}");
-                if err_str.contains("Failed to deliver message") {
-                    citadel_logging::warn!(target: "citadel", "[CLEAR_OUTBOUND] Failed to get outbound map due to delivery error, creating new one");
-                    State::new()
-                } else {
-                    return Err(e);
-                }
-            }
-        };
+        // Propagated, not swallowed. This used to substitute an empty map when
+        // the read failed to reach the agent, and the very next line writes
+        // that map back — so a momentary connection failure erased the whole
+        // pending queue. The caller can retry; it cannot un-erase.
+        let mut outbound = self.get_outbound_map().await?;
 
         if let Some(peer_messages) = outbound.get_mut(&peer_id) {
             peer_messages.remove(&message_id);

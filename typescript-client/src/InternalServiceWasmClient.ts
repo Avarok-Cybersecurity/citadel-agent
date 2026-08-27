@@ -60,6 +60,8 @@ export class InternalServiceWasmClient {
     private p2pConnections = new Set<string>();
     private messageHandler?: (message: InternalServiceResponse) => void;
     private errorHandler?: (error: Error) => void;
+    /** Additional subscribers, which do not displace `errorHandler`. */
+    private errorListeners: Array<(error: Error) => void> = [];
     private messageLoopDiedHandler?: (error: Error, canRecover: boolean) => void;
     private initializationComplete = false;
     // Flag to signal message processing loop to stop (set when WebSocket dies)
@@ -301,6 +303,22 @@ export class InternalServiceWasmClient {
      */
     setErrorHandler(handler: (error: Error) => void): void {
         this.errorHandler = handler;
+    }
+
+    /**
+     * Subscribe to errors WITHOUT displacing anyone else's handler.
+     *
+     * `setErrorHandler` overwrites the single slot, and the session manager
+     * called it in its constructor — so every caller who passed `errorHandler`
+     * in the config had it silently discarded before their first error. The
+     * running app passes one. Additional subscribers use this instead, and the
+     * returned function removes them.
+     */
+    addErrorListener(listener: (error: Error) => void): () => void {
+        this.errorListeners.push(listener);
+        return () => {
+            this.errorListeners = this.errorListeners.filter((l) => l !== listener);
+        };
     }
 
     /**
@@ -548,8 +566,17 @@ export class InternalServiceWasmClient {
     private handleError(error: Error): void {
         if (this.errorHandler) {
             this.errorHandler(error);
-        } else {
+        } else if (this.errorListeners.length === 0) {
             console.error('WASM Client Error:', error);
+        }
+        // Listeners are additional, not alternative: one throwing must not stop
+        // the others, and none of them replaces the caller's handler.
+        for (const listener of this.errorListeners) {
+            try {
+                listener(error);
+            } catch (listenerError) {
+                console.error('Error listener threw:', listenerError);
+            }
         }
     }
 

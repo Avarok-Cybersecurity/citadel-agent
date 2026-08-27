@@ -77,7 +77,28 @@ where
     //
     // Recorded in docs/ROBUSTNESS.md as an open question rather than left as a
     // silent hole in the check.
-    let exempt = matches!(command, InternalServiceRequest::LocalDBGetKV { .. });
+    // The exemption is now the KEY, not the whole variant.
+    //
+    // It used to be `matches!(command, LocalDBGetKV { .. })`, which let any
+    // connection read ANY key of any account it could name a cid for — and a cid
+    // is a u64 that travels in peer lists and notifications, not a secret. The
+    // evidence behind the exemption was specific: every refusal came from ILM's
+    // messenger backend, and every key ILM touches is one of seven fixed names
+    // suffixed with `-{cid}`. Scoping to those preserves exactly the access the
+    // evidence justified and withdraws the rest.
+    let exempt = is_exempt_from_ownership_gate(&command);
+
+    // Writes must be OWNED, not merely unopposed.
+    //
+    // The gate lets an unmapped cid through, on the stated grounds that "the
+    // handler owns that error and already reports it". That is true of download
+    // and delete_virtual_file, which look the cid up in the map and fail. It is
+    // NOT true of the LocalDB handlers: they resolve through `propose_target`,
+    // which by its own doc only checks that the cid names a locally-known
+    // account — not that the caller owns it. So for an account that is known but
+    // has no mapped session (after a Disconnect, say), any connection could
+    // write or wipe its persistent store.
+    let requires_ownership = requires_owned_session(&command);
 
     if let Some(cid) = command.session_cid().filter(|_| !exempt) {
         let owner = {
@@ -87,6 +108,11 @@ where
                     .load(std::sync::atomic::Ordering::Relaxed)
             })
         };
+        if owner.is_none() && requires_ownership {
+            log::warn!(target: "citadel",
+                "Refusing a LocalDB write for session {cid} from connection {uuid}: no mapped session, so ownership cannot be established");
+            return None;
+        }
         if let Some(owner) = owner {
             if owner != uuid {
                 // Name the request type: "something was refused" is not
@@ -399,4 +425,147 @@ pub(crate) fn spawn_group_channel_receiver(
 
     // Spawns the above Handler for Group Channel Broadcasts not handled in Node Events
     tokio::task::spawn(group_channel_receiver);
+}
+
+/// The seven keys ILM's messenger backend reads, each suffixed with `-{cid}`.
+///
+/// Kept here rather than imported so the gate does not depend on the connector
+/// crate: this is a security boundary, and it should fail closed on a key it
+/// does not recognise even if that crate changes shape. If ILM gains a key, a
+/// refusal appears in the log naming the variant — which is how the original
+/// evidence for this exemption was gathered in the first place.
+const ILM_KEY_PREFIXES: [&str; 7] = [
+    "inbound_messages-",
+    "outbound_messages-",
+    "last_acked-",
+    "last_sent-",
+    "next_unique_id-",
+    "received_messages-",
+    "last_received_from-",
+];
+
+/// Whether this request may name a session the connection does not own.
+///
+/// Extracted so the decision is testable on its own: it is one line at the call
+/// site, and a control that widens it back to the whole variant has to fail
+/// something. Previously the only tests covered the key predicate, so putting
+/// `true` here broke nothing.
+pub(crate) fn is_exempt_from_ownership_gate(command: &InternalServiceRequest) -> bool {
+    match command {
+        InternalServiceRequest::LocalDBGetKV { key, .. } => is_ilm_key(key.as_str()),
+        _ => false,
+    }
+}
+
+/// Whether this request needs the named session to be OWNED, not merely
+/// unclaimed. See the gate for why an unmapped cid is otherwise let through.
+pub(crate) fn requires_owned_session(command: &InternalServiceRequest) -> bool {
+    matches!(
+        command,
+        InternalServiceRequest::LocalDBSetKV { .. }
+            | InternalServiceRequest::LocalDBDeleteKV { .. }
+            | InternalServiceRequest::LocalDBClearAllKV { .. }
+            | InternalServiceRequest::LocalDBGetAllKV { .. }
+    )
+}
+
+fn is_ilm_key(key: &str) -> bool {
+    ILM_KEY_PREFIXES.iter().any(|prefix| {
+        let Some(tail) = key.strip_prefix(prefix) else {
+            return false;
+        };
+        // Non-empty checked first: `all()` on an empty tail is vacuously true,
+        // so `"inbound_messages-"` with nothing after it rode the exemption.
+        // The unit test below caught that in this very function.
+        !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit())
+    })
+}
+
+#[cfg(test)]
+mod ownership_gate_tests {
+    use super::{is_exempt_from_ownership_gate, is_ilm_key, requires_owned_session};
+    use citadel_internal_service_types::InternalServiceRequest;
+    use uuid::Uuid;
+
+    fn get_kv(key: &str) -> InternalServiceRequest {
+        InternalServiceRequest::LocalDBGetKV {
+            request_id: Uuid::new_v4(),
+            cid: 1,
+            peer_cid: None,
+            key: key.to_string(),
+        }
+    }
+
+    #[test]
+    fn only_ilm_reads_may_name_a_session_the_connection_does_not_own() {
+        assert!(is_exempt_from_ownership_gate(&get_kv("last_sent-123")));
+        // The whole variant used to be exempt, so any key rode through.
+        assert!(!is_exempt_from_ownership_gate(&get_kv("credentials")));
+    }
+
+    #[test]
+    fn no_other_request_is_exempt() {
+        let write = InternalServiceRequest::LocalDBSetKV {
+            request_id: Uuid::new_v4(),
+            cid: 1,
+            peer_cid: None,
+            key: "last_sent-123".to_string(),
+            value: vec![],
+        };
+        // An ILM-shaped KEY must not exempt a WRITE.
+        assert!(!is_exempt_from_ownership_gate(&write));
+        assert!(requires_owned_session(&write));
+    }
+
+    #[test]
+    fn every_local_db_write_requires_an_owned_session() {
+        let id = Uuid::new_v4();
+        for command in [
+            InternalServiceRequest::LocalDBSetKV {
+                request_id: id, cid: 1, peer_cid: None, key: "k".into(), value: vec![],
+            },
+            InternalServiceRequest::LocalDBDeleteKV {
+                request_id: id, cid: 1, peer_cid: None, key: "k".into(),
+            },
+            InternalServiceRequest::LocalDBClearAllKV { request_id: id, cid: 1, peer_cid: None },
+            InternalServiceRequest::LocalDBGetAllKV { request_id: id, cid: 1, peer_cid: None },
+        ] {
+            assert!(
+                requires_owned_session(&command),
+                "an unmapped cid must not be enough for {command:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn recognises_every_key_ilm_actually_uses() {
+        for key in [
+            "inbound_messages-123",
+            "outbound_messages-123",
+            "last_acked-123",
+            "last_sent-123",
+            "next_unique_id-123",
+            "received_messages-123",
+            "last_received_from-123",
+        ] {
+            assert!(is_ilm_key(key), "{key} is a key ILM reads on the happy path");
+        }
+    }
+
+    #[test]
+    fn refuses_anything_else() {
+        for key in [
+            // The whole point: an arbitrary key used to ride the exemption.
+            "credentials",
+            "session-token",
+            // A prefix match alone is not enough — the tail must be a cid.
+            "last_sent-../credentials",
+            "inbound_messages-abc",
+            "inbound_messages-",
+            // And a lookalike must not pass.
+            "not_last_sent-123",
+        ] {
+            assert!(!is_ilm_key(key), "{key} must not ride the ILM exemption");
+        }
+    }
 }

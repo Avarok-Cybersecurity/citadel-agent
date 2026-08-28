@@ -27,7 +27,29 @@ use uuid::Uuid;
 pub fn setup_log() {
     citadel_sdk::logging::setup_log();
     std::panic::set_hook(Box::new(|info| {
-        citadel_sdk::logging::error!(target: "citadel", "Panic: {:?}", info);
+        // The MESSAGE, not just the location.
+        //
+        // `{:?}` on PanicHookInfo renders the payload as `Any { .. }`, so every
+        // failing test in this suite reported a file and a line number and
+        // nothing about what went wrong -- a CI leg could go red for weeks
+        // saying only that it had. The payload is a &str for `panic!("...")`
+        // and a String for a formatted one; neither is reachable through Debug.
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "<non-string panic payload>".to_string());
+
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown location>".to_string());
+
+        citadel_sdk::logging::error!(target: "citadel", "Panic at {location}: {message}");
+        // Also to stderr: the tracing subscriber is filtered by RUST_LOG, and a
+        // panic is not something a log level should be able to hide.
+        eprintln!("Panic at {location}: {message}");
         std::process::exit(1);
     }));
 }
@@ -623,6 +645,22 @@ pub async fn exhaust_stream_to_file_completion(
     cmp_path: PathBuf,
     svc: &mut UnboundedReceiver<InternalServiceResponse>,
 ) {
+    exhaust_stream_to_file_completion_from(cmp_path, svc, None).await
+}
+
+/// As above, for a caller that has ALREADY taken the first tick off the stream.
+///
+/// A REVFS push is auto-accepted, so the receiver's first notification is
+/// `ReceptionBeginning` rather than an offer — and a test that wants to assert
+/// that has to consume the tick to look at it. `UnboundedReceiver` has no peek,
+/// so the tick is handed back in rather than lost: without it the loop below
+/// never sees the beginning, and its `expect("Never received the
+/// ReceptionBeginning tick!")` fires on a transfer that began perfectly well.
+pub async fn exhaust_stream_to_file_completion_from(
+    cmp_path: PathBuf,
+    svc: &mut UnboundedReceiver<InternalServiceResponse>,
+    already_taken: Option<InternalServiceResponse>,
+) {
     // Exhaust the stream for the receiver
     let mut path = None;
     let mut is_revfs = false;
@@ -632,8 +670,12 @@ pub async fn exhaust_stream_to_file_completion(
         .to_os_string()
         .into_string()
         .unwrap();
+    let mut already_taken = already_taken;
     loop {
-        let tick_response = svc.recv().await.unwrap();
+        let tick_response = match already_taken.take() {
+            Some(first) => first,
+            None => svc.recv().await.unwrap(),
+        };
         match tick_response {
             InternalServiceResponse::FileTransferTickNotification(
                 FileTransferTickNotification {

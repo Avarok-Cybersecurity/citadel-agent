@@ -3,8 +3,9 @@ use citadel_internal_service_test_common as common;
 #[cfg(test)]
 mod tests {
     use crate::common::{
-        exhaust_stream_to_file_completion, get_free_port, register_and_connect_to_server,
-        server_info_skip_cert_verification, RegisterAndConnectItems,
+        exhaust_stream_to_file_completion, exhaust_stream_to_file_completion_from, get_free_port,
+        register_and_connect_to_server, server_info_skip_cert_verification,
+        RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_types::{
@@ -419,33 +420,56 @@ mod tests {
         let deserialized_service_a_payload_response = peer_0_rx.recv().await.unwrap();
         citadel_sdk::logging::info!(target: "citadel","{deserialized_service_a_payload_response:?}");
 
+        let first_tick;
         if let InternalServiceResponse::SendFileRequestSuccess(SendFileRequestSuccess { .. }) =
             &deserialized_service_a_payload_response
         {
             citadel_sdk::logging::info!(target:"citadel", "File Transfer Request {peer_1_cid}");
-            let deserialized_service_a_payload_response = peer_1_rx.recv().await.unwrap();
-            if let InternalServiceResponse::FileTransferRequestNotification(
-                FileTransferRequestNotification { metadata, .. },
-            ) = deserialized_service_a_payload_response
-            {
-                let file_transfer_accept_payload = InternalServiceRequest::RespondFileTransfer {
-                    cid: peer_1_cid,
-                    peer_cid: peer_0_cid,
-                    object_id: metadata.object_id,
-                    accept: true,
-                    download_location: None,
-                    request_id: Uuid::new_v4(),
-                };
-                peer_1_tx.send(file_transfer_accept_payload).unwrap();
-                citadel_sdk::logging::info!(target:"citadel", "Accepted File Transfer {peer_1_cid}");
-            } else {
-                panic!("File Transfer P2P Failure");
-            }
+
+            // A REVFS push is NOT offered to the receiver, and this test used to
+            // wait for the offer.
+            //
+            // `object_transfer_handle.rs` auto-accepts an inbound REVFS push,
+            // deliberately and with its reasoning written down: the receiver is
+            // acting as storage, it issued no request, and the sender's
+            // TransferComplete never arrives because the receiver only acks the
+            // file header after acceptance. So peer 1 gets ticks beginning with
+            // ReceptionBeginning, and never a FileTransferRequestNotification.
+            //
+            // The test asserted the older, hand-accepted protocol and had been
+            // failing ever since — a red CI leg saying only "File Transfer P2P
+            // Failure", which named neither the expectation nor what arrived.
+            // Taken off the stream to look at, then handed back below: the
+            // ReceptionBeginning tick carries the path the completion check
+            // reads, so losing it would fail a transfer that went fine.
+            first_tick = peer_1_rx.recv().await.unwrap();
+            let InternalServiceResponse::FileTransferTickNotification(tick) = &first_tick else {
+                panic!(
+                    "a REVFS push is auto-accepted, so peer 1 should see transfer ticks; \
+                     got {first_tick:?}"
+                );
+            };
+
+            // ReceptionBeginning specifically: any tick would also be produced
+            // by a transfer that had been accepted by hand, which is what this
+            // is here to distinguish.
+            assert!(
+                matches!(tick.status, ObjectTransferStatus::ReceptionBeginning(..)),
+                "expected reception to have begun without an accept, got {:?}",
+                tick.status
+            );
+
+            citadel_sdk::logging::info!(target:"citadel", "REVFS push auto-accepted for {peer_1_cid}");
         } else {
             panic!("File Transfer Request failed: {deserialized_service_a_payload_response:?}");
         }
 
-        exhaust_stream_to_file_completion(file_to_send.clone(), &mut peer_1_rx).await;
+        exhaust_stream_to_file_completion_from(
+            file_to_send.clone(),
+            &mut peer_1_rx,
+            Some(first_tick),
+        )
+        .await;
         exhaust_stream_to_file_completion(file_to_send.clone(), &mut peer_0_rx).await;
 
         citadel_sdk::logging::info!(target: "citadel", "Peer 0 Requesting to Download File");

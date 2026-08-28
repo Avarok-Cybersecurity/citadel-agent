@@ -688,18 +688,39 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         } => {
             let lock = this.server_connection_map.read();
             match lock.get(&cid) {
-                Some(conn) => match conn.picked_files.get(&pick_file_request_id) {
-                    Some(picked_info) => {
-                        info!(target: "citadel", "Resolved PickFileRef {:?} to path {:?}",
-                            pick_file_request_id, picked_info.file_path);
-                        Ok(picked_info.file_path.clone())
+                Some(conn) => {
+                    // The two failures are different problems with different
+                    // fixes. This reported both as "may have expired" -- and
+                    // nothing expired anything, so the only diagnosis the user
+                    // ever got named a cause that could not occur, and sent
+                    // them to re-open a picker that would fail the same way.
+                    match crate::kernel::picked_files::lookup(
+                        &conn.picked_files,
+                        &pick_file_request_id,
+                        std::time::Instant::now(),
+                    ) {
+                        Ok(picked_info) => {
+                            info!(target: "citadel", "Resolved PickFileRef {:?} to path {:?}",
+                                pick_file_request_id, picked_info.file_path);
+                            Ok(picked_info.file_path.clone())
+                        }
+                        Err(crate::kernel::picked_files::PickLookupFailure::Expired) => {
+                            Err(NetworkError::msg(format!(
+                                "The file picked for {:?} has expired; pick it again.",
+                                pick_file_request_id
+                            )))
+                        }
+                        Err(crate::kernel::picked_files::PickLookupFailure::Unknown) => {
+                            Err(NetworkError::msg(format!(
+                                "No file picker result for {:?} on this session.                                  It belongs to a different session, or the agent restarted.",
+                                pick_file_request_id
+                            )))
+                        }
                     }
-                    None => Err(NetworkError::msg(format!(
-                        "PickFile reference not found: {:?}. The file picker result may have expired.",
-                        pick_file_request_id
-                    ))),
-                },
-                None => Err(NetworkError::msg("Connection not found for PickFileRef lookup")),
+                }
+                None => Err(NetworkError::msg(
+                    "Connection not found for PickFileRef lookup",
+                )),
             }
         }
         FileSource::ByteContents { file_name, data } => {

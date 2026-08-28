@@ -35,6 +35,7 @@ use uuid::Uuid;
 pub(crate) mod credential_fingerprint;
 pub(crate) mod ext;
 pub(crate) mod media;
+pub(crate) mod picked_files;
 pub(crate) mod requests;
 pub(crate) mod responses;
 pub(crate) mod revfs_correlation;

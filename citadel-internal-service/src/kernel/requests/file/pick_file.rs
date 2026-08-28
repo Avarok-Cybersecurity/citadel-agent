@@ -118,7 +118,17 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         {
                             let mut map = this.server_connection_map.write();
                             if let Some(conn) = map.get_mut(&cid) {
-                                conn.picked_files.insert(request_id, picked_info);
+                                // Through `picked_files::store`, not a bare
+                                // insert: the map was insert-only, so every
+                                // file a user ever picked stayed in memory for
+                                // the life of a session that deliberately
+                                // survives refreshes and closed tabs.
+                                crate::kernel::picked_files::store(
+                                    &mut conn.picked_files,
+                                    request_id,
+                                    picked_info,
+                                    std::time::Instant::now(),
+                                );
                                 info!(target: "citadel", "PickFile stored for request_id: {:?}", request_id);
                             }
                         }

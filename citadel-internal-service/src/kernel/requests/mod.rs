@@ -474,6 +474,23 @@ pub(crate) fn gate_decision(
     // Derived here rather than passed in: a caller that computes it separately
     // can pass one that disagrees with the command, and then the decision is
     // about a request nobody made.
+    // CID 0 names no session.
+    //
+    // It is the agent's own scratch space -- a "global" key shared by whatever
+    // is running on this machine, which is what global means for a local agent.
+    // The READS already work that way: `LocalDBGetKV` needs no ownership, so it
+    // reaches the handler and answers "Key not found" like any other missing
+    // key. The writes did not, and the gate refused them for a session that
+    // does not exist.
+    //
+    // The effect was that the auto-reconnect preference could never be saved.
+    // Before refusals were answered at all (round 224) that was a five-second
+    // hang and a reverted switch; afterwards it was a visible error naming a
+    // session the user had never heard of. Neither is the setting being stored.
+    if command.session_cid() == Some(0) {
+        return GateDecision::Proceed;
+    }
+
     let requires_ownership = requires_owned_session(command);
     match owner {
         // Known but held by somebody else. Refused whatever it asks for: the
@@ -831,6 +848,40 @@ mod ownership_gate_tests {
                 gate_decision(&command, Some(mine), mine),
                 GateDecision::Proceed
             );
+        }
+    }
+
+    /// The agent's own scratch space is not somebody else's session.
+    ///
+    /// CID 0 names no account. The reads already went through -- `LocalDBGetKV`
+    /// needs no ownership, so it reached the handler and answered like any
+    /// other missing key -- while the writes were refused, so the
+    /// auto-reconnect preference could never be saved at all.
+    #[test]
+    fn cid_zero_is_not_a_session_anyone_owns() {
+        let mine = Uuid::new_v4();
+        let theirs = Uuid::new_v4();
+        for command in gated_requests(Uuid::new_v4(), 0) {
+            assert_eq!(gate_decision(&command, None, mine), GateDecision::Proceed);
+            // Not even when the map happens to hold something under 0: there is
+            // no account there to protect.
+            assert_eq!(
+                gate_decision(&command, Some(theirs), mine),
+                GateDecision::Proceed
+            );
+        }
+    }
+
+    /// A real session is still protected.
+    #[test]
+    fn a_real_session_is_still_refused_to_a_stranger() {
+        let mine = Uuid::new_v4();
+        let theirs = Uuid::new_v4();
+        for command in gated_requests(Uuid::new_v4(), 7) {
+            assert!(matches!(
+                gate_decision(&command, Some(theirs), mine),
+                GateDecision::Refuse { .. }
+            ));
         }
     }
 

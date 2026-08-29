@@ -501,8 +501,25 @@ where
                                 }
                             }
                             Err(err) => {
-                                log::warn!(target: "citadel", "Error while deserializing ISM (?) message: {err:?}");
-                                // Forward as is. Likely sent by a non-ISM peer
+                                // `debug!`, and it says what it means.
+                                //
+                                // This read "Error while deserializing ISM (?)
+                                // message" at `warn!`, which is what an
+                                // unframed payload looks like from here and is
+                                // NOT what it is. The workspace app sends P2P
+                                // traffic by two routes on purpose: Yjs
+                                // document updates and the plain messaging
+                                // service go out as raw bytes, everything else
+                                // through ILM's WireWrapper. Every one of the
+                                // former arrives here and fails this decode.
+                                //
+                                // Twenty-two of them in one CI run were read as
+                                // evidence of corruption on the wire and cost a
+                                // round of investigation. An expected branch
+                                // logged as a warning is a false lead with a
+                                // timestamp.
+                                log::debug!(target: "ism", "Not an ISM frame; forwarding raw to the local user (this is how Yjs and plain messages travel): {err:?}");
+                                // Forward as is: sent outside ILM, by design.
                                 // Send to default direct handle
                                 // TODO: Consider having the bypasser send directly to underlying stream
                                 let other_message_type =

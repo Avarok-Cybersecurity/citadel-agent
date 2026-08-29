@@ -577,6 +577,36 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
             message: REFUSED.to_string(),
             request_id: Some(*request_id),
         }),
+        // The two operations this gate exists to protect, and the two it
+        // answered with silence.
+        //
+        // `_ => return None` sends NOTHING. The caller waits out its whole
+        // request budget -- thirty seconds for Disconnect -- and then reports a
+        // timeout, which names the wrong thing: the service did not fail to
+        // answer, it decided not to act and did not say so. Measured in CI as
+        // `Failed to disconnect: Error: Disconnect request timed out`, over a
+        // sign-out modal that spun for the full thirty seconds while a
+        // `Refusing Disconnect for session … ` line sat in the server log where
+        // no user can see it.
+        //
+        // The comment above this function's caller says the same thing about
+        // this shape: "a control that restored the silent `return None` passed
+        // every test in this file: the tests covered the response BUILDER,
+        // which nothing was obliged to call". For these two, it was not called.
+        InternalServiceRequest::Disconnect { request_id, cid } => {
+            InternalServiceResponse::PeerDisconnectFailure(PeerDisconnectFailure {
+                cid: *cid,
+                message: REFUSED.to_string(),
+                request_id: Some(*request_id),
+            })
+        }
+        InternalServiceRequest::Deregister { request_id, cid } => {
+            InternalServiceResponse::DeregisterFailure(DeregisterFailure {
+                cid: *cid,
+                message: REFUSED.to_string(),
+                request_id: Some(*request_id),
+            })
+        }
         _ => return None,
     };
 
@@ -743,6 +773,69 @@ mod ownership_gate_tests {
                 peer_cid: None,
             },
         ]
+    }
+
+    /// Requests the gate refuses only when the session belongs to ANOTHER
+    /// connection — as an orphaned session does, which is the whole Previous
+    /// Sessions flow.
+    ///
+    /// `gated_requests` above holds the four LocalDB variants, which are refused
+    /// for an unmapped session as well. These two are not, so they need their
+    /// own list — and because they were in neither, every test here proved the
+    /// builder answers the LocalDB variants and nothing at all about the
+    /// destructive pair the comment on `handle` names by name: "Deregister,
+    /// Disconnect, Message, SendFile ... are gated now".
+    fn refused_when_owned_elsewhere(request_id: Uuid, cid: u64) -> Vec<InternalServiceRequest> {
+        vec![
+            InternalServiceRequest::Disconnect { request_id, cid },
+            InternalServiceRequest::Deregister { request_id, cid },
+        ]
+    }
+
+    /// Signing out of a session another connection holds must be ANSWERED.
+    ///
+    /// The gate refuses `Some(owner) if owner != caller` whatever the request
+    /// is, and an orphaned session's owner is the connection that opened it —
+    /// so signing one out from a new tab, which is the entire Previous Sessions
+    /// flow, lands here. `refusal_response` fell through to `_ => return None`
+    /// for both of these, which sends nothing at all.
+    ///
+    /// Measured in CI: `Failed to disconnect: Error: Disconnect request timed
+    /// out` after the full thirty-second budget, over a sign-out modal that
+    /// spun for all of it, while a `Refusing Disconnect for session …` line sat
+    /// in the server log where no user can see it. The session was still there
+    /// afterwards, and nothing said why.
+    ///
+    /// Not guesswork, which is what the doc above gives as the reason for
+    /// dropping everything else: both have a failure variant the client already
+    /// matches on, by request id.
+    #[test]
+    fn a_refused_sign_out_is_answered_rather_than_dropped() {
+        let request_id = Uuid::new_v4();
+        let mine = Uuid::new_v4();
+        let theirs = Uuid::new_v4();
+
+        for command in refused_when_owned_elsewhere(request_id, 7) {
+            assert!(
+                matches!(
+                    gate_decision(&command, Some(theirs), mine),
+                    GateDecision::Refuse { .. }
+                ),
+                "{command:?}"
+            );
+            let result = refusal_response(&command, mine)
+                .unwrap_or_else(|| panic!("no response for {command:?}"));
+            assert_eq!(result.uuid, mine);
+            let debug = format!("{:?}", result.response);
+            assert!(
+                debug.contains(&request_id.to_string()),
+                "the caller is waiting on this request id: {debug}"
+            );
+            assert!(
+                debug.contains("Session unavailable to this connection"),
+                "every refusal says the same thing: {debug}"
+            );
+        }
     }
 
     /// The refusal must ANSWER, carrying the request id the caller is waiting on.

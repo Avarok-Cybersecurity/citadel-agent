@@ -31,42 +31,61 @@ use citadel_sdk::prelude::{
 };
 use std::sync::atomic::Ordering;
 
-/// Send response to TCP client with fallback to broadcast when target connection is stale.
-/// This handles cases where a session's associated_tcp_connection has been closed
-/// (e.g., in multi-tab browser scenarios with Playwright or reconnection scenarios).
-async fn send_response_with_fallback<T: IOInterface, R: Ratchet>(
+/// Deliver a peer notification to the session it belongs to.
+///
+/// The uuid carried on the event is the one recorded when the connection was
+/// made, and it goes stale: a page reload, a tab close, a reconnect all mint a
+/// new localhost connection while the session and its CID persist. That is real,
+/// and it is why a fallback existed.
+///
+/// The fallback was to BROADCAST to every active localhost connection, on the
+/// reasoning that "the clients will filter based on CID". Every browser on this
+/// internal service — every account signed in on this machine — therefore
+/// received the peer-register, peer-connect and disconnect notifications of
+/// every other, and was trusted to discard them. Fail-open, on the client, for
+/// data about who else is talking to whom.
+///
+/// The session already knows its current connection:
+/// `associated_localhost_connection` is an `AtomicUuid` updated on reconnect. So
+/// the stale uuid is re-resolved through the CID rather than abandoned, and when
+/// even that finds nothing the notification is DROPPED with a warning — which is
+/// exactly what `send_response_to_tcp_client` in kernel/mod.rs does, and what
+/// this function was the only remaining exception to.
+async fn send_response_for_session<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     response: InternalServiceResponse,
-    target_uuid: uuid::Uuid,
+    session_cid: u64,
+    recorded_uuid: uuid::Uuid,
 ) -> Result<(), NetworkError> {
-    let tcp_map = this.tx_to_localhost_clients.read();
+    // The live uuid for this CID, if the session is still around. Read and
+    // released before touching the client map, so the two locks are never held
+    // together.
+    let live_uuid: Option<uuid::Uuid> = {
+        let connections = this.server_connection_map.read();
+        connections.get(&session_cid).map(|connection| {
+            connection
+                .associated_localhost_connection
+                .load(Ordering::Relaxed)
+        })
+    };
 
-    // First, try the target connection directly
-    if let Some(sender) = tcp_map.get(&target_uuid) {
-        return sender.send(response).map_err(|err| {
-            NetworkError::generic(format!("Failed to send response to TCP client: {err:?}"))
-        });
+    let target = live_uuid.unwrap_or(recorded_uuid);
+    if live_uuid.is_some_and(|live| live != recorded_uuid) {
+        info!(target: "citadel", "Peer notification for CID {session_cid} re-resolved from stale {recorded_uuid:?} to {target:?}");
     }
 
-    // Target connection not found - broadcast to ALL active TCP connections
-    // The clients will filter based on CID to only process messages meant for their sessions
-    warn!(target: "citadel", "Target TCP connection {target_uuid:?} not found, broadcasting to all {} active connections", tcp_map.len());
-
-    let mut sent_count = 0;
-    for (uuid, sender) in tcp_map.iter() {
-        if let Ok(()) = sender.send(response.clone()) {
-            sent_count += 1;
-            info!(target: "citadel", "Broadcast notification sent via TCP connection {:?}", uuid);
+    let tcp_map = this.tx_to_localhost_clients.read();
+    match tcp_map.get(&target) {
+        Some(sender) => sender.send(response).map_err(|err| {
+            NetworkError::generic(format!("Failed to send response to TCP client: {err:?}"))
+        }),
+        None => {
+            // Dropped, not broadcast. A notification nobody is listening for is
+            // lost; a notification sent to everybody is a disclosure.
+            warn!(target: "citadel", "No localhost connection for CID {session_cid} (tried {target:?}) - peer notification dropped");
+            Ok(())
         }
     }
-
-    if sent_count == 0 {
-        warn!(target: "citadel", "No active TCP connections to broadcast to - notification will be lost");
-    } else {
-        info!(target: "citadel", "Successfully broadcast notification to {} TCP connections", sent_count);
-    }
-
-    Ok(())
 }
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -109,8 +128,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         peer_cid: Some(peer_cid),
                         request_id: None,
                     });
-                // Use fallback function that broadcasts to all connections if target is stale
-                send_response_with_fallback(this, response, tcp_uuid).await?;
+                // Re-resolved through the CID, never broadcast; see the function.
+                send_response_for_session(this, response, session_cid, tcp_uuid).await?;
             }
         }
         PeerSignal::BroadcastConnected {
@@ -180,8 +199,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         peer_username: inviter_username,
                         request_id: None,
                     });
-                // Use fallback function that broadcasts to all connections if target is stale
-                send_response_with_fallback(this, response, associated_tcp_connection).await?;
+                // Re-resolved through the CID, never broadcast; see the function.
+                send_response_for_session(this, response, session_cid, associated_tcp_connection)
+                    .await?;
             }
         }
         PeerSignal::PostConnect {
@@ -235,8 +255,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         udp_mode,
                         request_id: None,
                     });
-                // Use fallback function that broadcasts to all connections if target is stale
-                send_response_with_fallback(this, response, associated_tcp_connection).await?;
+                // Re-resolved through the CID, never broadcast; see the function.
+                send_response_for_session(this, response, session_cid, associated_tcp_connection)
+                    .await?;
             }
         }
         _ => {}

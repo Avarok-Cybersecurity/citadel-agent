@@ -17,6 +17,10 @@ use futures::{Sink, Stream};
 use ws_stream_wasm::{WsMessage, WsMeta};
 // use futures_util::{SinkExt as FuturesSinkExt, StreamExt as FuturesStreamExt};
 use once_cell::sync::{Lazy, OnceCell};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+mod connection_lifecycle;
+use connection_lifecycle::{refuse_init, should_report_death, teardown_before_connect};
 use std::sync::RwLock as StdRwLock;
 use wasm_bindgen::prelude::*;
 
@@ -189,6 +193,13 @@ static WORKSPACE_STATE: OnceCell<Arc<RwLock<Option<WorkspaceState>>>> = OnceCell
 /// until it gave up.
 ///
 /// A re-settable holder is the whole fix: connect writes, teardown clears.
+/// Which connection is the live one.
+///
+/// Bumped by `close_connection`, so a communication task that ends because we
+/// tore its connection down can tell that it is no longer current and stay
+/// quiet. See `connection_lifecycle::should_report_death`.
+static CONNECTION_GENERATION: AtomicU64 = AtomicU64::new(0);
+
 static SINK_CHANNEL: Lazy<StdRwLock<Option<mpsc::UnboundedSender<InternalServicePayload>>>> =
     Lazy::new(|| StdRwLock::new(None));
 
@@ -266,23 +277,34 @@ pub async fn restart(ws_url: String) -> Result<(), JsValue> {
 }
 
 async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
-    if restart {
-        if !is_initialized() {
-            return Err(JsValue::from_str("Not initialized. Call init() first."));
-        }
+    let initialized = is_initialized();
+
+    if refuse_init(restart, initialized) {
+        return Err(JsValue::from_str(
+            "Already initialized. If required, call restart() instead followed by claiming any orphaned connections.",
+        ));
+    }
+
+    if teardown_before_connect(restart, initialized) {
         console_log!("Restarting WASM client with URL: {}", ws_url);
         close_connection().await?;
+    } else if restart {
+        // A restart with nothing to tear down. This used to be rejected with
+        // "Not initialized. Call init() first." -- and because the teardown
+        // above happens BEFORE the connect, a restart whose connect failed left
+        // exactly this state. The UI's "Retry Now" button calls only restart(),
+        // so one failed retry disabled retrying for the life of the page.
+        console_log!("Restarting WASM client with no live connection to replace");
     } else {
-        if is_initialized() {
-            return Err(JsValue::from_str(
-                "Already initialized. If required, call restart() instead followed by claiming any orphaned connections.",
-            ));
-        }
         // Initialize the Rust log crate to route to browser console
         // This makes log::info!, log::warn!, etc. visible in DevTools
         console_log::init_with_level(log::Level::Info).ok();
         console_log!("Initializing WASM client with URL: {}", ws_url);
     }
+
+    // Captured AFTER any teardown, so this task is stamped with the generation
+    // it actually belongs to.
+    let connection_generation = CONNECTION_GENERATION.load(Ordering::SeqCst);
 
     // Create channels for WebSocket communication
     let (sink_tx, mut sink_rx) = mpsc::unbounded_channel::<InternalServicePayload>();
@@ -386,9 +408,21 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
 
         console_log!("WebSocket communication task ended");
 
-        // Notify JavaScript that the WebSocket connection has died
-        // This allows the UI to show a retry modal
-        on_websocket_disconnected("WebSocket communication task ended");
+        // Only if this is still the LIVE connection. `close_connection` drops
+        // the state, which ends this task -- so every deliberate teardown used
+        // to look exactly like a failure: the retry modal reappeared during a
+        // restart the user had just asked for, and background services were
+        // stopped on a clean sign-out.
+        if should_report_death(
+            connection_generation,
+            CONNECTION_GENERATION.load(Ordering::SeqCst),
+        ) {
+            // Notify JavaScript that the WebSocket connection has died
+            // This allows the UI to show a retry modal
+            on_websocket_disconnected("WebSocket communication task ended");
+        } else {
+            console_log!("Connection was closed deliberately; not reporting a failure");
+        }
     });
 
     // Create IO implementation with channels
@@ -927,6 +961,12 @@ pub async fn send_direct_to_internal_service(message: JsValue) -> Result<(), JsV
 #[wasm_bindgen]
 pub async fn close_connection() -> Result<(), JsValue> {
     console_log!("Closing WASM client connection");
+
+    // Before anything is dropped: the communication task ends as a CONSEQUENCE
+    // of this teardown, and it checks this counter to decide whether its ending
+    // is worth reporting. Bumping first means it can never observe the old
+    // value after we have begun tearing down.
+    CONNECTION_GENERATION.fetch_add(1, Ordering::SeqCst);
 
     // Drop the sink first, so a subsequent connect installs a fresh one rather
     // than failing against a stale handle. Without this, reconnection was dead.

@@ -587,6 +587,56 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         // Delegate to the inherent method that uses batched network requests
         CitadelWorkspaceBackend::load_values_batched(self, keys).await
     }
+
+    /// One round trip for the whole set, mirroring `load_values_batched`.
+    ///
+    /// The inbound path writes the receipt map and the per-peer high-water mark
+    /// for every arriving message, inline in the single sequential listener.
+    /// Two separate `store_value` calls meant two round trips to the agent per
+    /// message, each with its own five-second `wait_for_response` window in
+    /// which one lost response freezes ALL inbound processing -- ACKs included,
+    /// so the senders start retransmitting into a receiver that is not reading.
+    async fn store_values_batched(
+        &self,
+        entries: &[(&str, Vec<u8>)],
+    ) -> Result<(), BackendError<WrappedMessage>> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let requests: Vec<InternalServiceRequest> = entries
+            .iter()
+            .map(|(key, value)| InternalServiceRequest::LocalDBSetKV {
+                request_id: Uuid::new_v4(),
+                cid: self.cid,
+                peer_cid: None,
+                key: format!("{}-{}", key, self.cid),
+                value: value.clone(),
+            })
+            .collect();
+
+        let responses = self.send_batched(requests).await?;
+
+        // A missing or failed acknowledgement is a failure, not a silence to
+        // step over: `update_map` and `store_value` both refuse to report an
+        // unacknowledged write as success, and this must agree with them.
+        for (index, response) in responses.iter().enumerate() {
+            if !matches!(response, InternalServiceResponse::LocalDBSetKVSuccess(_)) {
+                let key = entries[index].0;
+                return Err(BackendError::StorageError(format!(
+                    "Batched store for key={key} was not acknowledged: {response:?}"
+                )));
+            }
+        }
+        if responses.len() != entries.len() {
+            return Err(BackendError::StorageError(format!(
+                "Batched store expected {} acknowledgements, got {}",
+                entries.len(),
+                responses.len()
+            )));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]

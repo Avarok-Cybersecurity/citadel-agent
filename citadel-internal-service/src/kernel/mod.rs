@@ -322,7 +322,14 @@ impl<R: Ratchet> Connection<R> {
                 // its `Opening` marker so its commit logic stays single-owner.
                 if peer.media.is_none() && !matches!(peer.udp, UdpState::Opening) {
                     if let Some(rx) = udp_rx {
-                        peer.udp = UdpState::Pending(rx);
+                        // APPENDED, not assigned. A simultaneous connect makes
+                        // two peer connections and the SDK offers a UDP channel
+                        // once per connection, so the second offer used to
+                        // overwrite the first and drop it -- and when the
+                        // surviving connection was not the one whose offer was
+                        // kept, the receiver never fired and every call to that
+                        // peer failed with "no UDP channel within 5s".
+                        peer.udp.offer(rx);
                     }
                 }
             }

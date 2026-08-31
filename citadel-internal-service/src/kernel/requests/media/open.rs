@@ -23,7 +23,9 @@ enum OpenPath<R: Ratchet> {
     // whole enum (clippy::large_enum_variant).
     Done(Box<InternalServiceResponse>),
     AwaitChannel {
-        rx: OneshotReceiver<UdpChannel<R>>,
+        /// Every outstanding offer; the open races them. See `UdpState`'s
+        /// header for why there can be more than one.
+        rxs: Vec<OneshotReceiver<UdpChannel<R>>>,
         generation: u64,
     },
     RebuildStale {
@@ -94,12 +96,12 @@ pub async fn handle_open<T: IOInterface, R: Ratchet>(
             }
         } else {
             match std::mem::replace(&mut peer.udp, UdpState::Opening) {
-                UdpState::Pending(rx) => {
+                UdpState::Pending(rxs) => {
                     // Claimed before the await so a close arriving from a stale
                     // connection can tell whose open it would be cancelling.
                     peer.media_pending_owner = Some(uuid);
                     OpenPath::AwaitChannel {
-                        rx,
+                        rxs,
                         generation: peer.media_generation,
                     }
                 }
@@ -147,13 +149,24 @@ pub async fn handle_open<T: IOInterface, R: Ratchet>(
 
     let response = match path {
         OpenPath::Done(response) => *response,
-        OpenPath::AwaitChannel { mut rx, generation } => {
-            // Awaiting through &mut keeps the receiver alive on timeout so a
-            // later open can retry; consuming it here is what used to kill media
-            // on this peer connection forever after one failed open.
-            let outcome = tokio::time::timeout(UDP_WAIT, &mut rx).await;
+        OpenPath::AwaitChannel {
+            mut rxs,
+            generation,
+        } => {
+            // Every offer is raced, and awaited through &mut so all of them stay
+            // alive on timeout for a later open to retry. Consuming them here is
+            // what used to kill media on this peer connection for ever after one
+            // failed open; keeping only ONE of them is what made a simultaneous
+            // connect fail every time.
+            let outcome = {
+                let pending: Vec<&mut OneshotReceiver<UdpChannel<R>>> = rxs.iter_mut().collect();
+                match tokio::time::timeout(UDP_WAIT, futures::future::select_all(pending)).await {
+                    Ok((result, _index, _rest)) => Ok(result),
+                    Err(elapsed) => Err(elapsed),
+                }
+            };
             finish_first_open(
-                this, cid, peer_cid, uuid, request_id, to_client, media_lane, rx, outcome,
+                this, cid, peer_cid, uuid, request_id, to_client, media_lane, rxs, outcome,
                 generation,
             )
         }

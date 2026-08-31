@@ -58,7 +58,7 @@ pub(super) fn finish_first_open<T: IOInterface, R: Ratchet>(
     request_id: Uuid,
     to_client: ClientSender,
     media_lane: MediaLaneTx,
-    rx: OneshotReceiver<UdpChannel<R>>,
+    rxs: Vec<OneshotReceiver<UdpChannel<R>>>,
     outcome: ChannelOutcome<R>,
     generation: u64,
 ) -> InternalServiceResponse {
@@ -97,7 +97,7 @@ pub(super) fn finish_first_open<T: IOInterface, R: Ratchet>(
                     UdpState::Idle { tx, rx }
                 }
                 Ok(Err(_)) => UdpState::Unavailable,
-                Err(_) => UdpState::Pending(rx),
+                Err(_) => UdpState::Pending(rxs),
             };
         }
         return failed(
@@ -129,7 +129,7 @@ pub(super) fn finish_first_open<T: IOInterface, R: Ratchet>(
         Err(_) => {
             // The receiver survives the timeout (awaited via &mut), so this is
             // retryable: the channel may simply still be negotiating.
-            peer.udp = UdpState::Pending(rx);
+            peer.udp = UdpState::Pending(rxs);
             failed(
                 cid,
                 peer_cid,

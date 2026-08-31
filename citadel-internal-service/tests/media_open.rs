@@ -2,7 +2,10 @@ use citadel_internal_service_test_common as common;
 
 #[cfg(test)]
 mod tests {
-    use crate::common::{get_free_port, setup_log};
+    use crate::common::{
+        get_free_port, register_and_connect_to_server, setup_log, RegisterAndConnectItems,
+    };
+    use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
     use citadel_sdk::prelude::*;
     use std::error::Error;
@@ -76,6 +79,109 @@ mod tests {
                     failed.message
                 )
             }
+            other => panic!("expected a media session result, got {other:?}"),
+        }
+    }
+
+    /// The same media open, with BOTH peers on ONE internal service.
+    ///
+    /// This is the topology the browser actually uses and the test above does
+    /// not: one browser is one WebSocket is one internal service, hosting every
+    /// session in that browser. The CI call failures (#56) all come from that
+    /// shape, while the two-service test above passes in a millisecond -- so
+    /// the difference is worth pinning rather than assuming it is immaterial.
+    #[tokio::test]
+    async fn a_media_session_opens_between_two_sessions_on_one_service(
+    ) -> Result<(), Box<dyn Error>> {
+        setup_log();
+        let (server, server_bind_address) =
+            crate::common::server_info_skip_cert_verification::<StackedRatchet>();
+        tokio::task::spawn(server);
+
+        let service_addr: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+        let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
+        let internal_service = NodeBuilder::default()
+            .with_backend(BackendType::InMemory)
+            .with_node_type(NodeType::Peer)
+            .with_insecure_skip_cert_verification()
+            .build(service)?;
+        tokio::task::spawn(internal_service);
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+
+        let to_spawn = vec![
+            RegisterAndConnectItems {
+                internal_service_addr: service_addr,
+                server_addr: server_bind_address,
+                full_name: "Peer 0".to_string(),
+                username: "peer.0".to_string(),
+                password: "secret_0".to_string().into_bytes().to_owned(),
+                pre_shared_key: None::<PreSharedKey>,
+            },
+            RegisterAndConnectItems {
+                internal_service_addr: service_addr,
+                server_addr: server_bind_address,
+                full_name: "Peer 1".to_string(),
+                username: "peer.1".to_string(),
+                password: "secret_1".to_string().into_bytes().to_owned(),
+                pre_shared_key: None::<PreSharedKey>,
+            },
+        ];
+
+        let mut info = register_and_connect_to_server(to_spawn).await.unwrap();
+        let (mut tx0, mut rx0, cid0) = info.remove(0);
+        let (mut tx1, mut rx1, cid1) = info.remove(0);
+
+        crate::common::register_p2p(
+            &mut tx0,
+            &mut rx0,
+            cid0,
+            &mut tx1,
+            &mut rx1,
+            cid1,
+            SessionSecuritySettings::default(),
+            None::<PreSharedKey>,
+        )
+        .await?;
+        crate::common::connect_p2p_with_udp(
+            &mut tx0,
+            &mut rx0,
+            cid0,
+            &mut tx1,
+            &mut rx1,
+            cid1,
+            SessionSecuritySettings::default(),
+            None::<PreSharedKey>,
+            UdpMode::Enabled,
+        )
+        .await?;
+
+        let started = std::time::Instant::now();
+        tx0.send(InternalServiceRequest::MediaOpen {
+            request_id: Uuid::new_v4(),
+            cid: cid0,
+            peer_cid: cid1,
+        })
+        .unwrap();
+
+        let response = tokio::time::timeout(Duration::from_secs(30), rx0.recv())
+            .await
+            .expect("no answer to MediaOpen within 30s")
+            .expect("channel open");
+
+        match response {
+            InternalServiceResponse::MediaSessionOpened(opened) => {
+                println!(
+                    "MEASURED intra-service media open: {:?} (unreliable={})",
+                    started.elapsed(),
+                    opened.unreliable
+                );
+                Ok(())
+            }
+            InternalServiceResponse::MediaSessionFailed(failed) => panic!(
+                "media open failed after {:?}: {}",
+                started.elapsed(),
+                failed.message
+            ),
             other => panic!("expected a media session result, got {other:?}"),
         }
     }

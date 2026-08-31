@@ -895,3 +895,95 @@ pub async fn test_kv_for_service(
 
     Ok(())
 }
+
+/// What `register_and_connect_to_server` hands back per session.
+pub type PeerHandle = (
+    UnboundedSender<InternalServiceRequest>,
+    UnboundedReceiver<InternalServiceResponse>,
+    u64,
+);
+
+/// Opens a media session and reports how long the UDP channel took.
+///
+/// Shared, so the three tests differ only in how the peer connection was
+/// established -- the variable under study.
+pub async fn open_media_and_measure(
+    tx: &UnboundedSender<InternalServiceRequest>,
+    rx: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid: u64,
+    peer_cid: u64,
+    label: &str,
+) {
+    let started = std::time::Instant::now();
+    tx.send(InternalServiceRequest::MediaOpen {
+        request_id: Uuid::new_v4(),
+        cid,
+        peer_cid,
+    })
+    .unwrap();
+
+    // Bounded: this failure presents as silence, and an unbounded recv
+    // would hang the suite instead of failing it.
+    let response = tokio::time::timeout(Duration::from_secs(30), rx.recv())
+        .await
+        .unwrap_or_else(|_| panic!("{label}: no answer to MediaOpen within 30s"))
+        .expect("channel open");
+
+    match response {
+        InternalServiceResponse::MediaSessionOpened(opened) => {
+            assert_eq!(
+                opened.peer_cid, peer_cid,
+                "{label}: opened against the wrong peer"
+            );
+            println!(
+                "MEASURED {label}: {:?} (unreliable={})",
+                started.elapsed(),
+                opened.unreliable
+            );
+        }
+        // The message names WHICH failure: no channel within the budget,
+        // or a connection brought up with UDP disabled.
+        InternalServiceResponse::MediaSessionFailed(failed) => panic!(
+            "{label}: media open failed after {:?}: {}",
+            started.elapsed(),
+            failed.message
+        ),
+        other => panic!("{label}: expected a media session result, got {other:?}"),
+    }
+}
+
+/// One internal service hosting two registered, server-connected sessions.
+///
+/// This is the browser's shape: one browser is one WebSocket is one service.
+pub async fn two_sessions_on_one_service(
+    tag: &str,
+) -> Result<(PeerHandle, PeerHandle), Box<dyn Error>> {
+    let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
+    tokio::task::spawn(server);
+
+    let service_addr: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+    let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
+    let internal_service = NodeBuilder::default()
+        .with_backend(BackendType::InMemory)
+        .with_node_type(NodeType::Peer)
+        .with_insecure_skip_cert_verification()
+        .build(service)?;
+    tokio::task::spawn(internal_service);
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    let to_spawn = (0..2)
+        .map(|i| RegisterAndConnectItems {
+            internal_service_addr: service_addr,
+            server_addr: server_bind_address,
+            full_name: format!("{tag} {i}"),
+            username: format!("{tag}.{i}"),
+            password: format!("secret_{i}").into_bytes(),
+            pre_shared_key: None::<PreSharedKey>,
+        })
+        .collect();
+
+    let mut info = register_and_connect_to_server(to_spawn).await.unwrap();
+    let second = info.remove(1);
+    let first = info.remove(0);
+    Ok((first, second))
+}

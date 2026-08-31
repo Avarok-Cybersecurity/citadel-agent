@@ -3,10 +3,10 @@ use citadel_internal_service_test_common as common;
 #[cfg(test)]
 mod tests {
     use crate::common::{
-        get_free_port, register_and_connect_to_server, setup_log, RegisterAndConnectItems,
+        get_free_port, open_media_and_measure, setup_log, two_sessions_on_one_service,
     };
-    use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
+
     use citadel_sdk::prelude::*;
     use std::error::Error;
     use std::net::SocketAddr;
@@ -43,44 +43,8 @@ mod tests {
         let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
         let (_to_service_b, _from_service_b, cid_b) = peer_two.get_mut(0_usize).unwrap();
 
-        let started = std::time::Instant::now();
-        to_service_a
-            .send(InternalServiceRequest::MediaOpen {
-                request_id: Uuid::new_v4(),
-                cid: *cid_a,
-                peer_cid: *cid_b,
-            })
-            .unwrap();
-
-        // Bounded: the failure this guards presents as silence, and an
-        // unbounded recv would hang the suite instead of failing it.
-        let response = tokio::time::timeout(Duration::from_secs(30), from_service_a.recv())
-            .await
-            .expect("no answer to MediaOpen within 30s")
-            .expect("channel open");
-
-        match response {
-            InternalServiceResponse::MediaSessionOpened(opened) => {
-                println!(
-                    "MEASURED media open: {:?} (unreliable={}, max_frame={})",
-                    started.elapsed(),
-                    opened.unreliable,
-                    opened.max_frame_bytes
-                );
-                assert_eq!(opened.peer_cid, *cid_b, "opened against the wrong peer");
-                Ok(())
-            }
-            InternalServiceResponse::MediaSessionFailed(failed) => {
-                // The message is the diagnostic: it names whether no UDP channel
-                // arrived in the budget, or the connection had UdpMode disabled.
-                panic!(
-                    "media open failed after {:?}: {}",
-                    started.elapsed(),
-                    failed.message
-                )
-            }
-            other => panic!("expected a media session result, got {other:?}"),
-        }
+        open_media_and_measure(to_service_a, from_service_a, *cid_a, *cid_b, "two services").await;
+        Ok(())
     }
 
     /// The same media open, with BOTH peers on ONE internal service.
@@ -94,42 +58,8 @@ mod tests {
     async fn a_media_session_opens_between_two_sessions_on_one_service(
     ) -> Result<(), Box<dyn Error>> {
         setup_log();
-        let (server, server_bind_address) =
-            crate::common::server_info_skip_cert_verification::<StackedRatchet>();
-        tokio::task::spawn(server);
-
-        let service_addr: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
-        let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
-        let internal_service = NodeBuilder::default()
-            .with_backend(BackendType::InMemory)
-            .with_node_type(NodeType::Peer)
-            .with_insecure_skip_cert_verification()
-            .build(service)?;
-        tokio::task::spawn(internal_service);
-        tokio::time::sleep(Duration::from_millis(1000)).await;
-
-        let to_spawn = vec![
-            RegisterAndConnectItems {
-                internal_service_addr: service_addr,
-                server_addr: server_bind_address,
-                full_name: "Peer 0".to_string(),
-                username: "peer.0".to_string(),
-                password: "secret_0".to_string().into_bytes().to_owned(),
-                pre_shared_key: None::<PreSharedKey>,
-            },
-            RegisterAndConnectItems {
-                internal_service_addr: service_addr,
-                server_addr: server_bind_address,
-                full_name: "Peer 1".to_string(),
-                username: "peer.1".to_string(),
-                password: "secret_1".to_string().into_bytes().to_owned(),
-                pre_shared_key: None::<PreSharedKey>,
-            },
-        ];
-
-        let mut info = register_and_connect_to_server(to_spawn).await.unwrap();
-        let (mut tx0, mut rx0, cid0) = info.remove(0);
-        let (mut tx1, mut rx1, cid1) = info.remove(0);
+        let ((mut tx0, mut rx0, cid0), (mut tx1, mut rx1, cid1)) =
+            two_sessions_on_one_service("intra").await?;
 
         crate::common::register_p2p(
             &mut tx0,
@@ -155,34 +85,100 @@ mod tests {
         )
         .await?;
 
-        let started = std::time::Instant::now();
-        tx0.send(InternalServiceRequest::MediaOpen {
+        open_media_and_measure(&tx0, &mut rx0, cid0, cid1, "one service").await;
+        Ok(())
+    }
+
+    /// The peer connection accepted with `PeerConnectAccept`, as the browser
+    /// does it — and then a media open over it.
+    ///
+    /// No Rust test had ever sent `PeerConnectAccept`. The harness has BOTH
+    /// sides send `PeerConnect`, a mutual connect that passes `udp_mode`
+    /// explicitly on each side. The browser does not: one side connects and the
+    /// other ACCEPTS, and `requests/peer/accept.rs` destructures `udp_mode: _`,
+    /// relying entirely on the SDK reading the mode back out of the inbound
+    /// `PeerSignal::PostConnect`.
+    ///
+    /// So the path CI exercises and the path the Rust tests exercise differ at
+    /// exactly the field #56's failure message names. This pins the accepted
+    /// path: if UDP does not survive it, a call over an accepted connection can
+    /// never open, whatever `UDP_WAIT` is set to.
+    #[tokio::test]
+    async fn a_media_session_opens_over_an_accepted_peer_connection() -> Result<(), Box<dyn Error>>
+    {
+        setup_log();
+        let ((tx0, mut rx0, cid0), (tx1, mut rx1, cid1)) =
+            two_sessions_on_one_service("accept").await?;
+        let (mut tx0m, mut tx1m) = (tx0.clone(), tx1.clone());
+
+        crate::common::register_p2p(
+            &mut tx0m,
+            &mut rx0,
+            cid0,
+            &mut tx1m,
+            &mut rx1,
+            cid1,
+            SessionSecuritySettings::default(),
+            None::<PreSharedKey>,
+        )
+        .await?;
+
+        // A connects, with UDP requested.
+        tx0.send(InternalServiceRequest::PeerConnect {
             request_id: Uuid::new_v4(),
             cid: cid0,
             peer_cid: cid1,
+            udp_mode: UdpMode::Enabled,
+            session_security_settings: SessionSecuritySettings::default(),
+            peer_session_password: None::<PreSharedKey>,
         })
         .unwrap();
 
-        let response = tokio::time::timeout(Duration::from_secs(30), rx0.recv())
+        // B is told, and ACCEPTS.
+        let notification = tokio::time::timeout(Duration::from_secs(30), rx1.recv())
             .await
-            .expect("no answer to MediaOpen within 30s")
+            .expect("no PeerConnectNotification within 30s")
             .expect("channel open");
+        let InternalServiceResponse::PeerConnectNotification(notification) = notification else {
+            panic!("expected a PeerConnectNotification, got {notification:?}")
+        };
+        assert_eq!(
+            notification.udp_mode,
+            UdpMode::Enabled,
+            "the connect request's UdpMode did not survive the trip to the acceptor, so the \
+             accepted connection could never carry media"
+        );
 
-        match response {
-            InternalServiceResponse::MediaSessionOpened(opened) => {
-                println!(
-                    "MEASURED intra-service media open: {:?} (unreliable={})",
-                    started.elapsed(),
-                    opened.unreliable
-                );
-                Ok(())
-            }
-            InternalServiceResponse::MediaSessionFailed(failed) => panic!(
-                "media open failed after {:?}: {}",
-                started.elapsed(),
-                failed.message
-            ),
-            other => panic!("expected a media session result, got {other:?}"),
+        tx1.send(InternalServiceRequest::PeerConnectAccept {
+            request_id: Uuid::new_v4(),
+            cid: cid1,
+            peer_cid: cid0,
+            accept: true,
+            // Discarded by accept.rs; the SDK reads the mode from the signal.
+            udp_mode: UdpMode::Enabled,
+            session_security_settings: SessionSecuritySettings::default(),
+            peer_session_password: None::<PreSharedKey>,
+        })
+        .unwrap();
+
+        // The two sides answer with different variants: the connector gets
+        // PeerConnectSuccess, the acceptor PeerConnectAcceptSuccess.
+        for (rx, who) in [(&mut rx0, "connector"), (&mut rx1, "acceptor")] {
+            let signal = tokio::time::timeout(Duration::from_secs(30), rx.recv())
+                .await
+                .unwrap_or_else(|_| panic!("{who} never saw its connect result"))
+                .expect("channel open");
+            assert!(
+                matches!(
+                    signal,
+                    InternalServiceResponse::PeerConnectSuccess(..)
+                        | InternalServiceResponse::PeerConnectAcceptSuccess(..)
+                ),
+                "{who} got {signal:?} instead of a connect success"
+            );
         }
+
+        open_media_and_measure(&tx0, &mut rx0, cid0, cid1, "accepted connection").await;
+        Ok(())
     }
 }

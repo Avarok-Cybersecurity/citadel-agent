@@ -222,6 +222,26 @@ pub async fn register_and_connect_to_server_then_peers<R: Ratchet>(
     server_session_password: Option<PreSharedKey>,
     peer_session_password: Option<PreSharedKey>,
 ) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
+    register_and_connect_to_server_then_peers_with_udp::<R>(
+        int_svc_addrs,
+        server_session_password,
+        peer_session_password,
+        Default::default(),
+    )
+    .await
+}
+
+/// `register_and_connect_to_server_then_peers`, with the peer connection's
+/// `UdpMode` stated explicitly.
+///
+/// The default is `Disabled`, so without this no Rust test can reach the media
+/// path at all — see `connect_p2p_with_udp`.
+pub async fn register_and_connect_to_server_then_peers_with_udp<R: Ratchet>(
+    int_svc_addrs: Vec<SocketAddr>,
+    server_session_password: Option<PreSharedKey>,
+    peer_session_password: Option<PreSharedKey>,
+    udp_mode: citadel_sdk::prelude::UdpMode,
+) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
     // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
     let (server, server_bind_address) = if server_session_password.is_some() {
         server_info_skip_cert_verification_with_password::<R>(
@@ -303,7 +323,7 @@ pub async fn register_and_connect_to_server_then_peers<R: Ratchet>(
             )
             .await?;
 
-            connect_p2p(
+            connect_p2p_with_udp(
                 to_service_a,
                 from_service_a,
                 *cid_a,
@@ -312,6 +332,7 @@ pub async fn register_and_connect_to_server_then_peers<R: Ratchet>(
                 *cid_b,
                 session_security_settings,
                 peer_session_password.clone(),
+                udp_mode,
             )
             .await?;
         }
@@ -406,13 +427,46 @@ pub async fn connect_p2p(
     session_security_settings: SessionSecuritySettings,
     session_password: Option<PreSharedKey>,
 ) -> Result<(), Box<dyn Error>> {
+    connect_p2p_with_udp(
+        to_service_a,
+        from_service_a,
+        cid_a,
+        to_service_b,
+        from_service_b,
+        cid_b,
+        session_security_settings,
+        session_password,
+        Default::default(),
+    )
+    .await
+}
+
+/// `connect_p2p`, with the peer connection's `UdpMode` stated explicitly.
+///
+/// Every path in this harness passed `udp_mode: Default::default()`, and that
+/// default is `Disabled` — so no Rust test had ever brought a peer connection up
+/// with UDP, and the whole media path was exercised only by the browser suite.
+/// That is why a bug as blunt as `UdpState::Pending` holding one receiver and
+/// dropping the other (fixed in dfb50a2) could only be caught in CI.
+#[allow(clippy::too_many_arguments)]
+pub async fn connect_p2p_with_udp(
+    to_service_a: &mut UnboundedSender<InternalServiceRequest>,
+    from_service_a: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid_a: u64,
+    to_service_b: &mut UnboundedSender<InternalServiceRequest>,
+    from_service_b: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid_b: u64,
+    session_security_settings: SessionSecuritySettings,
+    session_password: Option<PreSharedKey>,
+    udp_mode: citadel_sdk::prelude::UdpMode,
+) -> Result<(), Box<dyn Error>> {
     // Service A Requests To Connect
     to_service_a
         .send(InternalServiceRequest::PeerConnect {
             request_id: Uuid::new_v4(),
             cid: cid_a,
             peer_cid: cid_b,
-            udp_mode: Default::default(),
+            udp_mode,
             session_security_settings,
             peer_session_password: session_password.clone(),
         })
@@ -442,7 +496,7 @@ pub async fn connect_p2p(
             request_id: Uuid::new_v4(),
             cid: cid_b,
             peer_cid: cid_a,
-            udp_mode: Default::default(),
+            udp_mode,
             session_security_settings,
             peer_session_password: session_password,
         })

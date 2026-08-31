@@ -4,6 +4,8 @@ use async_recursion::async_recursion;
 use citadel_internal_service_types::*;
 use citadel_sdk::logging::info;
 use citadel_sdk::logging::tracing::log;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_sdk::prelude::*;
@@ -317,6 +319,15 @@ pub(crate) fn spawn_group_channel_receiver(
     group_key: MessageGroupKey,
     implicated_cid: u64,
     route: SessionRoute,
+    // The departure flag for this group's entry in `Connection.groups`.
+    //
+    // A `Disconnected` / `EndResponse` broadcast reaches the client through TWO
+    // paths: `responses/group_event.rs`, which holds the connection map and can
+    // mark the entry itself, and this task, which does not. Marking in only one
+    // of them left the membership check passing after the group had ended --
+    // the end-to-end test in tests/group_stale_membership.rs caught exactly
+    // that, with the notification delivered and the entry still live.
+    departed: Option<Arc<AtomicBool>>,
     mut rx: GroupChannelRecvHalf,
 ) {
     // Handler/Receiver for Group Channel Broadcasts that aren't handled in on_node_event_received in Kernel
@@ -359,6 +370,11 @@ pub(crate) fn spawn_group_channel_receiver(
                                 ))
                             }
                             GroupBroadcast::EndResponse { key, success } => {
+                                if success {
+                                    if let Some(departed) = departed.as_ref() {
+                                        departed.store(true, std::sync::atomic::Ordering::SeqCst);
+                                    }
+                                }
                                 Some(InternalServiceResponse::GroupEndNotification(
                                     GroupEndNotification {
                                         cid: implicated_cid,
@@ -369,6 +385,9 @@ pub(crate) fn spawn_group_channel_receiver(
                                 ))
                             }
                             GroupBroadcast::Disconnected { key } => {
+                                if let Some(departed) = departed.as_ref() {
+                                    departed.store(true, std::sync::atomic::Ordering::SeqCst);
+                                }
                                 Some(InternalServiceResponse::GroupDisconnectNotification(
                                     GroupDisconnectNotification {
                                         cid: implicated_cid,

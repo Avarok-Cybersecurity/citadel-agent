@@ -1,11 +1,36 @@
-use crate::kernel::{send_response_to_tcp_client, spawn_tick_updater, CitadelWorkspaceService};
+use crate::kernel::{spawn_tick_updater, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{FileTransferRequestNotification, InternalServiceResponse};
 use citadel_sdk::logging::{info, warn};
 use citadel_sdk::prelude::{
     NetworkError, ObjectTransferHandle, ObjectTransferOrientation, Ratchet, TransferType,
 };
+use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use tokio::sync::mpsc::UnboundedSender;
+use uuid::Uuid;
+
+/// Sends `response` to the localhost client `tcp_uuid` and reports whether it
+/// was actually handed to a live client.
+///
+/// This exists alongside `send_response_to_tcp_client` because that helper
+/// deliberately treats a missing uuid as Ok(()) (a dropped response must not
+/// crash the service). For a transfer OFFER that answer is not enough: the
+/// caller inserted a handler-map entry that only the notified client can ever
+/// remove, so "the client is gone" must be distinguishable from "delivered" —
+/// otherwise the entry is pinned for the life of the session.
+pub(crate) fn deliver_offer_to_localhost_client(
+    clients: &Arc<RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+    response: InternalServiceResponse,
+    tcp_uuid: Uuid,
+) -> bool {
+    match clients.read().get(&tcp_uuid) {
+        Some(sender) => sender.send(response).is_ok(),
+        None => false,
+    }
+}
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
@@ -114,6 +139,15 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     },
                 );
 
+                // This insert is what makes the offer answerable at all — and
+                // the only paths that remove it are: (1) the user answering it
+                // (requests/file/respond_file_transfer.rs takes the handle),
+                // (2) the reclaim-and-decline below when the offer
+                // notification cannot be delivered, and (3) session teardown
+                // (disconnect/deregister), which drops the Connection and its
+                // handler maps with it. Still NOT removed: an offer that WAS
+                // delivered to a live client that then never answers — that
+                // is an open offer by design, and it lives until (1) or (3).
                 connection.add_object_transfer_handler(
                     peer_cid,
                     object_id,
@@ -130,16 +164,35 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 // service (one IS process can host sessions for multiple
                 // distinct users). The single-TCP-per-browser architecture
                 // invariant means `associated_localhost_connection` is the
-                // sole authoritative target — `send_response_to_tcp_client`
-                // already logs a warning when the UUID isn't in the live
-                // map, which surfaces stale-UUID gaps without exfiltrating
-                // payloads to unrelated sessions.
-                if let Err(err) = send_response_to_tcp_client(
+                // sole authoritative target.
+                //
+                // Delivery has to be CHECKED here, not fire-and-forget:
+                // `send_response_to_tcp_client` maps "uuid not in the live
+                // map" to Ok(()) so ordinary response paths don't crash the
+                // service, but for a pending transfer offer that contract hid
+                // the abandon path — a notification dropped on the floor left
+                // an entry the user could never answer (they never saw the
+                // offer), pinned for the life of a session that deliberately
+                // survives TCP drops. When delivery fails, reclaim the entry
+                // and decline the transfer so the remote sender gets a
+                // rejection instead of waiting forever.
+                if !deliver_offer_to_localhost_client(
                     &this.tx_to_localhost_clients,
                     response,
                     current_tcp_uuid,
                 ) {
-                    warn!(target: "citadel", "[ObjectTransferHandle] Failed to deliver FileTransferRequestNotification for cid={implicated_cid}, peer_cid={peer_cid}: {err:?}");
+                    warn!(target: "citadel", "[ObjectTransferHandle] FileTransferRequestNotification for cid={implicated_cid}, peer_cid={peer_cid}, object_id={object_id:?} was undeliverable (localhost connection {current_tcp_uuid:?} gone) - reclaiming and declining the pending offer");
+                    let reclaimed = this
+                        .server_connection_map
+                        .write()
+                        .get_mut(&implicated_cid)
+                        .and_then(|conn| conn.take_file_transfer_handle(peer_cid, object_id))
+                        .flatten();
+                    if let Some(mut handler) = reclaimed {
+                        if let Err(err) = handler.decline() {
+                            warn!(target: "citadel", "[ObjectTransferHandle] Failed to decline undeliverable transfer offer from peer {peer_cid} for cid {implicated_cid}: {err:?}");
+                        }
+                    }
                 }
             }
         }
@@ -177,4 +230,65 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::deliver_offer_to_localhost_client;
+    use citadel_internal_service_types::{GroupMessageFailure, InternalServiceResponse};
+    use parking_lot::RwLock;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use uuid::Uuid;
+
+    // Any variant works here; the helper never inspects the payload. This is
+    // simply the cheapest one to construct.
+    fn arbitrary_response() -> InternalServiceResponse {
+        InternalServiceResponse::GroupMessageFailure(GroupMessageFailure {
+            cid: 0,
+            message: "test payload".to_string(),
+            request_id: None,
+        })
+    }
+
+    #[test]
+    fn absent_client_is_reported_undeliverable() {
+        // The M4 defect: a uuid missing from the live map was treated as a
+        // successful delivery (Ok(())), so the pending-offer entry inserted
+        // just before was never reclaimed. The helper must report failure.
+        let clients = Arc::new(RwLock::new(HashMap::new()));
+        assert!(
+            !deliver_offer_to_localhost_client(&clients, arbitrary_response(), Uuid::new_v4()),
+            "a transfer offer aimed at a localhost connection that no longer exists must \
+             be reported undeliverable so the caller reclaims the pending-offer entry"
+        );
+    }
+
+    #[test]
+    fn closed_client_channel_is_reported_undeliverable() {
+        let uuid = Uuid::new_v4();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        drop(rx);
+        let clients = Arc::new(RwLock::new(HashMap::from([(uuid, tx)])));
+        assert!(
+            !deliver_offer_to_localhost_client(&clients, arbitrary_response(), uuid),
+            "a send into a closed client channel must be reported undeliverable"
+        );
+    }
+
+    #[test]
+    fn live_client_receives_the_offer() {
+        let uuid = Uuid::new_v4();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let clients = Arc::new(RwLock::new(HashMap::from([(uuid, tx)])));
+        assert!(deliver_offer_to_localhost_client(
+            &clients,
+            arbitrary_response(),
+            uuid
+        ));
+        assert!(
+            rx.try_recv().is_ok(),
+            "the live client must get the payload"
+        );
+    }
 }

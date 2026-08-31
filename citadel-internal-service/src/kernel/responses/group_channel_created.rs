@@ -20,15 +20,12 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     if let Some(connection) = server_connection_map.get_mut(&cid) {
         connection.add_group_channel(key, GroupConnection { key, tx, cid });
 
-        requests::spawn_group_channel_receiver(
-            key,
-            cid,
-            SessionRoute::new(
-                connection.associated_localhost_connection.clone(),
-                this.tx_to_localhost_clients.clone(),
-            ),
-            rx,
+        let route = SessionRoute::new(
+            connection.associated_localhost_connection.clone(),
+            this.tx_to_localhost_clients.clone(),
         );
+        let departed = connection.groups.departure_flag(&key);
+        requests::spawn_group_channel_receiver(key, cid, route, departed, rx);
 
         let associated_tcp_connection = connection
             .associated_localhost_connection

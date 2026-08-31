@@ -90,15 +90,12 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                                         },
                                     );
 
-                                    spawn_group_channel_receiver(
-                                        key,
-                                        cid,
-                                        SessionRoute::new(
-                                            connection.associated_localhost_connection.clone(),
-                                            this.tx_to_localhost_clients.clone(),
-                                        ),
-                                        rx,
+                                    let route = SessionRoute::new(
+                                        connection.associated_localhost_connection.clone(),
+                                        this.tx_to_localhost_clients.clone(),
                                     );
+                                    let departed = connection.groups.departure_flag(&key);
+                                    spawn_group_channel_receiver(key, cid, route, departed, rx);
 
                                     true
                                 } else {

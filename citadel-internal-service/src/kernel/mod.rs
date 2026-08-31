@@ -37,6 +37,7 @@ use uuid::Uuid;
 
 pub(crate) mod credential_fingerprint;
 pub(crate) mod ext;
+pub(crate) mod group_channels;
 pub(crate) mod media;
 pub(crate) mod picked_files;
 pub(crate) mod requests;
@@ -197,7 +198,12 @@ pub struct Connection<R: Ratchet> {
     pub peers: HashMap<u64, PeerConnection<R>>,
     pub(crate) associated_localhost_connection: Arc<AtomicUuid>,
     pub c2s_file_transfer_handlers: HashMap<ObjectId, Option<ObjectTransferHandler>>,
-    pub groups: HashMap<MessageGroupKey, GroupConnection>,
+    /// Group channels this session is a member of. Not a plain HashMap: the
+    /// map was insert-only, so entries outlived the membership they described
+    /// and a GroupMessage to a group the user had left still found a working
+    /// sender and reported success. See kernel/group_channels.rs for how
+    /// entries expire when this session leaves or ends a group.
+    pub groups: group_channels::GroupChannels,
     pub username: String,
     pub server_address: String,
     /// Storage for files picked via PickFile command.
@@ -278,7 +284,7 @@ impl<R: Ratchet> Connection<R> {
             associated_localhost_connection: associated_tcp_connection,
             c2s_file_transfer_handlers: HashMap::new(),
             username,
-            groups: HashMap::new(),
+            groups: group_channels::GroupChannels::new(),
             server_address,
             picked_files: HashMap::new(),
             revfs_correlations: revfs_correlation::RevfsCorrelations::default(),
@@ -383,6 +389,9 @@ impl<R: Ratchet> Connection<R> {
         group_key: MessageGroupKey,
         group_channel: GroupConnection,
     ) {
+        // The insert wraps the SDK send half so the entry expires when this
+        // session leaves or ends the group — a bare HashMap insert left the
+        // entry (and the membership it implied) alive for the whole session.
         self.groups.insert(group_key, group_channel);
     }
 

@@ -873,6 +873,22 @@ impl MessageMetadata for WrappedMessage {
             contents: contents.into(),
         }
     }
+
+    /// Seeded from the wall clock, not from zero.
+    ///
+    /// This backend's store is the agent's LocalDB, keyed by CID. A user on a
+    /// new device, or one who has cleared site data, arrives with the same CID
+    /// and an EMPTY store -- while the peer's durable delivery frontier for
+    /// them is untouched. Re-minting from zero put every message at or below
+    /// that frontier, where `safe_to_ack` calls it a duplicate: re-ACKed,
+    /// cleared, and never delivered. Nothing errored on either side.
+    ///
+    /// Microseconds, because the seed must clear the HIGHEST id the previous
+    /// incarnation reached, which is its own seed plus however many messages it
+    /// sent -- see `platform_timestamp_micros`.
+    fn initial_message_id() -> Self::MessageId {
+        intersession_layer_messaging::platform_timestamp_micros()
+    }
 }
 
 #[derive(Debug)]

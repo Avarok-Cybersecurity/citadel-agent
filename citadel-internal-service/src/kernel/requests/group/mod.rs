@@ -7,3 +7,4 @@ pub mod leave;
 pub mod message;
 pub mod request_join;
 pub mod respond_request;
+mod respond_wait;

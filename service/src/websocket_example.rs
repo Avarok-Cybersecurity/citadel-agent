@@ -1,4 +1,5 @@
 use citadel_internal_service::kernel::{CitadelWorkspaceService, RatchetType};
+use citadel_internal_service_connector::io_interface::origin_policy::OriginPolicy;
 use citadel_internal_service_connector::io_interface::websockets::WebSocketInterface;
 use citadel_sdk::prefabs::server::empty::EmptyKernel;
 use citadel_sdk::prelude::*;
@@ -32,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2. Start the WebSocket internal service
     let websocket_addr: SocketAddr = "127.0.0.1:8080".parse()?;
-    let websocket_interface = WebSocketInterface::new(websocket_addr).await?;
+    let websocket_interface = WebSocketInterface::new(websocket_addr, OriginPolicy::Any).await?;
 
     println!("✅ WebSocket server listening on {}", websocket_addr);
     println!("📡 Clients should register with server: {}", server_addr);

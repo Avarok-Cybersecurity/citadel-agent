@@ -9,6 +9,8 @@ use citadel_internal_service_connector::connector::{
 use citadel_internal_service_connector::io_interface::in_memory::{
     InMemoryInterface, InMemorySink, InMemoryStream,
 };
+#[cfg(feature = "websockets")]
+use citadel_internal_service_connector::io_interface::origin_policy::OriginPolicy;
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
 #[cfg(feature = "websockets")]
 use citadel_internal_service_connector::io_interface::websockets::WebSocketInterface;
@@ -130,10 +132,14 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
     }
 
     #[cfg(feature = "websockets")]
+    /// `origins` is required, not optional: see
+    /// `io_interface::origin_policy` for why the convenient default is the
+    /// hole this closes.
     pub async fn new_websocket(
         bind_address: SocketAddr,
+        origins: OriginPolicy,
     ) -> std::io::Result<CitadelWorkspaceService<WebSocketInterface, R>> {
-        let ws_server_io = WebSocketInterface::new(bind_address).await?;
+        let ws_server_io = WebSocketInterface::new(bind_address, origins).await?;
         Ok(ws_server_io.into())
     }
 }

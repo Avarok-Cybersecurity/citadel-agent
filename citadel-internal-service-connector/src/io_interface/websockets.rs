@@ -11,21 +11,67 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use crate::io_interface::origin_policy::OriginPolicy;
 use citadel_io::tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{
-    accept_async,
+    accept_hdr_async,
+    tungstenite::handshake::server::{ErrorResponse, Request, Response},
+    tungstenite::http::StatusCode,
     tungstenite::{Error as TungsteniteError, Message},
     WebSocketStream,
 };
 
 pub struct WebSocketInterface {
     listener: TcpListener,
+    origins: OriginPolicy,
 }
 
 impl WebSocketInterface {
-    pub async fn new(addr: SocketAddr) -> std::io::Result<Self> {
+    /// Bind, admitting only handshakes `origins` permits.
+    ///
+    /// The policy is a required argument rather than an option with a default:
+    /// the convenient default is `Any`, which is exactly the hole this closes,
+    /// and a caller that has not thought about it should be made to.
+    pub async fn new(addr: SocketAddr, origins: OriginPolicy) -> std::io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
-        Ok(Self { listener })
+        Ok(Self { listener, origins })
+    }
+}
+
+/// Refuse the handshake unless its `Origin` is permitted.
+///
+/// This runs during the handshake, so a refused page gets an HTTP 403 and no
+/// WebSocket at all — it never reaches `handle_request` and cannot be counted
+/// as a connection.
+// The Err type is tungstenite's `ErrorResponse`, fixed by the callback trait
+// this closure has to satisfy. It cannot be boxed without failing to implement
+// the trait, and it is constructed at most once per refused handshake.
+#[allow(clippy::result_large_err)]
+fn origin_check(
+    origins: &OriginPolicy,
+) -> impl FnOnce(&Request, Response) -> Result<Response, ErrorResponse> + '_ {
+    move |request: &Request, response: Response| {
+        // A header that is not valid UTF-8 is not an origin we listed, so it
+        // is treated as present-and-unrecognised rather than as absent.
+        let origin: Option<&str> = request
+            .headers()
+            .get("origin")
+            .map(|value| value.to_str().unwrap_or("<invalid>"));
+
+        if origins.permits(origin) {
+            return Ok(response);
+        }
+
+        log::warn!(
+            target: "citadel",
+            "WebSocket handshake REFUSED for origin {:?}: not in the configured allowlist",
+            origin.unwrap_or("<none>")
+        );
+        let mut refusal = ErrorResponse::new(Some(
+            "origin not permitted by this agent's allowlist".to_string(),
+        ));
+        *refusal.status_mut() = StatusCode::FORBIDDEN;
+        Err(refusal)
     }
 }
 
@@ -40,7 +86,7 @@ impl IOInterface for WebSocketInterface {
                 Ok((stream, addr)) => {
                     log::debug!(target: "citadel", "New WebSocket connection from {}", addr);
 
-                    match accept_async(stream).await {
+                    match accept_hdr_async(stream, origin_check(&self.origins)).await {
                         Ok(ws_stream) => {
                             let (sink, stream) = ws_stream.split();
                             return Some((
@@ -169,7 +215,7 @@ impl Stream for WebSocketStream_ {
 fn websocket_error_to_io_error(err: TungsteniteError) -> std::io::Error {
     match err {
         TungsteniteError::Io(io_err) => io_err,
-        other => std::io::Error::new(std::io::ErrorKind::Other, other),
+        other => std::io::Error::other(other),
     }
 }
 
@@ -259,7 +305,9 @@ mod tests {
     #[tokio::test]
     async fn test_websocket_interface() {
         let addr = "127.0.0.1:0".parse().unwrap();
-        let mut interface = WebSocketInterface::new(addr).await.unwrap();
+        let mut interface = WebSocketInterface::new(addr, OriginPolicy::Any)
+            .await
+            .unwrap();
         let bound_addr = interface.listener.local_addr().unwrap();
 
         // Spawn server task
@@ -343,7 +391,9 @@ mod tests {
     #[tokio::test]
     async fn test_websocket_json_format() {
         let addr = "127.0.0.1:0".parse().unwrap();
-        let mut interface = WebSocketInterface::new(addr).await.unwrap();
+        let mut interface = WebSocketInterface::new(addr, OriginPolicy::Any)
+            .await
+            .unwrap();
         let bound_addr = interface.listener.local_addr().unwrap();
 
         // Spawn server task that echoes JSON
@@ -420,7 +470,9 @@ mod tests {
     #[tokio::test]
     async fn test_websocket_multiple_messages() {
         let addr = "127.0.0.1:0".parse().unwrap();
-        let mut interface = WebSocketInterface::new(addr).await.unwrap();
+        let mut interface = WebSocketInterface::new(addr, OriginPolicy::Any)
+            .await
+            .unwrap();
         let bound_addr = interface.listener.local_addr().unwrap();
 
         // Spawn server task that handles multiple messages
@@ -495,7 +547,9 @@ mod tests {
     #[tokio::test]
     async fn test_websocket_connection_close() {
         let addr = "127.0.0.1:0".parse().unwrap();
-        let mut interface = WebSocketInterface::new(addr).await.unwrap();
+        let mut interface = WebSocketInterface::new(addr, OriginPolicy::Any)
+            .await
+            .unwrap();
         let bound_addr = interface.listener.local_addr().unwrap();
 
         // Spawn server task
@@ -534,5 +588,78 @@ mod tests {
 
         // Clean up
         server_task.abort();
+    }
+
+    /// The unit tests in `origin_policy` prove the DECISION. These prove the
+    /// decision is WIRED to the handshake — a policy nothing consults is the
+    /// classic control that operates on nothing.
+    ///
+    /// Both use a real TCP handshake against a real listener, because that is
+    /// the only place `Origin` exists.
+    mod origin_enforcement {
+        use super::*;
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+        async fn listener_allowing(spec: &str) -> (WebSocketInterface, SocketAddr) {
+            let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+            let interface = WebSocketInterface::new(addr, OriginPolicy::parse(spec).unwrap())
+                .await
+                .unwrap();
+            let bound = interface.listener.local_addr().unwrap();
+            (interface, bound)
+        }
+
+        /// Connect with an explicit `Origin`, returning whether the handshake
+        /// completed. Nothing else about the connection is asserted: what is
+        /// under test is admission.
+        async fn handshake_with_origin(bound: SocketAddr, origin: &str) -> bool {
+            let mut request = format!("ws://{bound}").into_client_request().unwrap();
+            request
+                .headers_mut()
+                .insert("Origin", origin.parse().unwrap());
+            tokio_tungstenite::connect_async(request).await.is_ok()
+        }
+
+        #[tokio::test]
+        async fn a_listed_origin_completes_the_handshake() {
+            let (mut interface, bound) = listener_allowing("http://localhost:5291").await;
+            let server = tokio::spawn(async move { interface.next_connection().await.is_some() });
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            assert!(
+                handshake_with_origin(bound, "http://localhost:5291").await,
+                "the configured origin was refused"
+            );
+            assert!(
+                tokio::time::timeout(Duration::from_secs(5), server)
+                    .await
+                    .expect("the accept loop should have yielded a connection")
+                    .unwrap(),
+                "the handshake succeeded but no connection reached the service"
+            );
+        }
+
+        /// A page the user merely visited. Before the check, this handshake
+        /// completed and the page could then call `GetSessions`.
+        #[tokio::test]
+        async fn an_unlisted_origin_is_refused_at_the_handshake() {
+            let (mut interface, bound) = listener_allowing("http://localhost:5291").await;
+            // The accept loop `continue`s past a failed handshake, so it must
+            // still be pending afterwards — proving the refusal happened before
+            // any connection was produced, not after.
+            let server = tokio::spawn(async move { interface.next_connection().await.is_some() });
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            assert!(
+                !handshake_with_origin(bound, "https://evil.example").await,
+                "a hostile origin completed the handshake"
+            );
+            assert!(
+                tokio::time::timeout(Duration::from_millis(500), server)
+                    .await
+                    .is_err(),
+                "the refused handshake still produced a connection"
+            );
+        }
     }
 }

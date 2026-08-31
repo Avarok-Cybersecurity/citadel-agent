@@ -435,6 +435,37 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         .await
     }
 
+    /// One read-modify-write for the whole set.
+    ///
+    /// Acknowledgement is cumulative, so a single ACK routinely retires a whole
+    /// send window. Clearing them one at a time meant a full queue read AND a
+    /// full queue write per covered id: O(window) round trips to the agent and
+    /// O(window^2) bytes serialised, for one ACK.
+    async fn clear_messages_outbound(
+        &self,
+        peer_id: u64,
+        message_ids: &[u64],
+    ) -> Result<(), BackendError<WrappedMessage>> {
+        if message_ids.is_empty() {
+            return Ok(());
+        }
+        let message_ids = message_ids.to_vec();
+        mutate(
+            self,
+            &self.outbound_gate,
+            OUTBOUND_MESSAGE_PREFIX,
+            Uuid::new_v4(),
+            move |outbound| {
+                if let Some(peer_messages) = outbound.get_mut(&peer_id) {
+                    for message_id in &message_ids {
+                        peer_messages.remove(message_id);
+                    }
+                }
+            },
+        )
+        .await
+    }
+
     async fn get_pending_outbound(
         &self,
     ) -> Result<Vec<WrappedMessage>, BackendError<WrappedMessage>> {

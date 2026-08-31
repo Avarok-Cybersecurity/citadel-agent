@@ -643,7 +643,6 @@ mod tests {
     /// a fix that steps over one consumed id and not the rest would pass the
     /// small-file test and still strand every message after a real upload.
     /// A megabyte is comfortably more than one group at the default chunking.
-    #[ignore = "reproduces #57 for a multi-group file; fails in citadel_sdk a28a3c7 (master HEAD)"]
     #[tokio::test]
     async fn a_peer_message_after_a_multi_group_file_transfer_still_arrives(
     ) -> Result<(), Box<dyn Error>> {
@@ -711,19 +710,9 @@ mod tests {
         Ok(())
     }
 
-    /// Ignored because it FAILS, and the defect is upstream of this repo.
-    ///
-    /// Confirmed against `citadel_sdk` at `a28a3c7`, which is `master` HEAD --
-    /// there is no newer SDK to move to. Remove this attribute when the SDK
-    /// fix lands; the test is written to pass, not to be adjusted. Tracked as
-    /// #57 (high) in citadel-workspaces/docs/PRODUCTION-READINESS.md.
-    ///
-    /// It is `#[ignore]` rather than deleted because it is the only
-    /// reproduction of #57 that runs in a minute instead of a twelve-minute
-    /// browser suite, and rather than left failing because a red that cannot
-    /// go green until a third-party dependency changes teaches the suite to be
-    /// ignored.
-    #[ignore = "reproduces #57: a peer file transfer kills P2P messaging; fails in citadel_sdk a28a3c7 (master HEAD)"]
+    /// Runs by default since the SDK fix landed (Citadel-Protocol#278, e599283).
+    /// It was `#[ignore]`d only while the defect was upstream and unfixable
+    /// here; the test itself is unchanged.
     #[tokio::test]
     async fn test_a_peer_message_after_a_file_transfer_still_arrives() -> Result<(), Box<dyn Error>>
     {

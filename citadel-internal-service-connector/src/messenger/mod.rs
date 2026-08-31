@@ -50,6 +50,7 @@ use uuid::Uuid;
 use wasm_bindgen_futures;
 
 pub mod backend;
+pub mod backend_map;
 
 /// Platform-agnostic async sleep function
 /// - Native: Uses tokio::time::sleep

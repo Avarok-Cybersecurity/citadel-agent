@@ -1,8 +1,10 @@
+use crate::messenger::backend_map::{mutate, MapStore, State};
 use crate::messenger::{sleep_internal, timeout_internal, BypasserTx, MessengerTx, WrappedMessage};
 use async_trait::async_trait;
 use citadel_internal_service_types::{
     BatchedResponseData, InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
 };
+use citadel_io::tokio::sync::Mutex;
 use dashmap::DashMap;
 use intersession_layer_messaging::{Backend, BackendError};
 use std::collections::HashMap;
@@ -16,10 +18,15 @@ pub struct CitadelWorkspaceBackend {
     expected_requests:
         Arc<DashMap<Uuid, citadel_io::tokio::sync::oneshot::Sender<InternalServiceResponse>>>,
     bypass_ism_outbound_tx: Option<BypasserTx>,
+    // Each map is one serialized blob under one key, so every mutation is a
+    // read-whole/modify/write-whole. Two of them interleaving lose one of the
+    // two changes -- and the lost one was reported `Ok`. Held across read AND
+    // write; see messenger/backend_map.rs for the interleave and its limits.
+    // Separate gates because the two maps are separate keys and never mutate
+    // together.
+    outbound_gate: Arc<Mutex<()>>,
+    inbound_gate: Arc<Mutex<()>>,
 }
-
-// HashMap<peer_cid, HashMap<message_id, wrapped_message>>
-type State = HashMap<u64, HashMap<u64, WrappedMessage>>;
 
 // Constants for storage prefixes
 pub const INBOUND_MESSAGE_PREFIX: &str = "inbound_messages";
@@ -159,9 +166,14 @@ impl CitadelWorkspaceBackend {
                 )))
             }
         } else {
-            // If we get no response, assume the initialization worked
-            citadel_logging::warn!(target: "citadel", "[INITIALIZE_MAP] No response received when initializing {} map, assuming success", prefix);
-            Ok(new_state)
+            // Not "assume it worked". Handing back an empty State on an
+            // unacknowledged write says the map is initialised when the key may
+            // not exist, and the caller then treats an empty queue as fact.
+            // `update_map` two functions below already refuses to do this; the
+            // two had drifted apart.
+            Err(BackendError::StorageError(format!(
+                "Timed out initializing the {prefix} map; it may not exist"
+            )))
         }
     }
 
@@ -211,23 +223,12 @@ impl CitadelWorkspaceBackend {
         self.get_map(OUTBOUND_MESSAGE_PREFIX).await
     }
 
-    async fn update_inbound_map(
-        &self,
-        request_id: Uuid,
-        state: State,
-    ) -> Result<(), BackendError<WrappedMessage>> {
-        self.update_map(INBOUND_MESSAGE_PREFIX, request_id, state)
-            .await
-    }
-
-    async fn update_outbound_map(
-        &self,
-        request_id: Uuid,
-        state: State,
-    ) -> Result<(), BackendError<WrappedMessage>> {
-        self.update_map(OUTBOUND_MESSAGE_PREFIX, request_id, state)
-            .await
-    }
+    // There is deliberately no `update_inbound_map` / `update_outbound_map`
+    // convenience pair any more. They existed only to be called right after
+    // `get_*_map`, and that read-then-write with nothing between them holding
+    // the two halves together IS the lost-update bug. `backend_map::mutate` is
+    // now the only way to write either map, so a future caller cannot
+    // reconstruct the unsynchronised sequence without noticing.
 
     pub fn add_expected_request(&self, request_id: Uuid) {
         let (tx, _rx) = citadel_io::tokio::sync::oneshot::channel();
@@ -315,6 +316,25 @@ impl CitadelWorkspaceBackend {
     }
 }
 
+/// The two I/O halves `backend_map::mutate` drives. Thin wrappers over the
+/// existing generic map functions, named separately so the serialisation can be
+/// tested against a fake instead of a running agent.
+#[async_trait]
+impl MapStore for CitadelWorkspaceBackend {
+    async fn read_map(&self, prefix: &str) -> Result<State, BackendError<WrappedMessage>> {
+        self.get_map(prefix).await
+    }
+
+    async fn write_map(
+        &self,
+        prefix: &str,
+        request_id: Uuid,
+        state: State,
+    ) -> Result<(), BackendError<WrappedMessage>> {
+        self.update_map(prefix, request_id, state).await
+    }
+}
+
 #[async_trait]
 impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
     async fn store_outbound(
@@ -332,28 +352,19 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         citadel_logging::debug!(target: "citadel", "[STORE_OUTBOUND] Storing outbound message: source_id={}, destination_id={}, message_id={}",
             message.source_id, message.destination_id, message.message_id);
 
-        // Propagated, not swallowed. This used to substitute an empty map when
-        // the read failed to reach the agent, and the very next line writes
-        // that map back — so a momentary connection failure erased the whole
-        // pending queue. The caller can retry; it cannot un-erase.
-        let mut outbound = self.get_outbound_map().await?;
-
-        let peer_messages = outbound.entry(peer_cid).or_insert_with(HashMap::new);
-        peer_messages.insert(message_id, message);
-
-        match self.update_outbound_map(request_id, outbound).await {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                // If we get a delivery error, log it and return success
-                let err_str = format!("{e:?}");
-                if err_str.contains("Failed to deliver message") {
-                    citadel_logging::warn!(target: "citadel", "[STORE_OUTBOUND] Failed to update outbound map due to delivery error, assuming success");
-                    Ok(())
-                } else {
-                    Err(e)
-                }
-            }
-        }
+        mutate(
+            self,
+            &self.outbound_gate,
+            OUTBOUND_MESSAGE_PREFIX,
+            request_id,
+            move |outbound| {
+                outbound
+                    .entry(peer_cid)
+                    .or_insert_with(HashMap::new)
+                    .insert(message_id, message);
+            },
+        )
+        .await
     }
 
     async fn store_inbound(
@@ -371,28 +382,19 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         citadel_logging::debug!(target: "citadel", "[STORE_INBOUND] Storing inbound message: source_id={}, destination_id={}, message_id={}",
             message.source_id, message.destination_id, message.message_id);
 
-        // Propagated, not swallowed. This used to substitute an empty map when
-        // the read failed to reach the agent, and the very next line writes
-        // that map back — so a momentary connection failure erased the whole
-        // pending queue. The caller can retry; it cannot un-erase.
-        let mut inbound = self.get_inbound_map().await?;
-
-        let peer_messages = inbound.entry(peer_cid).or_insert_with(HashMap::new);
-        peer_messages.insert(message_id, message);
-
-        match self.update_inbound_map(request_id, inbound).await {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                // If we get a delivery error, log it and return success
-                let err_str = format!("{e:?}");
-                if err_str.contains("Failed to deliver message") {
-                    citadel_logging::warn!(target: "citadel", "[STORE_INBOUND] Failed to update inbound map due to delivery error, assuming success");
-                    Ok(())
-                } else {
-                    Err(e)
-                }
-            }
-        }
+        mutate(
+            self,
+            &self.inbound_gate,
+            INBOUND_MESSAGE_PREFIX,
+            request_id,
+            move |inbound| {
+                inbound
+                    .entry(peer_cid)
+                    .or_insert_with(HashMap::new)
+                    .insert(message_id, message);
+            },
+        )
+        .await
     }
 
     async fn clear_message_inbound(
@@ -400,29 +402,18 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         peer_id: u64,
         message_id: u64,
     ) -> Result<(), BackendError<WrappedMessage>> {
-        // Propagated, not swallowed. This used to substitute an empty map when
-        // the read failed to reach the agent, and the very next line writes
-        // that map back — so a momentary connection failure erased the whole
-        // pending queue. The caller can retry; it cannot un-erase.
-        let mut inbound = self.get_inbound_map().await?;
-
-        if let Some(peer_messages) = inbound.get_mut(&peer_id) {
-            peer_messages.remove(&message_id);
-        }
-
-        match self.update_inbound_map(Uuid::new_v4(), inbound).await {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                // If we get a delivery error, log it and return success
-                let err_str = format!("{e:?}");
-                if err_str.contains("Failed to deliver message") {
-                    citadel_logging::warn!(target: "citadel", "[CLEAR_INBOUND] Failed to update inbound map due to delivery error, assuming success");
-                    Ok(())
-                } else {
-                    Err(e)
+        mutate(
+            self,
+            &self.inbound_gate,
+            INBOUND_MESSAGE_PREFIX,
+            Uuid::new_v4(),
+            move |inbound| {
+                if let Some(peer_messages) = inbound.get_mut(&peer_id) {
+                    peer_messages.remove(&message_id);
                 }
-            }
-        }
+            },
+        )
+        .await
     }
 
     async fn clear_message_outbound(
@@ -430,29 +421,18 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         peer_id: u64,
         message_id: u64,
     ) -> Result<(), BackendError<WrappedMessage>> {
-        // Propagated, not swallowed. This used to substitute an empty map when
-        // the read failed to reach the agent, and the very next line writes
-        // that map back — so a momentary connection failure erased the whole
-        // pending queue. The caller can retry; it cannot un-erase.
-        let mut outbound = self.get_outbound_map().await?;
-
-        if let Some(peer_messages) = outbound.get_mut(&peer_id) {
-            peer_messages.remove(&message_id);
-        }
-
-        match self.update_outbound_map(Uuid::new_v4(), outbound).await {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                // If we get a delivery error, log it and return success
-                let err_str = format!("{e:?}");
-                if err_str.contains("Failed to deliver message") {
-                    citadel_logging::warn!(target: "citadel", "[CLEAR_OUTBOUND] Failed to update outbound map due to delivery error, assuming success");
-                    Ok(())
-                } else {
-                    Err(e)
+        mutate(
+            self,
+            &self.outbound_gate,
+            OUTBOUND_MESSAGE_PREFIX,
+            Uuid::new_v4(),
+            move |outbound| {
+                if let Some(peer_messages) = outbound.get_mut(&peer_id) {
+                    peer_messages.remove(&message_id);
                 }
-            }
-        }
+            },
+        )
+        .await
     }
 
     async fn get_pending_outbound(
@@ -533,9 +513,13 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
             citadel_logging::debug!(target: "citadel", "[STORE_VALUE] Stored value for key={}", key);
             Ok(())
         } else {
-            // If we get no response, assume the store worked
-            citadel_logging::warn!(target: "citadel", "[STORE_VALUE] No response received when storing value for key={}, assuming success", key);
-            Ok(())
+            // Not "assume it worked". This is how the delivery frontier and
+            // the next-id counter are persisted, and a silent loss of either is
+            // what turns a reconnect into re-minted ids the receiver swallows
+            // as duplicates. A caller told Ok has no reason to retry.
+            Err(BackendError::StorageError(format!(
+                "Timed out storing the value for key={key}; it may not be stored"
+            )))
         }
     }
 
@@ -602,6 +586,8 @@ impl CitadelBackendExt for CitadelWorkspaceBackend {
             cid,
             expected_requests: Arc::new(DashMap::new()),
             bypass_ism_outbound_tx: Some(handle.bypass_ism_outbound_tx.clone()),
+            outbound_gate: Arc::new(Mutex::new(())),
+            inbound_gate: Arc::new(Mutex::new(())),
         })
     }
 

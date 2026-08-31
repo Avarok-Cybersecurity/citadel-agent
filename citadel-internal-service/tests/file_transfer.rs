@@ -636,6 +636,75 @@ mod tests {
     /// `TransferType::FileTransfer` with an explicit accept fails identically,
     /// so the cause is NOT the REVFS auto-accept path. Any peer object
     /// transfer does it.
+    /// A message sent WHILE a transfer is still in flight also arrives.
+    ///
+    /// The sibling tests are sequential — message, transfer, message — which is
+    /// the shape the CI failure had. Real use is not so tidy: people chat while
+    /// a file uploads, so a message's group id can land between a transfer's.
+    /// This sends without awaiting the transfer's completion ticks first.
+    #[tokio::test]
+    async fn a_peer_message_sent_during_a_transfer_still_arrives() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        let bind_a: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+        let bind_b: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+
+        let mut peers = register_and_connect_to_server_then_peers::<StackedRatchet>(
+            vec![bind_a, bind_b],
+            None,
+            None,
+        )
+        .await?;
+        let (peer_one, peer_two) = peers.as_mut_slice().split_at_mut(1_usize);
+        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
+        let (_to_service_b, from_service_b, cid_b) = peer_two.get_mut(0_usize).unwrap();
+
+        // Start a transfer big enough to span several groups, and do NOT wait
+        // for it to finish.
+        to_service_a
+            .send(InternalServiceRequest::SendFile {
+                request_id: Uuid::new_v4(),
+                source: FileSource::ByteContents {
+                    file_name: "concurrent.bin".to_string(),
+                    data: vec![3u8; 1024 * 1024],
+                },
+                cid: *cid_a,
+                transfer_type: TransferType::RemoteEncryptedVirtualFilesystem {
+                    virtual_path: PathBuf::from("/vfs/concurrent.bin"),
+                    security_level: Default::default(),
+                },
+                peer_cid: Some(*cid_b),
+                chunk_size: None,
+            })
+            .unwrap();
+
+        // Take the transfer's own acknowledgement off the stream first. Without
+        // this the message helper's first `recv` picks up SendFileRequestSuccess
+        // and reports a refused send -- the test then passes or fails on which
+        // response happens to arrive first, which is not what it is measuring.
+        let ack = next_ignoring_transfer_noise(from_service_a, 30).await;
+        assert!(
+            matches!(
+                ack,
+                Some(InternalServiceResponse::SendFileRequestSuccess(..))
+            ),
+            "the transfer itself was refused: {ack:?}"
+        );
+
+        // Now the message, with the transfer still streaming behind it.
+        send_and_expect_message(
+            to_service_a,
+            from_service_a,
+            from_service_b,
+            *cid_a,
+            *cid_b,
+            b"sent during the transfer",
+            "a message sent while a transfer was in flight never arrived",
+        )
+        .await;
+
+        Ok(())
+    }
+
     /// The same, for a file large enough to span MANY group ids.
     ///
     /// The single-group case is not the whole question. `session.rs` reserves a

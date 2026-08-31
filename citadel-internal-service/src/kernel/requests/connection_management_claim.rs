@@ -7,7 +7,7 @@
 //! drift apart.
 
 use crate::kernel::requests::connection_management::{owner_of, refusal};
-use crate::kernel::requests::connection_management_auth::{may_claim, Authorization};
+use crate::kernel::requests::connection_management_auth::{may_claim, Authorization, SessionOwner};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -17,6 +17,39 @@ use citadel_sdk::prelude::*;
 use std::sync::atomic::Ordering;
 use uuid::Uuid;
 
+/// The whole claim decision — the `only_if_orphaned` requirement and the
+/// ownership rule — made from one reading of the session's state.
+///
+/// This runs twice per claim, and the second run is the one that counts.
+/// Requests are handled in parallel tasks (see the spawn in `kernel/mod.rs`),
+/// and Step 3 below awaits an SDK round-trip with no lock held, so two
+/// connections claiming the same orphan can both pass the early check during
+/// each other's await. Whichever takes the write lock second must see the
+/// first one's re-point and be refused — otherwise both callers are told
+/// they own the session, and every CID-routed notification follows whichever
+/// wrote last while the loser's tab listens to nothing. Hence the decision
+/// is re-made in Step 5 on state read under the very write lock that
+/// performs the re-point.
+///
+/// The messages are load-bearing: `claim-session.ts` matches "not orphaned"
+/// (another tab has it) and `tests/session_takeover.rs` matches "in use by
+/// another connection". The race's loser lands on "not orphaned" — exactly
+/// what it would have been told had the two requests been serialized.
+fn decide_claim(
+    owner: SessionOwner,
+    only_if_orphaned: bool,
+    caller: Uuid,
+    session_cid: u64,
+) -> Result<(), String> {
+    if only_if_orphaned && matches!(owner, SessionOwner::Live(_)) {
+        return Err(format!("Session {} is not orphaned", session_cid));
+    }
+    match may_claim(owner, caller, session_cid) {
+        Authorization::Allow => Ok(()),
+        Authorization::Refuse(error) => Err(error),
+    }
+}
+
 pub(super) async fn claim_session<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     conn_id: Uuid,
@@ -24,55 +57,23 @@ pub(super) async fn claim_session<T: IOInterface, R: Ratchet>(
     session_cid: u64,
     only_if_orphaned: bool,
 ) -> Option<HandledRequestResult> {
-    // Step 1: Check if session exists in internal service and get basic info
-    let (old_conn_id, is_orphaned) = {
-        let server_connection_map = this.server_connection_map.read();
-        if let Some(connection) = server_connection_map.get(&session_cid) {
-            let old_conn_id = connection
-                .associated_localhost_connection
-                .load(Ordering::Relaxed);
-            let is_orphaned = !this
-                .tx_to_localhost_clients
-                .read()
-                .contains_key(&old_conn_id);
-            (old_conn_id, is_orphaned)
-        } else {
-            return Some(HandledRequestResult {
-                response: InternalServiceResponse::ConnectionManagementFailure(
-                    ConnectionManagementFailure {
-                        cid: session_cid,
-                        request_id: Some(request_id),
-                        error: format!("Session {} not found", session_cid),
-                    },
-                ),
-                uuid: conn_id,
-            });
-        }
-    };
-
-    // Step 2: Check orphan requirement
-    if only_if_orphaned && !is_orphaned {
+    // Steps 1-2: cheap refusal before the SDK round-trip. Advisory only —
+    // the state it reads is stale the moment the lock inside `owner_of` is
+    // released, so Step 5 decides again on state it can trust.
+    let Some(owner) = owner_of(this, session_cid) else {
         return Some(HandledRequestResult {
             response: InternalServiceResponse::ConnectionManagementFailure(
                 ConnectionManagementFailure {
                     cid: session_cid,
                     request_id: Some(request_id),
-                    error: format!("Session {} is not orphaned", session_cid),
+                    error: format!("Session {} not found", session_cid),
                 },
             ),
             uuid: conn_id,
         });
-    }
-
-    // Step 2b: A live session held by a DIFFERENT localhost
-    // connection is not claimable, whatever `only_if_orphaned`
-    // says. That flag is supplied by the caller, so it authorized
-    // nothing: `false` meant "take it from whoever has it".
-    // See connection_management_auth.rs.
-    if let Some(owner) = owner_of(this, session_cid) {
-        if let Authorization::Refuse(error) = may_claim(owner, conn_id, session_cid) {
-            return Some(refusal(session_cid, request_id, conn_id, error));
-        }
+    };
+    if let Err(error) = decide_claim(owner, only_if_orphaned, conn_id, session_cid) {
+        return Some(refusal(session_cid, request_id, conn_id, error));
     }
 
     // Step 3: Verify session is active in SDK before allowing claim
@@ -108,15 +109,49 @@ pub(super) async fn claim_session<T: IOInterface, R: Ratchet>(
         });
     }
 
-    // Step 5: Session is valid in both internal service and SDK - proceed with claim
+    // Step 5: Session is valid in both internal service and SDK - decide and
+    // re-point atomically. The owner is re-read here, under the write lock,
+    // because the early check's answer may have been overtaken during the
+    // Step 3 await (see `decide_claim`). `owner_of` cannot be reused for
+    // this: it takes and releases its own locks, which is exactly the
+    // check-then-act split being closed.
     let mut server_connection_map = this.server_connection_map.write();
+
+    let owner_uuid = match server_connection_map.get(&session_cid) {
+        Some(connection) => connection
+            .associated_localhost_connection
+            .load(Ordering::Relaxed),
+        None => {
+            // Removed during the await (logout or deregister landed first).
+            return Some(refusal(
+                session_cid,
+                request_id,
+                conn_id,
+                format!("Session {} not found", session_cid),
+            ));
+        }
+    };
+    // Same lock order as DisconnectOrphan: connection map, then client map —
+    // never the reverse, so no inversion deadlock.
+    let owner_now = if this
+        .tx_to_localhost_clients
+        .read()
+        .contains_key(&owner_uuid)
+    {
+        SessionOwner::Live(owner_uuid)
+    } else {
+        SessionOwner::Orphaned
+    };
+    if let Err(error) = decide_claim(owner_now, only_if_orphaned, conn_id, session_cid) {
+        return Some(refusal(session_cid, request_id, conn_id, error));
+    }
 
     // Find ALL sessions that share the same old TCP connection
     // This ensures all sessions from the same browser/client get updated together
     let sessions_to_update: Vec<u64> = server_connection_map
         .iter()
         .filter(|(_, conn)| {
-            conn.associated_localhost_connection.load(Ordering::Relaxed) == old_conn_id
+            conn.associated_localhost_connection.load(Ordering::Relaxed) == owner_uuid
         })
         .map(|(cid, _)| *cid)
         .collect();
@@ -138,7 +173,7 @@ pub(super) async fn claim_session<T: IOInterface, R: Ratchet>(
         }
     }
 
-    info!(target: "citadel", "ClaimSession: Updated {} sessions from old TCP connection {:?} to new {:?}", updated_count, old_conn_id, conn_id);
+    info!(target: "citadel", "ClaimSession: Updated {} sessions from old TCP connection {:?} to new {:?}", updated_count, owner_uuid, conn_id);
 
     // Add this connection to orphan mode to preserve it when the new connection drops
     this.orphan_sessions.write().insert(conn_id, true);
@@ -156,4 +191,59 @@ pub(super) async fn claim_session<T: IOInterface, R: Ratchet>(
         ),
         uuid: conn_id,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn caller() -> Uuid {
+        Uuid::from_u128(10)
+    }
+
+    fn rival() -> Uuid {
+        Uuid::from_u128(20)
+    }
+
+    /// M1's losing side. This connection saw the session orphaned before its
+    /// SDK await; by the time it holds the write lock, the rival's claim has
+    /// landed. Fresh state must refuse, with the message the UI already
+    /// handles as "another tab has it" — the same answer a serialized
+    /// ordering would have given.
+    #[test]
+    fn a_claim_that_lost_the_race_is_refused_on_fresh_state() {
+        let decision = decide_claim(SessionOwner::Live(rival()), true, caller(), 7);
+        assert_eq!(decision, Err("Session 7 is not orphaned".to_string()));
+    }
+
+    /// Same race under `only_if_orphaned: false`: the flag authorizes
+    /// nothing, and the message is the one session_takeover.rs pins.
+    #[test]
+    fn a_forced_claim_that_lost_the_race_is_refused() {
+        let decision = decide_claim(SessionOwner::Live(rival()), false, caller(), 7);
+        assert_eq!(
+            decision,
+            Err("Session 7 is in use by another connection".to_string())
+        );
+    }
+
+    /// The winner re-checks too; a session still orphaned at the write lock
+    /// must pass, or no claim would ever succeed.
+    #[test]
+    fn a_still_orphaned_session_passes_the_recheck() {
+        assert_eq!(
+            decide_claim(SessionOwner::Orphaned, true, caller(), 7),
+            Ok(())
+        );
+    }
+
+    /// A connection reasserting a session it already holds (the
+    /// peer-registration-store flow) must survive the recheck as well.
+    #[test]
+    fn reasserting_an_owned_session_passes() {
+        assert_eq!(
+            decide_claim(SessionOwner::Live(caller()), false, caller(), 7),
+            Ok(())
+        );
+    }
 }

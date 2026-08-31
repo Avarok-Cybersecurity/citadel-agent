@@ -158,6 +158,18 @@ pub async fn handle_open<T: IOInterface, R: Ratchet>(
             // what used to kill media on this peer connection for ever after one
             // failed open; keeping only ONE of them is what made a simultaneous
             // connect fail every time.
+            // Timed, on BOTH outcomes.
+            //
+            // Backlog #56 records that tuning `UDP_WAIT` would be "a guess
+            // dressed as a fix", because no run had ever measured a SUCCESSFUL
+            // negotiation -- the only tests that used UDP were the ones that
+            // failed, so the evidence was equally consistent with "slow" and
+            // with "never comes up on this link at all". Runs since have gone
+            // green, so negotiation does succeed; what is still missing is how
+            // long it takes when it does. Logging the elapsed time on success
+            // is what turns the next green run into the measurement the
+            // constant can be set from, instead of another guess.
+            let started = std::time::Instant::now();
             let outcome = {
                 let pending: Vec<&mut OneshotReceiver<UdpChannel<R>>> = rxs.iter_mut().collect();
                 match tokio::time::timeout(UDP_WAIT, futures::future::select_all(pending)).await {
@@ -165,6 +177,19 @@ pub async fn handle_open<T: IOInterface, R: Ratchet>(
                     Err(elapsed) => Err(elapsed),
                 }
             };
+            let waited = started.elapsed();
+            match &outcome {
+                Ok(_) => info!(
+                    target: "citadel",
+                    "[UDP-NEGOTIATION] peer {peer_cid}: channel ready after {waited:?} (budget {UDP_WAIT:?}, {} offer(s) raced)",
+                    rxs.len()
+                ),
+                Err(_) => info!(
+                    target: "citadel",
+                    "[UDP-NEGOTIATION] peer {peer_cid}: NO channel within {waited:?} (budget {UDP_WAIT:?}, {} offer(s) raced)",
+                    rxs.len()
+                ),
+            }
             finish_first_open(
                 this, cid, peer_cid, uuid, request_id, to_client, media_lane, rxs, outcome,
                 generation,

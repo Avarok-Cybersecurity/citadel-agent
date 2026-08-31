@@ -1,4 +1,5 @@
 use crate::kernel::requests::{spawn_group_channel_receiver, HandledRequestResult};
+use crate::kernel::session_route::SessionRoute;
 use crate::kernel::{CitadelWorkspaceService, GroupConnection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -6,7 +7,6 @@ use citadel_internal_service_types::{
 };
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::{ProtocolRemoteTargetExt, Ratchet, VirtualTargetType};
-use std::sync::atomic::Ordering;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -52,13 +52,14 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         },
                     );
 
-                    let uuid = conn.associated_localhost_connection.load(Ordering::Relaxed);
                     spawn_group_channel_receiver(
                         key,
                         cid,
-                        uuid,
+                        SessionRoute::new(
+                            conn.associated_localhost_connection.clone(),
+                            this.tx_to_localhost_clients.clone(),
+                        ),
                         rx,
-                        this.tx_to_localhost_clients.clone(),
                     );
 
                     InternalServiceResponse::GroupCreateSuccess(GroupCreateSuccess {

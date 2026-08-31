@@ -1,12 +1,12 @@
-use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
+use crate::kernel::session_route::SessionRoute;
+use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServiceResponse, MessageNotification, PeerConnectSuccess,
 };
-use citadel_sdk::logging::{error, info};
+use citadel_sdk::logging::{error, info, warn};
 use citadel_sdk::prelude::{NetworkError, PeerChannelCreated, Ratchet};
 use futures::StreamExt;
-use std::sync::atomic::Ordering;
 
 /// Handle PeerChannelCreated events from the SDK.
 ///
@@ -65,16 +65,21 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             if peer_existed { "Updated" } else { "Added" },
             peer_cid, session_cid, connection.peers.len());
 
-        let associated_tcp_connection = connection
-            .associated_localhost_connection
-            .load(Ordering::Relaxed);
-        let tcp_connection_map = this.tx_to_localhost_clients.clone();
-        let server_conn_map = this.server_connection_map.clone();
+        // The third hand-rolled copy of "route to whoever owns this session
+        // right now" -- and the only one of the three that was correct. The
+        // other two froze the uuid at spawn. One implementation now, so a
+        // fourth caller cannot get it wrong: kernel/session_route.rs.
+        let route = SessionRoute::new(
+            connection.associated_localhost_connection.clone(),
+            this.tx_to_localhost_clients.clone(),
+        );
 
         drop(server_connection_map);
 
         // Spawn a task to read incoming messages from the peer
+        let stream_route = route.clone();
         tokio::spawn(async move {
+            let route = stream_route;
             info!(target: "citadel", "[P2P-RECV-CHANNEL] *** Starting P2P read stream for LOCAL_CID={} from PEER={} ***", session_cid, peer_cid);
             info!(target: "citadel", "[P2P-RECV-CHANNEL] This stream will receive messages SENT BY peer {}", peer_cid);
 
@@ -89,50 +94,36 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         request_id: None,
                     });
 
-                // Get the current associated TCP connection (may have
-                // changed via ClaimSession). Send only to that one client —
-                // a previous version broadcast to every live TCP entry as a
-                // workaround for stale-UUID delivery, but that leaked
-                // P2P message content to any other session multiplexed
-                // through the same internal-service process. The single-
-                // TCP-per-browser architecture invariant means the
-                // session's current `associated_localhost_connection` is
-                // the sole authoritative destination; if it isn't in the
-                // live map, ILM is the layer that retries.
-                let server_lock = server_conn_map.read();
-                let current_tcp_uuid = server_lock
-                    .get(&session_cid)
-                    .map(|conn| conn.associated_localhost_connection.load(Ordering::Relaxed))
-                    .unwrap_or(associated_tcp_connection);
-                drop(server_lock);
-
-                let tcp_map = tcp_connection_map.read();
-                match tcp_map.get(&current_tcp_uuid) {
-                    Some(entry) => {
-                        if let Err(err) = entry.send(notification) {
-                            error!(target: "citadel", "[PeerChannelCreated] Failed to send MessageNotification to {current_tcp_uuid}: {err:?}");
-                        }
-                    }
-                    None => {
-                        info!(target: "citadel", "[PeerChannelCreated] Target TCP {current_tcp_uuid} not found in live map; relying on ILM redelivery");
-                    }
+                // Send only to the one client that owns this session. An
+                // earlier version broadcast to every live TCP entry as a
+                // workaround for stale-uuid delivery, and that leaked P2P
+                // message content to any other session multiplexed through the
+                // same internal-service process. If nobody owns it, ILM is the
+                // layer that retries.
+                if route.send(notification).is_none() {
+                    info!(target: "citadel", "[PeerChannelCreated] No localhost connection owns CID {session_cid}; relying on ILM redelivery");
                 }
-                drop(tcp_map);
             }
 
             info!(target: "citadel", "[PeerChannelCreated] P2P read stream ended for session={} from peer={}", session_cid, peer_cid);
         });
 
-        // Notify the UI that the P2P connection is established
-        send_response_to_tcp_client(
-            &this.tx_to_localhost_clients,
-            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
-                cid: session_cid,
-                peer_cid,
-                request_id: None,
-            }),
-            associated_tcp_connection,
-        )?;
+        // Notify the UI that the P2P connection is established. Resolved
+        // through the same route as the stream above, so a reclaim between the
+        // channel being created and this line cannot send the success to the
+        // connection that no longer owns the session.
+        if route
+            .send(InternalServiceResponse::PeerConnectSuccess(
+                PeerConnectSuccess {
+                    cid: session_cid,
+                    peer_cid,
+                    request_id: None,
+                },
+            ))
+            .is_none()
+        {
+            warn!(target: "citadel", "[PeerChannelCreated] No localhost connection owns CID {session_cid} - PeerConnectSuccess dropped");
+        }
 
         Ok(())
     } else {

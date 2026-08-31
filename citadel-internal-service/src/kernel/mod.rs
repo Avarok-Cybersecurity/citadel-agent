@@ -3,6 +3,7 @@ use crate::kernel::media::{
     media_lane, MediaLaneTx, PeerMediaSession, UdpState, MEDIA_LANE_CAPACITY,
 };
 use crate::kernel::requests::{handle_request, HandledRequestResult};
+use crate::kernel::session_route::SessionRoute;
 use citadel_internal_service_connector::connector::{
     InternalServiceConnector, WrappedSink, WrappedStream,
 };
@@ -41,6 +42,7 @@ pub(crate) mod picked_files;
 pub(crate) mod requests;
 pub(crate) mod responses;
 pub(crate) mod revfs_correlation;
+pub(crate) mod session_route;
 
 pub type RatchetType = StackedRatchet;
 
@@ -623,43 +625,45 @@ fn spawn_tick_updater<R: Ratchet>(
         let uuid = connection
             .associated_localhost_connection
             .load(Ordering::Relaxed);
+        // The REQUEST id may be frozen -- it names the request that started the
+        // transfer and does not change. The ROUTE may not: a reclaim re-points
+        // this session mid-transfer and every remaining tick has to follow it.
+        // See kernel/session_route.rs.
         let request_id = Some(request_id.unwrap_or(uuid));
+        let route = SessionRoute::new(
+            connection.associated_localhost_connection.clone(),
+            tcp_connection_map,
+        );
         let sender_status_updater = async move {
             while let Some(status) = handle_inner.next().await {
                 let status_message = status.clone();
-                // Clone the sender outside the lock to avoid holding lock across send
-                let sender = { tcp_connection_map.read().get(&uuid).cloned() };
-                match sender {
-                    Some(entry) => {
-                        let message = InternalServiceResponse::FileTransferTickNotification(
-                            FileTransferTickNotification {
-                                cid: implicated_cid,
-                                peer_cid,
-                                status: status_message,
-                                request_id,
-                            },
-                        );
-                        match entry.send(message.clone()) {
-                            Ok(_res) => {
-                                info!(target: "citadel", "File Transfer Status Tick Sent {status:?}");
-                            }
-                            Err(err) => {
-                                warn!(target: "citadel", "File Transfer Status Tick Not Sent: {err:?}");
-                            }
-                        }
-
-                        if matches!(
-                            status,
-                            ObjectTransferStatus::TransferComplete
-                                | ObjectTransferStatus::ReceptionComplete
-                        ) {
-                            info!(target: "citadel", "File Transfer Completed - Ending Tick Updater");
-                            break;
-                        }
+                let message = InternalServiceResponse::FileTransferTickNotification(
+                    FileTransferTickNotification {
+                        cid: implicated_cid,
+                        peer_cid,
+                        status: status_message,
+                        request_id,
+                    },
+                );
+                match route.send(message) {
+                    Some(target) => {
+                        info!(target: "citadel", "File Transfer Status Tick Sent to {target:?}: {status:?}")
                     }
                     None => {
-                        warn!(target:"citadel","Connection not found during File Transfer Status Tick")
+                        warn!(target: "citadel", "No localhost connection owns CID {implicated_cid} - File Transfer Status Tick dropped")
                     }
+                }
+
+                // Outside the delivery result on purpose. The transfer is over
+                // whether or not anybody was listening; keeping the task alive
+                // because a tab happened to be closed is how these leak.
+                if matches!(
+                    status,
+                    ObjectTransferStatus::TransferComplete
+                        | ObjectTransferStatus::ReceptionComplete
+                ) {
+                    info!(target: "citadel", "File Transfer Completed - Ending Tick Updater");
+                    break;
                 }
             }
             info!(target:"citadel", "Spawned Tick Updater has ended for {implicated_cid:?}");

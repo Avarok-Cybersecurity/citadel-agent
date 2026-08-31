@@ -1,4 +1,5 @@
 use crate::kernel::requests::{spawn_group_channel_receiver, HandledRequestResult};
+use crate::kernel::session_route::SessionRoute;
 use crate::kernel::{CitadelWorkspaceService, GroupConnection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -10,7 +11,6 @@ use citadel_sdk::prelude::{
     NodeResult, Ratchet,
 };
 use futures::StreamExt;
-use std::sync::atomic::Ordering;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -59,18 +59,16 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let remote_result = {
         let server_connection_map = this.server_connection_map.read();
         match server_connection_map.get(&cid) {
-            Some(connection) => {
-                let uuid = connection
-                    .associated_localhost_connection
-                    .load(Ordering::Relaxed);
-                Ok((this.remote().clone(), uuid))
-            }
+            // The uuid is deliberately NOT captured here. It used to be, and
+            // was handed to the spawned group receiver -- freezing the route at
+            // the moment the request was answered. See kernel/session_route.rs.
+            Some(_connection) => Ok(this.remote().clone()),
             None => Err("Could Not Respond to Group Request - Connection not found".to_string()),
         }
     }; // Lock dropped here - BEFORE any await
 
     let response = match remote_result {
-        Ok((remote, uuid)) => {
+        Ok(remote) => {
             match remote.send_callback_subscription(request).await {
                 Ok(mut subscription) => {
                     let mut result = false;
@@ -101,9 +99,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                                         spawn_group_channel_receiver(
                                             key,
                                             cid,
-                                            uuid,
+                                            SessionRoute::new(
+                                                connection.associated_localhost_connection.clone(),
+                                                this.tx_to_localhost_clients.clone(),
+                                            ),
                                             rx,
-                                            this.tx_to_localhost_clients.clone(),
                                         );
 
                                         result = true;

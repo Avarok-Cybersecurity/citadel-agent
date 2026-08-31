@@ -1,3 +1,4 @@
+use crate::kernel::session_route::SessionRoute;
 use crate::kernel::CitadelWorkspaceService;
 use async_recursion::async_recursion;
 use citadel_internal_service_types::*;
@@ -8,10 +9,7 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_sdk::prelude::*;
 use futures::stream::FuturesOrdered;
 use futures::StreamExt;
-use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::Arc;
-use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 
 pub(crate) struct HandledRequestResult {
@@ -311,21 +309,21 @@ where
     }
 }
 
+/// `route`, not a `Uuid`: this task outlives any single localhost connection.
+/// A reclaim re-points the session and every remaining broadcast has to follow
+/// it, or the group goes silent with nothing in the log but "Connection not
+/// found". See kernel/session_route.rs.
 pub(crate) fn spawn_group_channel_receiver(
     group_key: MessageGroupKey,
     implicated_cid: u64,
-    uuid: Uuid,
+    route: SessionRoute,
     mut rx: GroupChannelRecvHalf,
-    tcp_connection_map: Arc<
-        parking_lot::RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>,
-    >,
 ) {
     // Handler/Receiver for Group Channel Broadcasts that aren't handled in on_node_event_received in Kernel
     let group_channel_receiver = async move {
         while let Some(inbound_group_broadcast) = rx.next().await {
-            // Gets UnboundedSender to the TCP client to forward Broadcasts
-            match tcp_connection_map.read().get(&uuid) {
-                Some(entry) => {
+            {
+                {
                     log::trace!(target:"citadel", "User {implicated_cid:?} Received Group Broadcast: {inbound_group_broadcast:?}");
                     let message = match inbound_group_broadcast {
                         GroupBroadcastPayload::Message { payload, sender } => {
@@ -411,13 +409,10 @@ pub(crate) fn spawn_group_channel_receiver(
 
                     // Forward Group Broadcast to TCP Client if it was one of the handled broadcasts
                     if let Some(message) = message {
-                        if let Err(err) = entry.send(message) {
-                            info!(target: "citadel", "Group Channel Forward To TCP Client Failed: {err:?}");
+                        if route.send(message).is_none() {
+                            info!(target:"citadel","No localhost connection owns CID {implicated_cid} - group broadcast dropped");
                         }
                     }
-                }
-                None => {
-                    info!(target:"citadel","Connection not found when Group Channel Broadcast Received");
                 }
             }
         }

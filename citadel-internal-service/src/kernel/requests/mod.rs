@@ -29,6 +29,8 @@ mod message;
 mod register;
 
 mod connection_management;
+pub(crate) mod connection_management_auth;
+mod connection_management_claim;
 pub(crate) mod file;
 mod group;
 mod local_db;

@@ -1849,7 +1849,28 @@ impl InternalServiceRequest {
             Self::GroupKick { cid, .. } => Some(*cid),
             Self::GroupListGroupsFor { cid, .. } => Some(*cid),
             Self::GroupRequestJoin { cid, .. } => Some(*cid),
-            _ => None,
+            // Exhaustive on purpose: no `_` arm.
+            //
+            // The catch-all made this gate fail OPEN by omission — a variant
+            // added later would silently be exempt from the ownership check in
+            // requests/mod.rs, with nothing to notice. Naming the six turns
+            // that into a compile error for the next variant, which is the only
+            // reliable place to catch it.
+            //
+            // These six legitimately precede or span a session:
+            //   Connect / Register     — there is no session yet.
+            //   Batched                — the inner requests are gated one by one.
+            //   ConnectionManagement   — carries its target inside
+            //                            `management_command`; gated in
+            //                            requests/connection_management_auth.rs.
+            //   GetSessions /
+            //   GetAccountInformation  — enumerate what this agent holds.
+            Self::Connect { .. }
+            | Self::Register { .. }
+            | Self::Batched { .. }
+            | Self::ConnectionManagement { .. }
+            | Self::GetSessions { .. }
+            | Self::GetAccountInformation { .. } => None,
         }
     }
 }

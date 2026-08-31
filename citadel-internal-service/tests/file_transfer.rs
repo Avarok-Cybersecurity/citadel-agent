@@ -636,6 +636,81 @@ mod tests {
     /// `TransferType::FileTransfer` with an explicit accept fails identically,
     /// so the cause is NOT the REVFS auto-accept path. Any peer object
     /// transfer does it.
+    /// The same, for a file large enough to span MANY group ids.
+    ///
+    /// The single-group case is not the whole question. `session.rs` reserves a
+    /// RANGE of group ids for a file ("reserve group ids", `groups_needed`), so
+    /// a fix that steps over one consumed id and not the rest would pass the
+    /// small-file test and still strand every message after a real upload.
+    /// A megabyte is comfortably more than one group at the default chunking.
+    #[ignore = "reproduces #57 for a multi-group file; fails in citadel_sdk a28a3c7 (master HEAD)"]
+    #[tokio::test]
+    async fn a_peer_message_after_a_multi_group_file_transfer_still_arrives(
+    ) -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        let bind_a: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+        let bind_b: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+
+        let mut peers = register_and_connect_to_server_then_peers::<StackedRatchet>(
+            vec![bind_a, bind_b],
+            None,
+            None,
+        )
+        .await?;
+        let (peer_one, peer_two) = peers.as_mut_slice().split_at_mut(1_usize);
+        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
+        let (_to_service_b, from_service_b, cid_b) = peer_two.get_mut(0_usize).unwrap();
+
+        send_and_expect_message(
+            to_service_a,
+            from_service_a,
+            from_service_b,
+            *cid_a,
+            *cid_b,
+            b"before the large transfer",
+            "messaging was already broken before the transfer",
+        )
+        .await;
+
+        let push_request_id = Uuid::new_v4();
+        to_service_a
+            .send(InternalServiceRequest::SendFile {
+                request_id: push_request_id,
+                source: FileSource::ByteContents {
+                    file_name: "large.bin".to_string(),
+                    data: vec![7u8; 1024 * 1024],
+                },
+                cid: *cid_a,
+                transfer_type: TransferType::RemoteEncryptedVirtualFilesystem {
+                    virtual_path: PathBuf::from("/vfs/large.bin"),
+                    security_level: Default::default(),
+                },
+                peer_cid: Some(*cid_b),
+                chunk_size: None,
+            })
+            .unwrap();
+        let push_response = from_service_a.recv().await.unwrap();
+        let InternalServiceResponse::SendFileRequestSuccess(SendFileRequestSuccess { .. }) =
+            &push_response
+        else {
+            panic!("File Transfer Request failed: {push_response:?}");
+        };
+
+        send_and_expect_message(
+            to_service_a,
+            from_service_a,
+            from_service_b,
+            *cid_a,
+            *cid_b,
+            b"after the large transfer",
+            "a MULTI-GROUP file transfer killed messaging: a fix that steps over only the \
+             first consumed group id would pass the small-file test and fail here",
+        )
+        .await;
+
+        Ok(())
+    }
+
     /// Ignored because it FAILS, and the defect is upstream of this repo.
     ///
     /// Confirmed against `citadel_sdk` at `a28a3c7`, which is `master` HEAD --

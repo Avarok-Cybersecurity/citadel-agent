@@ -52,18 +52,35 @@
 //!   `removed_from_map=false` -- the peer is not even there yet at failure
 //!   time -- and round two still fails.
 //!
-//! ## The most telling variation
+//! ## CORRECTION: the pair is not locked out. The PASSWORD path is.
 //!
-//! Retrying with NO password at all fails DIFFERENTLY:
+//! An earlier reading of this file said a failed attempt leaves the pair
+//! believing it holds a connection, on the strength of a no-password retry
+//! answering "Already connected to peer". That was half the output. Printing
+//! BOTH sides shows:
 //!
-//!     PeerConnectFailure { message: "Already connected to peer ..." }
+//!     round2 A = PeerConnectFailure { "Already connected to peer ..." }
+//!     round2 B = PeerConnectSuccess { ... }
 //!
-//! That branch fires only when the internal map AND the SDK both report the
-//! peer as connected. So a handshake that failed still ends up registered on
-//! both -- the registration simply lands after the failure is reported, which
-//! is why the map lookup above finds nothing. The pair is left believing it has
-//! a connection whose crypto never completed, and a later attempt carrying a
-//! password reuses it and cannot encrypt.
+//! B connects. A's refusal is then correct -- B's success established the pair,
+//! so A's redundant attempt has nothing to do. Reading only A's response made a
+//! working retry look like a wedged one.
+//!
+//! So the defect is narrower and stranger than "the pair is locked out":
+//!
+//!   * a retry carrying the CORRECT password fails with
+//!     "Rekey update error: Encryption failure";
+//!   * a retry carrying NO password succeeds.
+//!
+//! Which points away from connection registration entirely -- nothing registers
+//! the peer on a failed attempt, as the eliminations above establish -- and at
+//! state specific to the PSK path. Both sides fail round one symmetrically, so
+//! whatever survives is derived from the password and is not reset when the
+//! attempt using it fails.
+//!
+//! In product terms this is a security downgrade rather than a lockout: two
+//! peers who mistype a peer session password can still connect, but only by
+//! dropping the password. That is worse than it first appears, not better.
 //!
 //! ## A later round of eliminations, and a correction
 //!

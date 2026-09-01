@@ -113,7 +113,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             // NOTE: For SDK-initiated P2P disconnect events, the SDK has already disconnected.
             // We just remove from our map and let the struct drop (RAII is harmless).
             if let Some(disconnected) =
-                cleanup_state(&this.server_connection_map, session_cid, Some(peer_cid))
+                cleanup_state(&this.server_connection_map, session_cid, Some(peer_cid)).inspect(
+                    |_| {
+                        this.prune_cid_scoped_state(session_cid, Some(peer_cid));
+                    },
+                )
             {
                 let tcp_uuid = match &disconnected {
                     DisconnectedConnection::C2S { tcp_uuid, .. } => *tcp_uuid,

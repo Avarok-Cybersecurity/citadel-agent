@@ -47,6 +47,8 @@ pub(crate) mod session_route;
 
 pub type RatchetType = StackedRatchet;
 
+pub mod cid_scoped_state;
+
 pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub remote: Option<NodeRemote<R>>,
     /// Session connection map - use .read() for lookups, .write() for insert/remove

@@ -176,6 +176,84 @@ mod tests {
         }
     }
 
+    /// `DisconnectOrphan` must disconnect, not merely forget.
+    ///
+    /// Removing the map entry is not a disconnect: nothing in `Connection` tears
+    /// the SDK session down when it drops, and the C2S receive half is not even
+    /// in it — it lives in the task the connect handler spawned and keeps
+    /// running. So the handler answered "Disconnected orphan session X" while a
+    /// `SessionState::Connected` session carried on with its keepalives.
+    ///
+    /// The consequence, which is what this asserts: the account was wedged until
+    /// the process restarted. With the map entry gone, the next `Connect` skips
+    /// the reuse path and calls `remote.connect()`, and the protocol refuses it
+    /// with `SessionManagerSessionAlreadyExists`. `ClaimSession` and `Disconnect`
+    /// both answer "not found", because the entry is gone. No wire command could
+    /// reach the session that was still there.
+    ///
+    /// Asserting the reconnect rather than the success message is the point: a
+    /// handler that removes and reports success passes any assertion about the
+    /// message it just wrote.
+    #[tokio::test]
+    async fn a_disconnected_orphan_can_be_reconnected() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        let tag = "takeover.orphan_reconnect";
+        let (mut owner, mut other) = two_sessions_on_one_service(tag).await?;
+        let cid = owner.2;
+
+        // Orphan it from the connection that holds it, which is allowed.
+        owner.0.send(InternalServiceRequest::ConnectionManagement {
+            request_id: Uuid::new_v4(),
+            management_command: ConfigCommand::ReleaseSession { session_cid: cid },
+        })?;
+        match next_management_response(&mut owner).await? {
+            InternalServiceResponse::ConnectionManagementSuccess(_) => {}
+            other => panic!("a connection could not release its own session: {other:?}"),
+        }
+
+        other.0.send(InternalServiceRequest::ConnectionManagement {
+            request_id: Uuid::new_v4(),
+            management_command: ConfigCommand::DisconnectOrphan {
+                session_cid: Some(cid),
+            },
+        })?;
+        match next_management_response(&mut other).await? {
+            InternalServiceResponse::ConnectionManagementSuccess(_) => {}
+            resp => panic!("the orphan was not disconnected: {resp:?}"),
+        }
+
+        // The load-bearing assertion. If the protocol session survived, this
+        // Connect is refused with SessionManagerSessionAlreadyExists.
+        other.0.send(InternalServiceRequest::Connect {
+            username: format!("{tag}.0"),
+            password: b"secret_0".to_vec().into(),
+            connect_mode: Default::default(),
+            udp_mode: Default::default(),
+            keep_alive_timeout: None,
+            session_security_settings: Default::default(),
+            request_id: Uuid::new_v4(),
+            server_password: None,
+        })?;
+
+        let deadline = tokio::time::Instant::now() + ARRIVES;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let response = tokio::time::timeout(remaining, other.1.recv())
+                .await
+                .map_err(|_| "no Connect answer before the deadline")?
+                .ok_or("service closed the stream")?;
+            match response {
+                InternalServiceResponse::ConnectSuccess(_) => return Ok(()),
+                InternalServiceResponse::ConnectFailure(failure) => panic!(
+                    "the account is wedged: the orphan was reported disconnected but the \
+                     protocol session survived, so reconnecting is refused: {}",
+                    failure.message
+                ),
+                _ => continue,
+            }
+        }
+    }
+
     /// H1, second half: `ReleaseSession` stamped the nil UUID over any
     /// session's owner, marking somebody else's live session reclaimable.
     #[tokio::test]

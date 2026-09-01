@@ -1,3 +1,4 @@
+use super::request_join_wait::{await_join_outcome, JoinOutcome, GROUP_REQUEST_JOIN_WAIT};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -5,11 +6,10 @@ use citadel_internal_service_types::{
     GroupRequestJoinFailure, GroupRequestJoinSuccess, InternalServiceRequest,
     InternalServiceResponse,
 };
+use citadel_sdk::logging::warn;
 use citadel_sdk::prelude::{
-    GroupBroadcast, GroupBroadcastCommand, GroupEvent, NodeRequest, NodeResult, Ratchet,
-    TargetLockedRemote,
+    GroupBroadcast, GroupBroadcastCommand, NodeRequest, Ratchet, TargetLockedRemote,
 };
-use futures::StreamExt;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -58,22 +58,30 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 .await
             {
                 Ok(mut subscription) => {
-                    let mut result = Err("Group Request Join Failed".to_string());
-                    while let Some(evt) = subscription.next().await {
-                        if let NodeResult::GroupEvent(GroupEvent {
-                            session_cid: _,
-                            ticket: _,
-                            event:
-                                GroupBroadcast::RequestJoinPending {
-                                    result: signal_result,
-                                    key: _key,
-                                },
-                        }) = evt
-                        {
-                            result = signal_result;
-                            break;
+                    // Bounded, and matching every terminal variant — see
+                    // request_join_wait. The loop here named only
+                    // RequestJoinPending and re-awaited a subscription that
+                    // never ends on the other two.
+                    let result = match await_join_outcome(
+                        &mut subscription,
+                        GROUP_REQUEST_JOIN_WAIT,
+                    )
+                    .await
+                    {
+                        JoinOutcome::Pending(signal_result) => signal_result,
+                        JoinOutcome::Answered(true) => Ok(()),
+                        JoinOutcome::Answered(false) => {
+                            Err("The group refused the join request".to_string())
                         }
-                    }
+                        JoinOutcome::GroupGone => Err("That group no longer exists".to_string()),
+                        JoinOutcome::Ended => Err("Group Request Join Failed".to_string()),
+                        JoinOutcome::TimedOut => {
+                            warn!(target: "citadel", "Group join request for CID {cid} received no answer within {GROUP_REQUEST_JOIN_WAIT:?}; the group owner may be offline");
+                            Err(format!(
+                                "No answer to the join request within {GROUP_REQUEST_JOIN_WAIT:?}"
+                            ))
+                        }
+                    };
                     match result {
                         Ok(_) => InternalServiceResponse::GroupRequestJoinSuccess(
                             GroupRequestJoinSuccess {

@@ -218,3 +218,37 @@ async fn outbound_fragments_frames_and_rejects_unknown_flags() {
         .send_frame(0, TrackKind::Audio as u8, 0, 0b1000_0000, vec![1u8; 10])
         .is_err());
 }
+
+mod no_media_reporting {
+    use super::super::pump::should_report_no_media;
+
+    /// The case nobody could diagnose: frames arriving, every one dropped,
+    /// nothing delivered, and the pump silent about all of it.
+    #[test]
+    fn a_call_that_delivers_nothing_is_reported() {
+        assert!(should_report_no_media(false, 0, 30));
+        assert!(should_report_no_media(false, 0, 5_000));
+    }
+
+    /// Loss alongside delivery is ordinary for real-time media. Reporting it
+    /// would train the reader to ignore the message that matters.
+    #[test]
+    fn a_lossy_call_that_is_working_stays_quiet() {
+        assert!(!should_report_no_media(false, 1, 5_000));
+        assert!(!should_report_no_media(false, 10_000, 10_000));
+    }
+
+    /// Said once. A pump dropping every frame drops thousands of them, and the
+    /// log has to stay readable.
+    #[test]
+    fn it_is_said_only_once() {
+        assert!(!should_report_no_media(true, 0, 5_000));
+    }
+
+    /// A handful of drops at startup is reordering settling, not a dead call.
+    #[test]
+    fn a_brief_startup_reorder_does_not_trip_it() {
+        assert!(!should_report_no_media(false, 0, 1));
+        assert!(!should_report_no_media(false, 0, 29));
+    }
+}

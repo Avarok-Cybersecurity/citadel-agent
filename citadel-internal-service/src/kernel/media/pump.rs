@@ -12,7 +12,7 @@ use citadel_internal_service_types::{
     InternalServiceResponse, MediaFrameNotification, MediaGapNotification,
 };
 use citadel_sdk::citadel_media::{
-    JitterBuffer, MediaInstant, PopResult, ReassembleOutcome, Reassembler,
+    JitterBuffer, MediaInstant, PopResult, PushResult, ReassembleOutcome, Reassembler,
 };
 use citadel_sdk::logging::{debug, info, warn};
 use citadel_sdk::prelude::SecBuffer;
@@ -20,6 +20,25 @@ use futures::StreamExt;
 use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot::Receiver as ShutdownReceiver;
+
+/// How many consecutive dropped frames, with none delivered, before the pump
+/// says so. Low enough to fire within a second of real media, high enough that
+/// a brief startup reorder does not trip it.
+const NO_MEDIA_DROP_THRESHOLD: u64 = 30;
+
+/// Should the pump say that this call is delivering nothing?
+///
+/// Split out of the pump so it can be tested: the rest of this path produces
+/// only a log line, and a test that asserted "the pump still works" around it
+/// would pass just as well with the reporting deleted.
+///
+/// Three conditions, each load-bearing. `!warned` keeps a lossy call from
+/// flooding the log. `delivered == 0` is what separates a broken call from a
+/// merely lossy one -- media arriving alongside drops is normal and must stay
+/// quiet. The threshold keeps a brief startup reorder from tripping it.
+pub(crate) fn should_report_no_media(warned: bool, delivered: u64, drops: u64) -> bool {
+    !warned && delivered == 0 && drops >= NO_MEDIA_DROP_THRESHOLD
+}
 
 pub(crate) async fn pump_inbound<S>(
     mut udp_rx: S,
@@ -47,6 +66,11 @@ where
         }
     };
     let origin = Instant::now();
+    // Jitter-buffer drops need the same treatment as lane evictions: counted,
+    // and loud once they mean the call is dead rather than merely lossy.
+    let mut jitter_drops: u64 = 0;
+    let mut frames_delivered: u64 = 0;
+    let mut warned_no_media = false;
 
     'pump: loop {
         let datagram = tokio::select! {
@@ -66,7 +90,34 @@ where
 
         match reassembler.push(datagram.as_ref(), now) {
             ReassembleOutcome::Complete(frame) => {
-                let _ = jitter.push(frame, now);
+                // The result used to be discarded. Late, TooOld and Duplicate all
+                // mean the frame was thrown away, so a link whose reorder or
+                // delay exceeds the configured window drops EVERY frame -- and
+                // the pump reported nothing at all: no log, no counter, a call
+                // with no media and no way to tell why. Reassembly failures and
+                // lane evictions in this same file are both counted and logged;
+                // this was the one drop that was silent.
+                match jitter.push(frame, now) {
+                    PushResult::Buffered => {}
+                    dropped => {
+                        jitter_drops += 1;
+                        debug!(
+                            target: "citadel",
+                            "[Media] jitter buffer dropped a frame ({dropped:?}) cid={cid} peer_cid={peer_cid} jitter_drops={jitter_drops}"
+                        );
+                        // Once, and only when nothing has EVER been delivered:
+                        // steady-state loss is normal and must not flood, but
+                        // "dropped this many and delivered none" is a broken
+                        // call, and it is the case nobody could diagnose.
+                        if should_report_no_media(warned_no_media, frames_delivered, jitter_drops) {
+                            warned_no_media = true;
+                            warn!(
+                                target: "citadel",
+                                "[Media] {jitter_drops} frames dropped and none delivered for cid={cid} peer_cid={peer_cid}: the link's reordering or delay likely exceeds the configured jitter window"
+                            );
+                        }
+                    }
+                }
             }
             ReassembleOutcome::Rejected(e) => {
                 // Logged once per datagram would be a flood under attack; this is
@@ -83,6 +134,7 @@ where
         loop {
             match jitter.pop_ready(now) {
                 PopResult::Frame(frame) => {
+                    frames_delivered += 1;
                     if !send_frame_to_client(&media_lane, cid, peer_cid, &frame) {
                         // Client gone (typically a WebSocket reconnect). The
                         // receive half is still healthy — hand it back so the
@@ -113,6 +165,7 @@ where
                             request_id: None,
                         },
                     ));
+                    frames_delivered += 1;
                     if !send_frame_to_client(&media_lane, cid, peer_cid, &next) {
                         break 'pump;
                     }

@@ -682,20 +682,25 @@ mod tests {
     // longer hangs — every recv is bounded — and the failure is now located
     // exactly: "Timed out after 30s waiting for Peer A's connect notification".
     //
-    // Peer B sends PeerConnect carrying a PSK, and Peer A is never sent a
-    // PeerConnectNotification, so A has nothing to respond to and the negative
-    // cases below can never run. The service does answer B: the log shows
-    // connect_to_peer_custom failing with "Rekey update error: Encryption
-    // failure" and a PeerConnectFailure being returned (connect.rs:215).
+    // The note that used to sit here asked whether the responding peer is meant
+    // to be notified of a connect whose PSK will not verify. Running the test
+    // answers that: it IS. The FIRST attempt notifies Peer A and both sides get
+    // their expected PeerConnectFailure. It is the SECOND attempt that dies,
+    // and it dies on the initiator's own side before A is involved:
+    // connect_to_peer_custom fails with "Rekey update error: Encryption
+    // failure", so no notification is ever generated.
     //
-    // So the open question is a protocol one, not a test one: should the
-    // responding peer be notified of an inbound connect whose PSK will not
-    // verify? If not, this test's whole shape is wrong — it should assert that
-    // the INITIATOR receives PeerConnectFailure and expect no notification on the
-    // other side. Left ignored rather than rewritten to a shape that might
-    // enshrine the wrong answer.
-    #[ignore = "Peer A is never sent a connect notification when the PSK will not verify - \
-                is that intended? See the note above; fails fast now, does not hang"]
+    // The defect is therefore not about notifications at all: a failed PSK
+    // connect leaves state that every later connect between the same two peers
+    // fails from, including one carrying the CORRECT password. That is
+    // reproduced minimally, with what has been ruled out and where the residue
+    // is, in tests/psk_retry_after_failure.rs.
+    //
+    // This test stays ignored because its later rounds all sit downstream of
+    // that defect; the focused reproduction is the one to work from.
+    #[ignore = "blocked on the peer-connect state residue proven in \
+                tests/psk_retry_after_failure.rs - every round after the first \
+                fails from the first one's leftovers"]
     async fn test_internal_service_peer_with_psk_negative_case() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
 

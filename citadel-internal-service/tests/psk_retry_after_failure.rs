@@ -96,7 +96,24 @@
 //! mismatched attempt — while dropping the password entirely still works. The
 //! damage is specific to the keyed path.
 //!
-//! ## A mechanism that fits, not yet confirmed by a fix
+//! ## That mechanism is REFUTED. Kept below with its falsifying test.
+//!
+//! It made a checkable prediction, which is the only reason it was worth
+//! writing down. If the responder validates against its OWN stored password,
+//! then a round two with the roles SWAPPED — A initiating, B responding —
+//! should succeed, because B stored the correct password on its round-one
+//! outgoing path and would be validating against that.
+//!
+//! It fails. The swapped round two times out before the responder is notified
+//! at all, exactly as the unswapped one does. So the surviving state is not
+//! "the responder's stale stored password", and whatever it is does not depend
+//! on which side initiates.
+//!
+//! The hypothesis is left here rather than deleted: it fits three of the four
+//! observations, so the next person will think of it too, and the swap test is
+//! how they can dismiss it in forty seconds.
+//!
+//! ## The refuted mechanism
 //!
 //! `peer_cmd_packet.rs:453` has the RESPONDER validate against
 //! `state_container.get_session_password(peer_cid)` — its own stored value —

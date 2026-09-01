@@ -82,6 +82,43 @@
 //! peers who mistype a peer session password can still connect, but only by
 //! dropping the password. That is worse than it first appears, not better.
 //!
+//! ## The behaviour, stated exactly
+//!
+//! Three runs of this harness, differing only in the passwords:
+//!
+//!   | round 1        | round 2        | outcome                          |
+//!   |----------------|----------------|----------------------------------|
+//!   | both correct   | (not reached)  | BOTH SUCCEED                     |
+//!   | mismatched     | both correct   | fails: Encryption failure        |
+//!   | mismatched     | both absent    | SUCCEEDS                         |
+//!
+//! So a matched password works on a fresh pair, and stops working only after a
+//! mismatched attempt — while dropping the password entirely still works. The
+//! damage is specific to the keyed path.
+//!
+//! ## A mechanism that fits, not yet confirmed by a fix
+//!
+//! `peer_cmd_packet.rs:453` has the RESPONDER validate against
+//! `state_container.get_session_password(peer_cid)` — its own stored value —
+//! rather than anything in the packet it is answering. That store is written on
+//! the OUTGOING path (`session.rs:2220`), and written as
+//! `unwrap_or_default()`, so a peer that connects with no password stores the
+//! EMPTY key rather than nothing.
+//!
+//! That predicts exactly the third row: after round one, the side that answered
+//! without a password holds an empty key; a passwordless round two matches it,
+//! a correct-password round two does not.
+//!
+//! It does NOT yet explain the first row, where a matched first attempt
+//! succeeds even though the responder has stored nothing at all. Either the
+//! ordering differs on a first attempt, or line 453 is not the path taken. That
+//! gap is why this is recorded as a fitting hypothesis rather than the answer.
+//!
+//! `remove_session_password` exists for this job and is `#[allow(dead_code)]`
+//! with a TODO. Wiring it on failure is the obvious next experiment; it was not
+//! run here because it is an SDK change and three fixes in this area have
+//! already been implemented and refuted by this reproduction.
+//!
 //! ## A later round of eliminations, and a correction
 //!
 //! The paragraph above used to say the residue was a registration landing after

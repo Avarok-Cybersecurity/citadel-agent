@@ -176,6 +176,65 @@ mod tests {
         }
     }
 
+    /// Claiming one released session must not adopt another account's.
+    ///
+    /// `ReleaseSession` stamps `Uuid::nil()` as the orphan marker on every
+    /// session it releases, whatever account it belonged to. The claim then
+    /// swept every session sharing the old owner uuid and re-pointed all of them
+    /// at the claimer — so with two released sessions on one service, claiming
+    /// one adopted the other.
+    ///
+    /// `associated_localhost_connection` is the field `send_response_for_session`
+    /// routes by AND the field the ownership gate reads, so the consequence is
+    /// both halves at once: the claimer receives the other account's
+    /// notifications, and that account is refused its own session as "not
+    /// orphaned".
+    ///
+    /// Asserted as the victim reclaiming successfully, not as a count of swept
+    /// sessions: the count is the mechanism, the lockout is what a user meets.
+    #[tokio::test]
+    async fn claiming_one_released_session_does_not_adopt_another() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        let (mut first, mut second) = two_sessions_on_one_service("takeover.nil_sweep").await?;
+        let first_cid = first.2;
+        let second_cid = second.2;
+
+        // Both released, so both carry the nil marker.
+        for handle in [&mut first, &mut second] {
+            let cid = handle.2;
+            handle
+                .0
+                .send(InternalServiceRequest::ConnectionManagement {
+                    request_id: Uuid::new_v4(),
+                    management_command: ConfigCommand::ReleaseSession { session_cid: cid },
+                })?;
+            match next_management_response(handle).await? {
+                InternalServiceResponse::ConnectionManagementSuccess(_) => {}
+                other => panic!("a connection could not release its own session: {other:?}"),
+            }
+        }
+
+        // One of them is reclaimed.
+        second.0.send(claim(second_cid, true))?;
+        match next_management_response(&mut second).await? {
+            InternalServiceResponse::ConnectionManagementSuccess(_) => {}
+            other => panic!("an orphaned session could not be reclaimed: {other:?}"),
+        }
+
+        // The other must still be orphaned, and still reclaimable by its own
+        // connection. Before the fix the claim above had taken it, so this
+        // failed with "is not orphaned".
+        first.0.send(claim(first_cid, true))?;
+        match next_management_response(&mut first).await? {
+            InternalServiceResponse::ConnectionManagementSuccess(_) => Ok(()),
+            InternalServiceResponse::ConnectionManagementFailure(failure) => panic!(
+                "the other account's claim adopted this session, so its owner is locked out: {}",
+                failure.error
+            ),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
     /// `DisconnectOrphan` must disconnect, not merely forget.
     ///
     /// Removing the map entry is not a disconnect: nothing in `Connection` tears

@@ -158,13 +158,31 @@ pub(super) async fn claim_session<T: IOInterface, R: Ratchet>(
 
     // Find ALL sessions that share the same old TCP connection
     // This ensures all sessions from the same browser/client get updated together
-    let sessions_to_update: Vec<u64> = server_connection_map
-        .iter()
-        .filter(|(_, conn)| {
-            conn.associated_localhost_connection.load(Ordering::Relaxed) == owner_uuid
-        })
-        .map(|(cid, _)| *cid)
-        .collect();
+    //
+    // Except the nil marker, which is not a connection. `ReleaseSession` stamps
+    // `Uuid::nil()` on every session it releases, whatever account it belonged
+    // to, so "shares the old owner" is true of every released session on the
+    // machine at once. Claiming one of them re-pointed all of them at the
+    // claimer — including other accounts' — and `associated_localhost_connection`
+    // is the field `send_response_for_session` routes by and the ownership gate
+    // reads, so the claimer then received another account's P2P, file and media
+    // notifications, and that account was refused its own session as "not
+    // orphaned".
+    //
+    // The sweep is right for a real uuid: sessions that shared one browser
+    // socket do belong together. Nil says only "nobody holds this", which is a
+    // property, not an identity.
+    let sessions_to_update: Vec<u64> = if owner_uuid.is_nil() {
+        vec![session_cid]
+    } else {
+        server_connection_map
+            .iter()
+            .filter(|(_, conn)| {
+                conn.associated_localhost_connection.load(Ordering::Relaxed) == owner_uuid
+            })
+            .map(|(cid, _)| *cid)
+            .collect()
+    };
 
     let updated_count = sessions_to_update.len();
 

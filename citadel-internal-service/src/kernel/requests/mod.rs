@@ -466,7 +466,23 @@ const ILM_KEY_PREFIXES: [&str; 7] = [
 /// `true` here broke nothing.
 pub(crate) fn is_exempt_from_ownership_gate(command: &InternalServiceRequest) -> bool {
     match command {
-        InternalServiceRequest::LocalDBGetKV { key, .. } => is_ilm_key(key.as_str()),
+        InternalServiceRequest::LocalDBGetKV { key, cid, .. } => {
+            // The ILM key must name THIS request's session.
+            //
+            // Narrowed twice. It was the whole `LocalDBGetKV` variant; then the
+            // key had to be one of ILM's seven, suffixed by digits — any digits.
+            // A cid is a u64 that travels in peer lists and `GetSessions`
+            // responses and is not a secret, and the internal service's
+            // WebSocket has no CORS to stop a page opening it. So any page the
+            // user visited could ask for `inbound_messages-<victim>` and be
+            // handed that account's stored P2P message payloads, while the same
+            // request for `credentials` was correctly refused.
+            //
+            // Asking that the key's cid equals the request's cid closes the
+            // mismatch, and the gate then judges the request's cid as it judges
+            // every other: owned proceeds, held by somebody else is refused.
+            is_ilm_key_for(key.as_str(), *cid)
+        }
         _ => false,
     }
 }
@@ -641,7 +657,13 @@ pub(crate) fn requires_owned_session(command: &InternalServiceRequest) -> bool {
     )
 }
 
-fn is_ilm_key(key: &str) -> bool {
+/// One of ILM's seven keys, suffixed with `cid`.
+///
+/// The suffix must be that exact cid, compared as a STRING against the digits in
+/// the key: parsing them would accept `007` and any u64 overflow the parser
+/// happens to reject, and neither is a key ILM would ever write.
+fn is_ilm_key_for(key: &str, cid: u64) -> bool {
+    let expected = cid.to_string();
     ILM_KEY_PREFIXES.iter().any(|prefix| {
         let Some(tail) = key.strip_prefix(prefix) else {
             return false;
@@ -649,23 +671,27 @@ fn is_ilm_key(key: &str) -> bool {
         // Non-empty checked first: `all()` on an empty tail is vacuously true,
         // so `"inbound_messages-"` with nothing after it rode the exemption.
         // The unit test below caught that in this very function.
-        !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit())
+        !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) && tail == expected
     })
 }
 
 #[cfg(test)]
 mod ownership_gate_tests {
     use super::{
-        gate_decision, is_exempt_from_ownership_gate, is_ilm_key, refusal_response,
+        gate_decision, is_exempt_from_ownership_gate, is_ilm_key_for, refusal_response,
         requires_owned_session, GateDecision,
     };
     use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
     use uuid::Uuid;
 
     fn get_kv(key: &str) -> InternalServiceRequest {
+        get_kv_for(key, 1)
+    }
+
+    fn get_kv_for(key: &str, cid: u64) -> InternalServiceRequest {
         InternalServiceRequest::LocalDBGetKV {
             request_id: Uuid::new_v4(),
-            cid: 1,
+            cid,
             peer_cid: None,
             key: key.to_string(),
         }
@@ -673,9 +699,37 @@ mod ownership_gate_tests {
 
     #[test]
     fn only_ilm_reads_may_name_a_session_the_connection_does_not_own() {
-        assert!(is_exempt_from_ownership_gate(&get_kv("last_sent-123")));
+        assert!(is_exempt_from_ownership_gate(&get_kv_for("last_sent-1", 1)));
         // The whole variant used to be exempt, so any key rode through.
         assert!(!is_exempt_from_ownership_gate(&get_kv("credentials")));
+    }
+
+    #[test]
+    fn an_ilm_key_for_another_account_is_not_exempt() {
+        // The exemption's remaining hole: the key's digits were never compared
+        // to the request's own cid, so `inbound_messages-<victim>` rode through
+        // and handed back that account's stored P2P payloads. A cid is not a
+        // secret; it travels in peer lists and GetSessions responses.
+        assert!(!is_exempt_from_ownership_gate(&get_kv_for(
+            "inbound_messages-999",
+            1
+        )));
+        assert!(is_exempt_from_ownership_gate(&get_kv_for(
+            "inbound_messages-999",
+            999
+        )));
+    }
+
+    #[test]
+    fn the_suffix_is_compared_as_written() {
+        // Compared as a string, not parsed: `007` parses to 7 and is not a key
+        // ILM would ever write, and accepting it would widen the exemption for
+        // nothing.
+        assert!(is_ilm_key_for("last_sent-7", 7));
+        assert!(!is_ilm_key_for("last_sent-007", 7));
+        assert!(!is_ilm_key_for("last_sent-", 7));
+        assert!(!is_ilm_key_for("last_sent-7x", 7));
+        assert!(!is_ilm_key_for("credentials", 7));
     }
 
     #[test]
@@ -739,7 +793,7 @@ mod ownership_gate_tests {
             "last_received_from-123",
         ] {
             assert!(
-                is_ilm_key(key),
+                is_ilm_key_for(key, 123),
                 "{key} is a key ILM reads on the happy path"
             );
         }
@@ -758,7 +812,10 @@ mod ownership_gate_tests {
             // And a lookalike must not pass.
             "not_last_sent-123",
         ] {
-            assert!(!is_ilm_key(key), "{key} must not ride the ILM exemption");
+            assert!(
+                !is_ilm_key_for(key, 123),
+                "{key} must not ride the ILM exemption"
+            );
         }
     }
 

@@ -14,4 +14,18 @@ target/
 ./.idea/*
 target_ide/
 **/node_modules/
-citadel-internal-service/filesystem/*.bak
+# Runtime state, not fixtures.
+#
+# `BackendType::Filesystem("filesystem")` in the test suite writes account
+# records, transfers and the virtual FS here. Eleven of those files were
+# committed -- six .hca account records at ~49KB each, which is serialized
+# post-quantum key material for throwaway test accounts.
+#
+# Two costs, both paid repeatedly. Every `cargo nextest run` rewrote them, so
+# the tree was dirty after any test run and a `git add -A` would sweep them into
+# an unrelated commit. And each run started from whatever state the last one
+# left, which is the opposite of what a fixture is for.
+#
+# Nothing reads these paths: the suite passes with the directory deleted
+# outright (277/277). They were never fixtures, only residue.
+citadel-internal-service/filesystem/

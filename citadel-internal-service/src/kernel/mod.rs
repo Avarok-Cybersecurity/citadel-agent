@@ -362,11 +362,6 @@ impl<R: Ratchet> Connection<R> {
         }
     }
 
-    #[allow(dead_code)]
-    fn clear_peer_connection(&mut self, peer_cid: u64) -> Option<PeerConnection<R>> {
-        self.peers.remove(&peer_cid)
-    }
-
     fn add_object_transfer_handler(
         &mut self,
         peer_cid: u64,
@@ -439,18 +434,6 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
                 false
             }
         })
-    }
-
-    #[allow(dead_code)]
-    fn clear_peer_connection(
-        &self,
-        implicated_cid: u64,
-        peer_cid: u64,
-    ) -> Option<PeerConnection<R>> {
-        self.server_connection_map
-            .write()
-            .get_mut(&implicated_cid)?
-            .clear_peer_connection(peer_cid)
     }
 }
 

@@ -65,11 +65,35 @@
 //! a connection whose crypto never completed, and a later attempt carrying a
 //! password reuses it and cannot encrypt.
 //!
-//! Fixing it means unwinding that registration, or preventing it, inside the
-//! KEM/peer-crypto lifecycle -- far enough into the protocol that a wrong
-//! change would tear down working connections. Left proven and reproducible
-//! rather than guessed at; four hypotheses have been eliminated above, which is
-//! the useful half of the work.
+//! ## A later round of eliminations, and a correction
+//!
+//! The paragraph above used to say the residue was a registration landing after
+//! the failure. Three more experiments say otherwise:
+//!
+//! * **`PeerChannelCreated` never fires for the failed attempt.** Zero
+//!   occurrences across a whole run with `RUST_LOG=citadel=info`. A fix that
+//!   marked failed attempts and dropped their late channel therefore suppressed
+//!   nothing, and the retry still failed.
+//! * **An explicit `PeerDisconnect` immediately after the failure answers
+//!   "disconnect: Peer connection not found".** At that instant the internal
+//!   map does not hold the peer.
+//! * **Round one fails SYMMETRICALLY.** Both sides return
+//!   "Rekey update error: Encryption failure", so neither took the success path
+//!   that registers a peer. There is no asymmetric outcome to explain it.
+//!
+//! Those three sit awkwardly against the "Already connected to peer" seen when
+//! retrying with NO password, because that branch requires the internal map AND
+//! the SDK to both hold the peer. Something puts it there that is none of:
+//! connect's success path, PeerChannelCreated, or an asymmetric round one. That
+//! is the open question, and it is the one to answer first.
+//!
+//! Seven hypotheses are now eliminated by experiment against this
+//! reproduction. Three separate fixes -- `disconnect()` in the failure arm,
+//! removing the peer from the map there, and dropping the post-failure channel
+//! -- were each implemented, tested, and refuted by it. That is the useful half
+//! of the work: whoever takes this on starts with the dead ends marked and a
+//! 40-second repro, rather than with the plausible reading of the source that
+//! has now been wrong three times.
 
 use citadel_internal_service_test_common as common;
 

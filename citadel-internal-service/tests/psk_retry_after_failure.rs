@@ -39,10 +39,37 @@
 //! failure. `remove_session_password` exists for the same job and is
 //! `#[allow(dead_code)]` with a TODO — written, never wired.
 //!
-//! Fixing it means clearing that per-peer state when a peer connect fails,
-//! which needs enough of the KEM state machine to be sure a working connection
-//! is not torn down with it. Left proven and reproducible rather than guessed
-//! at.
+//! ## Also ruled out, by experiment against this reproduction
+//!
+//! * **Not a timing race.** Sleeping 15s between the rounds changes nothing;
+//!   the residue is permanent, not something a cleanup task clears late.
+//! * **Not specific to the initiator.** Swapping the roles for round two, so A
+//!   initiates instead of B, fails identically. Whatever is left over belongs
+//!   to the pair, not to one side's outgoing path.
+//! * **Not the recorded connection.** Removing the peer from the internal
+//!   connection map and calling `disconnect()` in the failure arm was tried
+//!   together: the disconnect returns `Ok(())`, the map removal reports
+//!   `removed_from_map=false` -- the peer is not even there yet at failure
+//!   time -- and round two still fails.
+//!
+//! ## The most telling variation
+//!
+//! Retrying with NO password at all fails DIFFERENTLY:
+//!
+//!     PeerConnectFailure { message: "Already connected to peer ..." }
+//!
+//! That branch fires only when the internal map AND the SDK both report the
+//! peer as connected. So a handshake that failed still ends up registered on
+//! both -- the registration simply lands after the failure is reported, which
+//! is why the map lookup above finds nothing. The pair is left believing it has
+//! a connection whose crypto never completed, and a later attempt carrying a
+//! password reuses it and cannot encrypt.
+//!
+//! Fixing it means unwinding that registration, or preventing it, inside the
+//! KEM/peer-crypto lifecycle -- far enough into the protocol that a wrong
+//! change would tear down working connections. Left proven and reproducible
+//! rather than guessed at; four hypotheses have been eliminated above, which is
+//! the useful half of the work.
 
 use citadel_internal_service_test_common as common;
 

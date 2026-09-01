@@ -50,13 +50,18 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     {
         let conns = this.server_connection_map.read();
         if let Some(conn) = conns.get(&cid) {
-            if conn.peers.contains_key(&peer_cid) {
+            // Only an ACCEPT is idempotent against an existing connection.
+            // Without the `accept` test this shortcut answered a refusal with
+            // success and did nothing — the peer stayed connected and the
+            // caller was told its answer had been delivered.
+            if accept && conn.peers.contains_key(&peer_cid) {
                 info!(target: "citadel", "[PeerConnectAccept] Peer {} already connected to {} - idempotent success", peer_cid, cid);
                 return Some(HandledRequestResult {
                     response: InternalServiceResponse::PeerConnectAcceptSuccess(
                         PeerConnectAcceptSuccess {
                             cid,
                             peer_cid,
+                            accept,
                             request_id: Some(request_id),
                         },
                     ),
@@ -100,24 +105,21 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let remote = this.remote();
 
     // Call the SDK's peer_connect response function
-    // NOTE for whoever adds a decline path to the UI.
+    // Both outcomes still answer with PeerConnectAcceptSuccess, because both
+    // ARE successes: the answer was delivered. What the response now carries is
+    // WHICH answer, in `accept`.
     //
-    // Both outcomes answer with PeerConnectAcceptSuccess. It is accurate from
-    // here — the response WAS delivered — but it means the receiver cannot tell
-    // "they accepted" from "your refusal was sent", and the `accept` flag this
-    // function branched on is not carried back.
+    // Without that field the type name was the entire message and it said
+    // "success" either way, so a receiver could not tell "they accepted" from
+    // "your refusal was sent". PeerRegisterRespond had exactly that shape and
+    // it was live: declining a registration ran the frontend's acceptance path,
+    // marked the declined peer registered, and had auto-connect open a
+    // connection to the person just refused.
     //
-    // PeerRegisterRespond had exactly this shape and it was a live defect:
-    // declining a registration ran the frontend's acceptance path, marked the
-    // declined peer registered, and had p2p-auto-connect open a connection to
-    // the person just refused. See citadel-workspaces'
-    // p2p-registration-service/decline-correlation.ts.
-    //
-    // This one is not reachable today only because nothing sends accept:false —
-    // incoming connections are auto-accepted, consent having been given at
-    // registration. Adding a decline without carrying the outcome back would
-    // reintroduce that bug. FileTransferStatusNotification shows the shape to
-    // copy: it carries `success` AND `response`.
+    // Nothing sends accept:false today — incoming connections are auto-accepted,
+    // consent having been given at registration — so this was latent. It is the
+    // shape FileTransferStatusNotification already uses, which carries both
+    // `success` and `response`.
     match responses::peer_connect(signal, accept, remote, peer_session_password).await {
         Ok(ticket) => {
             info!(target: "citadel", "[PeerConnectAccept] Successfully sent {} response, ticket={:?}",
@@ -127,6 +129,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     PeerConnectAcceptSuccess {
                         cid,
                         peer_cid,
+                        accept,
                         request_id: Some(request_id),
                     },
                 ),

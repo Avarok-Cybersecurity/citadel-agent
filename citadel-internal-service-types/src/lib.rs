@@ -501,6 +501,18 @@ pub struct PeerConnectAcceptSuccess {
     pub cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub peer_cid: u64,
+    /// Which answer was delivered: `true` accepted the connection, `false`
+    /// refused it.
+    ///
+    /// Without this the name is the whole message, and it says "success" for
+    /// both — accurate about delivery, silent about the outcome. A receiver
+    /// could not tell "they accepted" from "your refusal was sent".
+    ///
+    /// `PeerRegisterRespond` had exactly that shape and it was a live defect:
+    /// declining a registration ran the frontend's acceptance path, marked the
+    /// declined peer registered, and had auto-connect open a connection to the
+    /// person just refused.
+    pub accept: bool,
     pub request_id: Option<Uuid>,
 }
 

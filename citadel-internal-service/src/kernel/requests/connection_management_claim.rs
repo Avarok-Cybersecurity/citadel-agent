@@ -91,8 +91,18 @@ pub(super) async fn claim_session<T: IOInterface, R: Ratchet>(
     // Step 4: Check if session is active in SDK
     if !sdk_active_cids.contains(&session_cid) {
         // Session exists in internal service but not in SDK - clean up and deny
-        let mut server_connection_map = this.server_connection_map.write();
-        server_connection_map.remove(&session_cid);
+        {
+            let mut server_connection_map = this.server_connection_map.write();
+            server_connection_map.remove(&session_cid);
+        }
+        // The CID-keyed kernel maps outlive the entry otherwise — see
+        // prune_cid_scoped_state. Every other teardown site prunes; this one and
+        // the two in DisconnectOrphan did not, and the gate could not see them
+        // because they bind the write guard to a local before removing.
+        //
+        // Outside the guard: prune takes its own locks, and every other caller
+        // releases the map first.
+        this.prune_cid_scoped_state(session_cid, None);
         info!(target: "citadel", "ClaimSession: Session {} removed - not active in SDK", session_cid);
         return Some(HandledRequestResult {
             response: InternalServiceResponse::ConnectionManagementFailure(

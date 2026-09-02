@@ -60,6 +60,8 @@ export class InternalServiceWasmClient {
     private p2pConnections = new Set<string>();
     private messageHandler?: (message: InternalServiceResponse) => void;
     private errorHandler?: (error: Error) => void;
+    /** Additional subscribers, which do not displace `errorHandler`. */
+    private errorListeners: Array<(error: Error) => void> = [];
     private messageLoopDiedHandler?: (error: Error, canRecover: boolean) => void;
     private initializationComplete = false;
     // Flag to signal message processing loop to stop (set when WebSocket dies)
@@ -304,6 +306,22 @@ export class InternalServiceWasmClient {
     }
 
     /**
+     * Subscribe to errors WITHOUT displacing anyone else's handler.
+     *
+     * `setErrorHandler` overwrites the single slot, and the session manager
+     * called it in its constructor — so every caller who passed `errorHandler`
+     * in the config had it silently discarded before their first error. The
+     * running app passes one. Additional subscribers use this instead, and the
+     * returned function removes them.
+     */
+    addErrorListener(listener: (error: Error) => void): () => void {
+        this.errorListeners.push(listener);
+        return () => {
+            this.errorListeners = this.errorListeners.filter((l) => l !== listener);
+        };
+    }
+
+    /**
      * Set a handler for message loop death events
      * @param handler Called with (error, canRecover) - canRecover is true if recovery succeeded
      */
@@ -324,7 +342,18 @@ export class InternalServiceWasmClient {
         try {
             console.log('Loading WASM module...');
 
-            // Import the WASM JS module using relative path from src/ to package root
+            // Imported from the PACKAGE, not from /wasm/.
+            //
+            // Tried and reverted: pointing this at the served /wasm/ copy makes
+            // `vite build` stop needing an uncommitted wasm-pack artefact, and
+            // the production build does succeed. But Vite refuses to let source
+            // import anything under /public — "copied as-is during build
+            // without going through the plugin transforms" — so the dev server
+            // answers 500 and WASM never initialises. Prod-only verification
+            // would have shipped that.
+            //
+            // The CI consequence (bundle-budget and PWA gates cannot build
+            // without a prior WASM build) belongs in CI, not here.
             // @ts-ignore - Dynamic import of WASM glue code
             const wasmModule = await import('../citadel_internal_service_wasm_client.js');
 
@@ -364,16 +393,24 @@ export class InternalServiceWasmClient {
                     // proper way to detect WebSocket death.
                     const message = await this.wasmModule.next_message();
 
-                    // Check stop flag before processing
-                    if (this.shouldStopProcessing) {
-                        console.log('[InternalServiceWasmClient] Stop flag set, exiting message loop');
-                        break;
-                    }
-
                     // Reset consecutive error counter on successful message
                     this.consecutiveStreamErrors = 0;
 
+                    // Delivered BEFORE the stop flag is honoured, deliberately.
+                    //
+                    // This message has already been taken off the Rust channel and
+                    // serialized -- it exists nowhere else. Breaking here dropped it on
+                    // the floor, and `stopMessageProcessing()` is called on every
+                    // teardown and reconnect, so the race is routine rather than
+                    // exotic. Handing it to the handler and THEN exiting loses
+                    // nothing; the loop still stops on the same tick.
                     this.handleMessage(message);
+
+                    // Check stop flag after the in-hand message is safe
+                    if (this.shouldStopProcessing) {
+                        console.log('[ILM] [InternalServiceWasmClient] Stop flag set, exiting message loop after delivering the in-flight message');
+                        break;
+                    }
                 } catch (error) {
                     // Check stop flag - if set, exit gracefully
                     if (this.shouldStopProcessing) {
@@ -529,8 +566,17 @@ export class InternalServiceWasmClient {
     private handleError(error: Error): void {
         if (this.errorHandler) {
             this.errorHandler(error);
-        } else {
+        } else if (this.errorListeners.length === 0) {
             console.error('WASM Client Error:', error);
+        }
+        // Listeners are additional, not alternative: one throwing must not stop
+        // the others, and none of them replaces the caller's handler.
+        for (const listener of this.errorListeners) {
+            try {
+                listener(error);
+            } catch (listenerError) {
+                console.error('Error listener threw:', listenerError);
+            }
         }
     }
 

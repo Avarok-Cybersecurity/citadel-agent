@@ -1,4 +1,3 @@
-use crate::kernel::requests::peer::cleanup_state;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -6,9 +5,9 @@ use citadel_internal_service_types::{
     GetSessionsResponse, InternalServiceRequest, InternalServiceResponse, PeerSessionInformation,
     SessionInformation,
 };
-use citadel_sdk::logging::{info, warn};
-use citadel_sdk::prelude::{ProtocolRemoteExt, Ratchet, TargetLockedRemote};
-use std::collections::{HashMap, HashSet};
+use citadel_sdk::logging::{debug, info};
+use citadel_sdk::prelude::{Ratchet, TargetLockedRemote};
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use uuid::Uuid;
 
@@ -30,77 +29,21 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             lock.len(), session_cids, session_usernames);
     }
 
-    // Step 1: Query SDK for authoritative C2S session state
-    // NOTE: We only reconcile C2S sessions, not P2P connections. The SDK's sessions()
-    // returns active C2S sessions, but P2P connections in the internal service are
-    // tracked separately and may persist across reconnections (orphan mode).
-    let sdk_c2s_sessions: HashSet<u64> = match this.remote().sessions().await {
-        Ok(sdk_sessions) => {
-            let sessions: HashSet<u64> = sdk_sessions.sessions.iter().map(|s| s.cid).collect();
-            info!(target: "citadel", "GetSessions: SDK reports {} C2S sessions", sessions.len());
-            sessions
-        }
-        Err(e) => {
-            warn!(target: "citadel", "GetSessions: Failed to query SDK sessions: {:?}. Skipping reconciliation.", e);
-            // Fallback to returning internal state without reconciliation
-            return Some(build_response_from_internal_state(this, uuid, request_id));
-        }
-    };
-
-    // Step 2: Find stale C2S sessions (not P2P connections!)
-    // IMPORTANT: Only clean up sessions that are:
-    //   1. NOT in SDK's active session list, AND
-    //   2. Belong to the CURRENT connection (not orphaned from a previous connection)
+    // The SDK is NOT queried here, and the reconciliation this handler was
+    // named for does not exist.
     //
-    // A session is "orphaned" if its associated_conn doesn't match the current connection.
-    // This is a more robust check than looking at tx_to_localhost_clients, which may have
-    // race conditions during connection handoff.
+    // There was a query, and a filter computing "stale C2S sessions" to remove
+    // from it -- with every branch of that filter returning false, the last one
+    // under a comment reading "Actually, let's preserve all sessions and let
+    // explicit disconnect handle cleanup". The decision was taken and the
+    // machinery left standing: a round trip whose result was discarded, a lock,
+    // a list that was always empty, and a loop over it.
     //
-    // Orphaned sessions should NOT be cleaned up because they may become active again
-    // when the user reconnects via ClaimSession.
-    let stale_c2s_sessions: Vec<u64> = {
-        let lock = this.server_connection_map.read();
+    // Worse than no code, because CLAUDE.md documents this as one of three
+    // places a session can be removed and it is not one. Sessions are removed
+    // on Disconnect and on Deregister. This handler reports what the connection
+    // map holds.
 
-        lock.iter()
-            .filter(|(cid, conn)| {
-                // Session is in SDK - don't clean up (it's still active)
-                if sdk_c2s_sessions.contains(cid) {
-                    return false;
-                }
-
-                // Check if session belongs to the current connection
-                let associated_conn = conn.associated_localhost_connection.load(Ordering::Relaxed);
-                let is_current_connection = associated_conn == uuid;
-
-                if !is_current_connection {
-                    // Session is orphaned (from a previous connection) - preserve it
-                    info!(target: "citadel", "GetSessions: Preserving orphaned session {} (associated with old connection {:?}, current is {:?})", cid, associated_conn, uuid);
-                    return false;
-                }
-
-                // Session belongs to current connection but not in SDK - this is genuinely stale
-                // This can happen if the session was just created but SDK hasn't registered it yet
-                info!(target: "citadel", "GetSessions: Session {} is current connection but not in SDK - preserving for now", cid);
-                false // Actually, let's preserve all sessions and let explicit disconnect handle cleanup
-            })
-            .map(|(cid, _)| *cid)
-            .collect()
-    };
-
-    // Step 3: Clean up stale C2S sessions only (sessions with active TCP but not in SDK)
-    if !stale_c2s_sessions.is_empty() {
-        info!(target: "citadel", "GetSessions: Cleaning up {} stale C2S sessions (active TCP but not in SDK)", stale_c2s_sessions.len());
-        for cid in stale_c2s_sessions {
-            info!(target: "citadel", "GetSessions: Removing stale C2S session {}", cid);
-            cleanup_state(
-                &this.server_connection_map,
-                cid,
-                None, // Only clean C2S session, peers will be removed with it
-            );
-        }
-    }
-
-    // Step 4: Build and return response from reconciled state
     Some(build_response_from_internal_state(this, uuid, request_id))
 }
 
@@ -120,7 +63,10 @@ fn build_response_from_internal_state<T: IOInterface, R: Ratchet>(
         let conn_id = connection
             .associated_localhost_connection
             .load(Ordering::Relaxed);
-        info!(target: "citadel", "GetSessions: Session {} for user {} associated with connection {}", cid, connection.username, conn_id);
+        // debug!, not info!: this is one line per session per poll, and the
+        // messenger polls at 1Hz, so it is O(sessions^2) lines/sec on a fully
+        // idle system -- 17% of the whole internal-service log.
+        debug!(target: "citadel", "GetSessions: Session {} for user {} associated with connection {}", cid, connection.username, conn_id);
 
         let mut session = SessionInformation {
             cid: *cid,

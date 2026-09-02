@@ -6,6 +6,19 @@
 # non-flaky. Can be overridden through the `--retries` option.
 retries = 0
 
+# Terminate a test that has hung, and say which one.
+#
+# nextest's default only WARNS at 60s ("has been running for over 60 seconds")
+# and never terminates, and none of these 280 tests carries an rstest
+# `#[timeout]` — Citadel-Protocol's suite is saved by those attributes, this one
+# has none. So a single hung test ran until the CI job's own timeout, and the
+# failure named the job rather than the test.
+#
+# The margin is large on purpose: the slowest test here is ~6s locally, so 180s
+# is thirty times the real workload and only a genuine hang reaches it. A test
+# legitimately approaching this bound is a test that needs looking at.
+slow-timeout = { period = "60s", terminate-after = 3 }
+
 # The number of threads to run tests with. Supported values are either an integer or
 # the string "num-cpus". Can be overridden through the `--test-threads` option.
 # test-threads = 1

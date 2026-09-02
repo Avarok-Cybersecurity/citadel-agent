@@ -1,3 +1,19 @@
+// This module and its children implement intersession_layer_messaging's `Backend`
+// and `Messenger` traits, whose error type is fixed as `BackendError<T>`.
+// `BackendError::SendFailed` carries the whole undelivered message inline, so
+// with T = WrappedMessage the Err variant is ~288 bytes and clippy's
+// result_large_err (128-byte threshold) fires on all 26 methods.
+//
+// Boxing is not available here: the return type is dictated by the trait, so the
+// only way to satisfy the lint is to change ILM's public error enum, which every
+// consumer of that crate would have to follow. That is a far wider change than
+// the lint is worth, and it would not make anything faster — these are async
+// trait methods whose futures are boxed already.
+//
+// Scoped to this module rather than the crate root so a genuinely oversized
+// error elsewhere in the connector still gets caught.
+#![allow(clippy::result_large_err)]
+
 use crate::connector::InternalServiceConnector;
 use crate::io_interface::IOInterface;
 use crate::messenger::backend::CitadelBackendExt;
@@ -8,7 +24,10 @@ use citadel_internal_service_types::{
 };
 use citadel_io::tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use citadel_io::tokio::sync::Mutex;
-use citadel_logging as log;
+// The `log` FACADE, not citadel_logging (which wraps tracing). The WASM client
+// installs console_log -- a log-facade logger -- and no tracing subscriber
+// anywhere, so every `log::` macro here went nowhere in the browser. The
+// dependency was already added for this fix; the `use` was never changed.
 use dashmap::DashMap;
 use futures::future::Either;
 use futures::{SinkExt, StreamExt};
@@ -16,6 +35,7 @@ use intersession_layer_messaging::{
     DeliveryError, MessageMetadata, NetworkError, Payload, UnderlyingSessionTransport, ILM,
 };
 use itertools::Itertools;
+use log;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -30,6 +50,7 @@ use uuid::Uuid;
 use wasm_bindgen_futures;
 
 pub mod backend;
+pub mod backend_map;
 
 /// Platform-agnostic async sleep function
 /// - Native: Uses tokio::time::sleep
@@ -44,27 +65,45 @@ pub async fn sleep_internal(duration: Duration) {
     wasmtimer::tokio::sleep(duration).await;
 }
 
+/// The future did not finish inside the allotted time.
+///
+/// A named type rather than `()`: an `Err(())` tells a caller nothing, cannot
+/// carry a message, and cannot implement `std::error::Error`, so every call site
+/// has to invent its own wording for what went wrong.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct TimedOut {
+    pub after: Duration,
+}
+
+impl std::fmt::Display for TimedOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "operation timed out after {:?}", self.after)
+    }
+}
+
+impl std::error::Error for TimedOut {}
+
 /// Platform-agnostic async timeout function
 /// - Native: Uses tokio::time::timeout
 /// - WASM: Uses wasmtimer::tokio::timeout
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn timeout_internal<F, T>(duration: Duration, future: F) -> Result<T, ()>
+pub async fn timeout_internal<F, T>(duration: Duration, future: F) -> Result<T, TimedOut>
 where
     F: Future<Output = T>,
 {
     citadel_io::tokio::time::timeout(duration, future)
         .await
-        .map_err(|_| ())
+        .map_err(|_| TimedOut { after: duration })
 }
 
 #[cfg(target_arch = "wasm32")]
-pub async fn timeout_internal<F, T>(duration: Duration, future: F) -> Result<T, ()>
+pub async fn timeout_internal<F, T>(duration: Duration, future: F) -> Result<T, TimedOut>
 where
     F: Future<Output = T>,
 {
     wasmtimer::tokio::timeout(duration, future)
         .await
-        .map_err(|_| ())
+        .map_err(|_| TimedOut { after: duration })
 }
 
 /// A multiplexer for the InternalServiceConnector that allows for multiple handles
@@ -171,9 +210,46 @@ impl intersession_layer_messaging::local_delivery::LocalDelivery<WrappedMessage>
     for LocalDeliveryTx
 {
     async fn deliver(&self, message: WrappedMessage) -> Result<(), DeliveryError> {
+        let msg_id = message.message_id();
         let InternalServicePayload::Response(response) = message.contents else {
+            // Logged, not silent: ILM records this as a delivery failure but the
+            // reason never reached anyone.
+            ::log::info!(target: "ism", "[ILM-DELIVER] msg_id={msg_id} REJECTED: payload was not a Response");
             return Err(DeliveryError::BadInput);
         };
+
+        // The join key the reconnect-loss investigation has been missing.
+        //
+        // ILM logs msg_id with no content; the client logs content with no
+        // msg_id, so no one can say which delivery carried which message. Length
+        // cannot bridge them either — the offline test's three messages are the
+        // same length and differ by one digit. This prints a content
+        // fingerprint next to the id; the client prints the same fingerprint on
+        // receipt, and the two sides finally line up.
+        //
+        // Deliberately target: "ism". The messenger's existing `target: "citadel"`
+        // lines do not appear in these runs at all, whereas every ILM line does.
+        if let InternalServiceResponse::MessageNotification(n) = &response {
+            let mut fp: u64 = 0xcbf2_9ce4_8422_2325;
+            for b in &n.message {
+                fp ^= *b as u64;
+                fp = fp.wrapping_mul(0x100_0000_01b3);
+            }
+            // Field ORDER matters here, not just content. CI truncates console
+            // lines around 348 chars, and two 20-digit CIDs ahead of the
+            // fingerprint meant every one of these lines was cut off exactly at
+            // `len=` — 26 of them logged, not one readable. The join key goes
+            // first, and the CIDs are trimmed to their last 6 digits, which is
+            // plenty to tell two peers apart in one run.
+            ::log::info!(
+                target: "ism",
+                "[ILM-DELIVER] fp={:016x} msg_id={msg_id} len={} cid=..{} peer=..{}",
+                fp,
+                n.message.len(),
+                n.cid % 1_000_000,
+                n.peer_cid % 1_000_000
+            );
+        }
 
         self.final_tx
             .send(response)
@@ -309,8 +385,12 @@ where
         #[cfg(not(target_arch = "wasm32"))]
         drop(citadel_io::tokio::task::spawn(task));
 
+        // No `drop(..)` here, unlike the native branch above: `spawn` returns a
+        // JoinHandle that is deliberately discarded to detach the task, whereas
+        // `spawn_local` returns `()`, so wrapping it read as if a handle were
+        // being released when there was nothing to release.
         #[cfg(target_arch = "wasm32")]
-        drop(wasm_bindgen_futures::spawn_local(task));
+        wasm_bindgen_futures::spawn_local(task);
 
         Ok(handle)
     }
@@ -340,7 +420,7 @@ where
                     // TODO: Add support for group messaging
                     InternalServiceResponse::MessageNotification(mut message) => {
                         // DEBUG: Log ALL MessageNotification arrivals to trace P2P message flow
-                        log::info!(target: "citadel", "[P2P-DEBUG] MessageNotification arrived: cid={}, peer_cid={}, msg_len={}",
+                        ::log::info!(target: "ism", "[P2P-DEBUG] MessageNotification arrived: cid={}, peer_cid={}, msg_len={}",
                             message.cid, message.peer_cid, message.message.len());
                         // deserialize and relay to ISM
                         match bincode2::deserialize::<WireWrapper>(&message.message) {
@@ -375,7 +455,7 @@ where
                                         {
                                             log::error!(target: "citadel", "Error forwarding ISM MessageNotification to JS: {err:?}");
                                         } else {
-                                            log::info!(target: "citadel", "[P2P-DEBUG] FORWARDED ISM MessageNotification to JS: cid={}, peer_cid={}, unwrapped_len={}",
+                                            ::log::info!(target: "ism", "[P2P-DEBUG] FORWARDED ISM MessageNotification to JS: cid={}, peer_cid={}, unwrapped_len={}",
                                                 message.cid, message.peer_cid, message.message.len());
                                         }
 
@@ -422,8 +502,25 @@ where
                                 }
                             }
                             Err(err) => {
-                                log::warn!(target: "citadel", "Error while deserializing ISM (?) message: {err:?}");
-                                // Forward as is. Likely sent by a non-ISM peer
+                                // `debug!`, and it says what it means.
+                                //
+                                // This read "Error while deserializing ISM (?)
+                                // message" at `warn!`, which is what an
+                                // unframed payload looks like from here and is
+                                // NOT what it is. The workspace app sends P2P
+                                // traffic by two routes on purpose: Yjs
+                                // document updates and the plain messaging
+                                // service go out as raw bytes, everything else
+                                // through ILM's WireWrapper. Every one of the
+                                // former arrives here and fails this decode.
+                                //
+                                // Twenty-two of them in one CI run were read as
+                                // evidence of corruption on the wire and cost a
+                                // round of investigation. An expected branch
+                                // logged as a warning is a false lead with a
+                                // timestamp.
+                                log::debug!(target: "ism", "Not an ISM frame; forwarding raw to the local user (this is how Yjs and plain messages travel): {err:?}");
+                                // Forward as is: sent outside ILM, by design.
                                 // Send to default direct handle
                                 // TODO: Consider having the bypasser send directly to underlying stream
                                 let other_message_type =
@@ -776,6 +873,22 @@ impl MessageMetadata for WrappedMessage {
             contents: contents.into(),
         }
     }
+
+    /// Seeded from the wall clock, not from zero.
+    ///
+    /// This backend's store is the agent's LocalDB, keyed by CID. A user on a
+    /// new device, or one who has cleared site data, arrives with the same CID
+    /// and an EMPTY store -- while the peer's durable delivery frontier for
+    /// them is untouched. Re-minting from zero put every message at or below
+    /// that frontier, where `safe_to_ack` calls it a duplicate: re-ACKed,
+    /// cleared, and never delivered. Nothing errored on either side.
+    ///
+    /// Microseconds, because the seed must clear the HIGHEST id the previous
+    /// incarnation reached, which is its own seed plus however many messages it
+    /// sent -- see `platform_timestamp_micros`.
+    fn initial_message_id() -> Self::MessageId {
+        intersession_layer_messaging::platform_timestamp_micros()
+    }
 }
 
 #[derive(Debug)]
@@ -927,6 +1040,12 @@ where
 {
     ism_to_background_outbound: UnboundedSender<InternalMessage>,
     ism_from_background_inbound: Mutex<UnboundedReceiver<InternalMessage>>,
+    /// Read by the native `connected_peers` impl. The wasm32 impl asks
+    /// TypeScript for the peer list instead and never touches this, so the field
+    /// is genuinely dead on that target and only that one — hence a
+    /// target-scoped allow rather than a blanket one. Do not delete it: the
+    /// native build needs it.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     messenger_ptr: CitadelWorkspaceMessenger<B>,
     stream_key: StreamKey,
 }

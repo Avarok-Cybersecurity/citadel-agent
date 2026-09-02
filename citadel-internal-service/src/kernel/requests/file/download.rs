@@ -29,10 +29,21 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let remote = this.remote();
     let security_level = security_level.unwrap_or_default();
 
-    // Extract what we need from the lock, then drop it before any await
+    // The scope key the responses/object_transfer_handle.rs side derives from
+    // the Receiver handle: the peer's cid for P2P pulls, and 0 for c2s pulls
+    // (a c2s handle carries source = C2S_IDENTITY_CID = 0).
+    let correlation_scope = peer_cid.unwrap_or(crate::kernel::revfs_correlation::SERVER_SCOPE);
+
+    // Extract what we need from the lock, then drop it before any await.
+    // Write (not read) lock: on success we also register the browser's
+    // request_id so the pull's tick stream can be stamped with it — the SDK's
+    // PullObject has no request-id field to thread it through, and without
+    // this the ticks fall back to the TCP-connection uuid, which the browser's
+    // correlation never matches: the file lands on disk and the browser still
+    // reports the download as failed after its 30s timeout.
     let pull_request: Result<NodeRequest, NetworkError> = {
-        let lock = this.server_connection_map.read();
-        match lock.get(&cid) {
+        let mut lock = this.server_connection_map.write();
+        match lock.get_mut(&cid) {
             Some(conn) => {
                 if let Some(peer_cid) = peer_cid {
                     if conn.peers.contains_key(&peer_cid) {
@@ -46,6 +57,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         // download symmetric: both initiator and acceptor
                         // can pull files from the peer once the P2P
                         // channel is established.
+                        conn.revfs_correlations
+                            .register_pull(correlation_scope, request_id);
                         Ok(NodeRequest::PullObject(PullObject {
                             v_conn: VirtualTargetType::LocalGroupPeer {
                                 session_cid: cid,
@@ -59,6 +72,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         Err(NetworkError::msg("Peer Connection Not Found"))
                     }
                 } else {
+                    conn.revfs_correlations
+                        .register_pull(correlation_scope, request_id);
                     Ok(NodeRequest::PullObject(PullObject {
                         v_conn: *conn.client_server_remote.user(),
                         virtual_dir: virtual_directory,
@@ -80,11 +95,19 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 cid,
                 request_id: Some(request_id),
             }),
-            Err(err) => InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
-                cid,
-                message: err.into_string(),
-                request_id: Some(request_id),
-            }),
+            Err(err) => {
+                // The pull never went out, so its correlation entry must not
+                // sit in the FIFO and claim the NEXT pull's tick stream.
+                if let Some(conn) = this.server_connection_map.write().get_mut(&cid) {
+                    conn.revfs_correlations
+                        .cancel_pull(correlation_scope, request_id);
+                }
+                InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
+                    cid,
+                    message: err.into_string(),
+                    request_id: Some(request_id),
+                })
+            }
         },
         Err(err) => InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
             cid,

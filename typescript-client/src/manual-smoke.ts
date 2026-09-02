@@ -1,3 +1,19 @@
+/**
+ * Manual smoke script — NOT part of the automated test suite.
+ *
+ * Opens a real WebSocket to a running internal service (WEBSOCKET_URL, default
+ * ws://127.0.0.1:8081), registers, connects and exchanges a message. Run it by
+ * hand against a live service:
+ *
+ *   npm run build && node dist/manual-smoke.js
+ *
+ * Renamed from `test.ts`. Node's built-in runner discovers `**\/test.js` by
+ * default, so under `node --test` this script would have been executed as if it
+ * were a test — hanging or failing on a socket that CI has no reason to be
+ * serving. Nothing imports it, so the rename is safe; the automated tests live
+ * in *.test.ts alongside the code they cover.
+ */
+
 import { CitadelClient } from './CitadelClient.js';
 import { MessageNotification } from './types/index.js';
 

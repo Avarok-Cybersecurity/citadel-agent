@@ -1,3 +1,5 @@
+mod data_format;
+
 use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service::sweep_stale_browser_transfers;
 use citadel_sdk::prelude::{BackendType, NodeBuilder, NodeType, StackedRatchet};
@@ -147,6 +149,11 @@ fn resolve_backend(opts: &Options) -> Result<BackendType, Box<dyn Error>> {
             // state, so make it private (0700) rather than umask-default
             // (typically 0755, world-readable) on multi-user hosts.
             create_private_data_dir(&path)?;
+            // Stamped and checked before the SDK opens it: an SDK serialization
+            // change would otherwise present as an agent that cannot read its
+            // own accounts, with deleting the volume as the only apparent
+            // remedy -- and the keys in it do not come back.
+            data_format::check_data_dir(&path)?;
             Ok(BackendType::Filesystem(path_str))
         }
     }

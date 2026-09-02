@@ -27,18 +27,83 @@ use uuid::Uuid;
 pub fn setup_log() {
     citadel_sdk::logging::setup_log();
     std::panic::set_hook(Box::new(|info| {
-        citadel_sdk::logging::error!(target: "citadel", "Panic: {:?}", info);
+        // The MESSAGE, not just the location.
+        //
+        // `{:?}` on PanicHookInfo renders the payload as `Any { .. }`, so every
+        // failing test in this suite reported a file and a line number and
+        // nothing about what went wrong -- a CI leg could go red for weeks
+        // saying only that it had. The payload is a &str for `panic!("...")`
+        // and a String for a formatted one; neither is reachable through Debug.
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "<non-string panic payload>".to_string());
+
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown location>".to_string());
+
+        citadel_sdk::logging::error!(target: "citadel", "Panic at {location}: {message}");
+        // Also to stderr: the tracing subscriber is filtered by RUST_LOG, and a
+        // panic is not something a log level should be able to hide.
+        eprintln!("Panic at {location}: {message}");
         std::process::exit(1);
     }));
 }
 
+/// Ports below the OS ephemeral range, partitioned so concurrent test processes
+/// cannot be handed the same one.
+///
+/// The obvious implementation — bind `:0`, read the port, drop the listener — is
+/// what this used to be, and it is a race. Between the drop and the caller's real
+/// bind the port is free, so the kernel may hand that exact port to another test
+/// process binding `:0`. That is the `AddrInUse` that took out
+/// `group_chat::test_internal_service_group_create` in CI at 0.012s, before a
+/// single line of group logic ran. nextest gives each test its own process, so no
+/// process-local registry can see the conflict; it has to be avoided by
+/// construction.
+///
+/// Two properties do that:
+///
+/// 1. Ports come from a fixed range *below* Linux's ephemeral range
+///    (`net.ipv4.ip_local_port_range`, 32768-60999 by default). A `bind(:0)`
+///    anywhere on the machine can never be handed one of ours, which removes the
+///    race entirely for the case above.
+/// 2. Concurrent test processes are separated by partitioning that range by pid
+///    into disjoint blocks. nextest spawns processes with near-consecutive pids,
+///    so multiplying by the block size is what keeps neighbours from overlapping:
+///    `pid` and `pid + 1` land [`PORTS_PER_PROCESS`] apart, not one apart.
+///
+/// The bindability probe below is a backstop, not the mechanism — it catches a
+/// port a previous run still holds or one sitting in TIME_WAIT. It still closes
+/// the socket before returning, so it carries the same race it always did; what
+/// makes that harmless now is (1) and (2).
+const PORT_BASE: u16 = 20_000;
+const PORTS_PER_PROCESS: u16 = 16;
+const PORT_SLOTS: u16 = 750; // 750 * 16 = 12_000 ports, ending at 32_000.
+
 /// Helper function to get a free port for testing
 pub fn get_free_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind to random port");
-    listener
-        .local_addr()
-        .expect("Failed to get local address")
-        .port()
+    static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+    const SPAN: u16 = PORT_SLOTS * PORTS_PER_PROCESS;
+
+    let slot = (std::process::id() % PORT_SLOTS as u32) as u16;
+    let block_start = slot.wrapping_mul(PORTS_PER_PROCESS) % SPAN;
+
+    // Walk the whole span rather than just this process's block: a test needing
+    // more than PORTS_PER_PROCESS ports must still get them, it just borrows from
+    // a neighbouring block and relies on the probe to skip anything in use.
+    for _ in 0..SPAN {
+        let step = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let port = PORT_BASE + (block_start.wrapping_add(step) % SPAN);
+        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
+    panic!("no free port in {PORT_BASE}..{}", PORT_BASE + SPAN);
 }
 
 pub struct RegisterAndConnectItems<
@@ -127,7 +192,7 @@ pub async fn register_and_connect_to_server<
         let response_packet = stream.next().await.unwrap();
 
         if let InternalServiceResponse::RegisterSuccess(
-            citadel_internal_service_types::RegisterSuccess { request_id: _, .. },
+            citadel_internal_service_types::RegisterSuccess { .. },
         ) = response_packet
         {
             info!(
@@ -199,6 +264,26 @@ pub async fn register_and_connect_to_server_then_peers<R: Ratchet>(
     int_svc_addrs: Vec<SocketAddr>,
     server_session_password: Option<PreSharedKey>,
     peer_session_password: Option<PreSharedKey>,
+) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
+    register_and_connect_to_server_then_peers_with_udp::<R>(
+        int_svc_addrs,
+        server_session_password,
+        peer_session_password,
+        Default::default(),
+    )
+    .await
+}
+
+/// `register_and_connect_to_server_then_peers`, with the peer connection's
+/// `UdpMode` stated explicitly.
+///
+/// The default is `Disabled`, so without this no Rust test can reach the media
+/// path at all — see `connect_p2p_with_udp`.
+pub async fn register_and_connect_to_server_then_peers_with_udp<R: Ratchet>(
+    int_svc_addrs: Vec<SocketAddr>,
+    server_session_password: Option<PreSharedKey>,
+    peer_session_password: Option<PreSharedKey>,
+    udp_mode: citadel_sdk::prelude::UdpMode,
 ) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
     // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
     let (server, server_bind_address) = if server_session_password.is_some() {
@@ -281,7 +366,7 @@ pub async fn register_and_connect_to_server_then_peers<R: Ratchet>(
             )
             .await?;
 
-            connect_p2p(
+            connect_p2p_with_udp(
                 to_service_a,
                 from_service_a,
                 *cid_a,
@@ -290,6 +375,7 @@ pub async fn register_and_connect_to_server_then_peers<R: Ratchet>(
                 *cid_b,
                 session_security_settings,
                 peer_session_password.clone(),
+                udp_mode,
             )
             .await?;
         }
@@ -384,13 +470,46 @@ pub async fn connect_p2p(
     session_security_settings: SessionSecuritySettings,
     session_password: Option<PreSharedKey>,
 ) -> Result<(), Box<dyn Error>> {
+    connect_p2p_with_udp(
+        to_service_a,
+        from_service_a,
+        cid_a,
+        to_service_b,
+        from_service_b,
+        cid_b,
+        session_security_settings,
+        session_password,
+        Default::default(),
+    )
+    .await
+}
+
+/// `connect_p2p`, with the peer connection's `UdpMode` stated explicitly.
+///
+/// Every path in this harness passed `udp_mode: Default::default()`, and that
+/// default is `Disabled` — so no Rust test had ever brought a peer connection up
+/// with UDP, and the whole media path was exercised only by the browser suite.
+/// That is why a bug as blunt as `UdpState::Pending` holding one receiver and
+/// dropping the other (fixed in dfb50a2) could only be caught in CI.
+#[allow(clippy::too_many_arguments)]
+pub async fn connect_p2p_with_udp(
+    to_service_a: &mut UnboundedSender<InternalServiceRequest>,
+    from_service_a: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid_a: u64,
+    to_service_b: &mut UnboundedSender<InternalServiceRequest>,
+    from_service_b: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid_b: u64,
+    session_security_settings: SessionSecuritySettings,
+    session_password: Option<PreSharedKey>,
+    udp_mode: citadel_sdk::prelude::UdpMode,
+) -> Result<(), Box<dyn Error>> {
     // Service A Requests To Connect
     to_service_a
         .send(InternalServiceRequest::PeerConnect {
             request_id: Uuid::new_v4(),
             cid: cid_a,
             peer_cid: cid_b,
-            udp_mode: Default::default(),
+            udp_mode,
             session_security_settings,
             peer_session_password: session_password.clone(),
         })
@@ -420,7 +539,7 @@ pub async fn connect_p2p(
             request_id: Uuid::new_v4(),
             cid: cid_b,
             peer_cid: cid_a,
-            udp_mode: Default::default(),
+            udp_mode,
             session_security_settings,
             peer_session_password: session_password,
         })
@@ -623,6 +742,22 @@ pub async fn exhaust_stream_to_file_completion(
     cmp_path: PathBuf,
     svc: &mut UnboundedReceiver<InternalServiceResponse>,
 ) {
+    exhaust_stream_to_file_completion_from(cmp_path, svc, None).await
+}
+
+/// As above, for a caller that has ALREADY taken the first tick off the stream.
+///
+/// A REVFS push is auto-accepted, so the receiver's first notification is
+/// `ReceptionBeginning` rather than an offer — and a test that wants to assert
+/// that has to consume the tick to look at it. `UnboundedReceiver` has no peek,
+/// so the tick is handed back in rather than lost: without it the loop below
+/// never sees the beginning, and its `expect("Never received the
+/// ReceptionBeginning tick!")` fires on a transfer that began perfectly well.
+pub async fn exhaust_stream_to_file_completion_from(
+    cmp_path: PathBuf,
+    svc: &mut UnboundedReceiver<InternalServiceResponse>,
+    already_taken: Option<InternalServiceResponse>,
+) {
     // Exhaust the stream for the receiver
     let mut path = None;
     let mut is_revfs = false;
@@ -632,8 +767,12 @@ pub async fn exhaust_stream_to_file_completion(
         .to_os_string()
         .into_string()
         .unwrap();
+    let mut already_taken = already_taken;
     loop {
-        let tick_response = svc.recv().await.unwrap();
+        let tick_response = match already_taken.take() {
+            Some(first) => first,
+            None => svc.recv().await.unwrap(),
+        };
         match tick_response {
             InternalServiceResponse::FileTransferTickNotification(
                 FileTransferTickNotification {
@@ -798,4 +937,163 @@ pub async fn test_kv_for_service(
     }
 
     Ok(())
+}
+
+/// What `register_and_connect_to_server` hands back per session.
+pub type PeerHandle = (
+    UnboundedSender<InternalServiceRequest>,
+    UnboundedReceiver<InternalServiceResponse>,
+    u64,
+);
+
+/// Opens a media session and reports how long the UDP channel took.
+///
+/// Shared, so the three tests differ only in how the peer connection was
+/// established -- the variable under study.
+pub async fn open_media_and_measure(
+    tx: &UnboundedSender<InternalServiceRequest>,
+    rx: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid: u64,
+    peer_cid: u64,
+    label: &str,
+) {
+    let started = std::time::Instant::now();
+    tx.send(InternalServiceRequest::MediaOpen {
+        request_id: Uuid::new_v4(),
+        cid,
+        peer_cid,
+    })
+    .unwrap();
+
+    // Bounded: this failure presents as silence, and an unbounded recv
+    // would hang the suite instead of failing it.
+    let response = tokio::time::timeout(Duration::from_secs(30), rx.recv())
+        .await
+        .unwrap_or_else(|_| panic!("{label}: no answer to MediaOpen within 30s"))
+        .expect("channel open");
+
+    match response {
+        InternalServiceResponse::MediaSessionOpened(opened) => {
+            assert_eq!(
+                opened.peer_cid, peer_cid,
+                "{label}: opened against the wrong peer"
+            );
+            println!(
+                "MEASURED {label}: {:?} (unreliable={})",
+                started.elapsed(),
+                opened.unreliable
+            );
+        }
+        // The message names WHICH failure: no channel within the budget,
+        // or a connection brought up with UDP disabled.
+        InternalServiceResponse::MediaSessionFailed(failed) => panic!(
+            "{label}: media open failed after {:?}: {}",
+            started.elapsed(),
+            failed.message
+        ),
+        other => panic!("{label}: expected a media session result, got {other:?}"),
+    }
+}
+
+/// One internal service hosting two registered, server-connected sessions.
+///
+/// This is the browser's shape: one browser is one WebSocket is one service.
+pub async fn two_sessions_on_one_service(
+    tag: &str,
+) -> Result<(PeerHandle, PeerHandle), Box<dyn Error>> {
+    let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
+    tokio::task::spawn(server);
+
+    let service_addr: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+    let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
+    let internal_service = NodeBuilder::default()
+        .with_backend(BackendType::InMemory)
+        .with_node_type(NodeType::Peer)
+        .with_insecure_skip_cert_verification()
+        .build(service)?;
+    tokio::task::spawn(internal_service);
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    let to_spawn = (0..2)
+        .map(|i| RegisterAndConnectItems {
+            internal_service_addr: service_addr,
+            server_addr: server_bind_address,
+            full_name: format!("{tag} {i}"),
+            username: format!("{tag}.{i}"),
+            password: format!("secret_{i}").into_bytes(),
+            pre_shared_key: None::<PreSharedKey>,
+        })
+        .collect();
+
+    let mut info = register_and_connect_to_server(to_spawn).await.unwrap();
+    let second = info.remove(1);
+    let first = info.remove(0);
+    Ok((first, second))
+}
+
+#[cfg(test)]
+mod port_allocation_tests {
+    use super::*;
+
+    /// The property the CI failure was about: a port we hand out must be one the
+    /// kernel will never hand to somebody else's `bind(:0)`.
+    ///
+    /// Linux's default ephemeral range starts at 32768; macOS's at 49152. Staying
+    /// strictly below both is what makes the unavoidable close-then-bind window in
+    /// `get_free_port` harmless.
+    #[test]
+    fn a_handed_out_port_is_never_one_the_os_can_auto_assign() {
+        const LOWEST_EPHEMERAL_ANY_PLATFORM: u16 = 32_768;
+        for _ in 0..32 {
+            let port = get_free_port();
+            assert!(
+                (PORT_BASE..LOWEST_EPHEMERAL_ANY_PLATFORM).contains(&port),
+                "port {port} is inside the OS ephemeral range, so a concurrent \
+                 bind(:0) in another test process can be handed it too"
+            );
+        }
+    }
+
+    /// nextest spawns test processes with near-consecutive pids. Blocks are indexed
+    /// by pid *multiplied* by the block size for exactly that reason: without the
+    /// multiply, pid and pid+1 would start one port apart and overlap on their very
+    /// first two allocations.
+    #[test]
+    fn neighbouring_pids_do_not_share_a_block() {
+        let block = |pid: u32| (pid % PORT_SLOTS as u32) as u16 * PORTS_PER_PROCESS;
+        for pid in 1000..1064u32 {
+            let (mine, next) = (block(pid), block(pid + 1));
+            assert!(
+                mine.abs_diff(next) >= PORTS_PER_PROCESS,
+                "pids {pid} and {} start {} ports apart; a test taking two ports \
+                 would collide with its neighbour",
+                pid + 1,
+                mine.abs_diff(next)
+            );
+        }
+    }
+
+    /// A port is only returned if it actually binds, so the same port is never
+    /// returned twice within a process while the caller still holds it.
+    #[test]
+    fn successive_calls_do_not_repeat_a_port() {
+        let held: Vec<_> = (0..8)
+            .map(|_| {
+                let port = get_free_port();
+                (
+                    port,
+                    TcpListener::bind(("127.0.0.1", port)).expect("probe said free"),
+                )
+            })
+            .collect();
+        let mut ports: Vec<u16> = held.iter().map(|(p, _)| *p).collect();
+        let before = ports.len();
+        ports.sort_unstable();
+        ports.dedup();
+        assert_eq!(
+            before,
+            ports.len(),
+            "get_free_port handed out a duplicate: {ports:?}"
+        );
+    }
 }

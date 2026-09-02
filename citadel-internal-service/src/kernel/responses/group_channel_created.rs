@@ -1,3 +1,4 @@
+use crate::kernel::session_route::SessionRoute;
 use crate::kernel::{
     requests, send_response_to_tcp_client, CitadelWorkspaceService, GroupConnection,
 };
@@ -19,16 +20,12 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     if let Some(connection) = server_connection_map.get_mut(&cid) {
         connection.add_group_channel(key, GroupConnection { key, tx, cid });
 
-        let uuid = connection
-            .associated_localhost_connection
-            .load(Ordering::Relaxed);
-        requests::spawn_group_channel_receiver(
-            key,
-            cid,
-            uuid,
-            rx,
+        let route = SessionRoute::new(
+            connection.associated_localhost_connection.clone(),
             this.tx_to_localhost_clients.clone(),
         );
+        let departed = connection.groups.departure_flag(&key);
+        requests::spawn_group_channel_receiver(key, cid, route, departed, rx);
 
         let associated_tcp_connection = connection
             .associated_localhost_connection

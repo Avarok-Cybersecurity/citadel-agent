@@ -199,6 +199,93 @@ pub struct MessageNotification {
     pub request_id: Option<Uuid>,
 }
 
+/// A media session is live and frames may now be sent.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct MediaSessionOpened {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub peer_cid: u64,
+    /// True when frames travel over UDP. False means the peer connected without
+    /// UdpMode Enabled and there is no datagram path — the caller should tell
+    /// the user the call cannot start rather than silently sending nothing.
+    pub unreliable: bool,
+    /// Largest frame the transport will accept, so the encoder can be capped to
+    /// something that will actually fit rather than failing per frame.
+    pub max_frame_bytes: u32,
+    pub request_id: Option<Uuid>,
+}
+
+/// A media session could not be opened. Carries why, because "call failed" with
+/// no reason is the least actionable thing a user can be told.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct MediaSessionFailed {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub peer_cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct MediaSessionClosed {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub peer_cid: u64,
+    pub request_id: Option<Uuid>,
+}
+
+/// One decoded-ready media frame, reassembled and released in order.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct MediaFrameNotification {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub peer_cid: u64,
+    pub track: u8,
+    pub kind: u8,
+    pub sequence: u32,
+    pub timestamp: u32,
+    pub flags: u8,
+    #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[debug(with = bytes_debug_fmt)]
+    pub payload: Vec<u8>,
+    /// Always None: frames are unsolicited, and like MessageNotification they are
+    /// routed to the right tab by `cid`, never by the request that started the
+    /// call. The field exists because every response variant carries one.
+    pub request_id: Option<Uuid>,
+}
+
+/// Frames were lost and the buffer has moved past them.
+///
+/// Reported rather than hidden: a video decoder that has missed frames produces
+/// garbage until the next keyframe, so the receiver needs this to know it should
+/// ask for one instead of rendering corruption.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct MediaGapNotification {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub peer_cid: u64,
+    pub track: u8,
+    pub missing_from: u32,
+    pub missing_to: u32,
+    /// Always None; routed by `cid`, as above.
+    pub request_id: Option<Uuid>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
@@ -414,6 +501,18 @@ pub struct PeerConnectAcceptSuccess {
     pub cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub peer_cid: u64,
+    /// Which answer was delivered: `true` accepted the connection, `false`
+    /// refused it.
+    ///
+    /// Without this the name is the whole message, and it says "success" for
+    /// both — accurate about delivery, silent about the outcome. A receiver
+    /// could not tell "they accepted" from "your refusal was sent".
+    ///
+    /// `PeerRegisterRespond` had exactly that shape and it was a live defect:
+    /// declining a registration ran the frontend's acceptance path, marked the
+    /// declined peer registered, and had auto-connect open a connection to the
+    /// person just refused.
+    pub accept: bool,
     pub request_id: Option<Uuid>,
 }
 
@@ -1121,6 +1220,11 @@ pub enum InternalServiceResponse {
     MessageSendSuccess(MessageSendSuccess),
     MessageSendFailure(MessageSendFailure),
     MessageNotification(MessageNotification),
+    MediaSessionOpened(MediaSessionOpened),
+    MediaSessionFailed(MediaSessionFailed),
+    MediaSessionClosed(MediaSessionClosed),
+    MediaFrameNotification(MediaFrameNotification),
+    MediaGapNotification(MediaGapNotification),
     DisconnectNotification(DisconnectNotification),
     DisconnectFailure(DisconnectFailure),
     DeregisterSuccess(DeregisterSuccess),
@@ -1255,6 +1359,57 @@ pub enum InternalServiceRequest {
         request_id: Uuid,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
+    },
+
+    /// Open a media (audio/video) session with an already-connected peer.
+    ///
+    /// Media rides the session's UDP channel, NOT the reliable peer channel the
+    /// messages above use. Two reasons: a call must not queue behind chat, and
+    /// on a reliable ordered channel congestion turns into unbounded latency
+    /// rather than loss, which is far worse for a call than a dropped frame.
+    ///
+    /// Requires the peer connection to have been established with UdpMode
+    /// Enabled; the response reports failure if no UDP channel arrives.
+    MediaOpen {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+    },
+
+    /// Send one encoded media frame to a peer.
+    ///
+    /// The payload is opaque: encoding and decoding happen in the browser via
+    /// WebCodecs, because that is the only path to hardware acceleration and
+    /// this crate's WASM build has neither threads nor SIMD. The service only
+    /// fragments, orders and transports.
+    MediaSend {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        /// Which stream within the call: audio, main video, or thumbnail video.
+        track: u8,
+        /// 0 = audio, 1 = video. Mirrors citadel_media's TrackKind.
+        kind: u8,
+        /// Capture time in the track's clock rate, used for A/V sync.
+        timestamp: u32,
+        /// Bit 0 = keyframe, bit 1 = discardable under congestion.
+        flags: u8,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[debug(with = bytes_debug_fmt)]
+        payload: Vec<u8>,
+    },
+
+    /// Tear down a media session, releasing the UDP channel and its pump task.
+    MediaClose {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
     },
     /// Deregister from the server - permanently removes the account
     Deregister {
@@ -1656,6 +1811,79 @@ impl From<InternalServiceResponse> for InternalServicePayload {
 impl From<InternalServiceRequest> for InternalServicePayload {
     fn from(request: InternalServiceRequest) -> Self {
         InternalServicePayload::Request(request)
+    }
+}
+
+impl InternalServiceRequest {
+    /// The session this request acts on, when it names one.
+    ///
+    /// Used to check that the caller owns the session before the request is
+    /// dispatched. Every handler previously took `cid` straight off the wire and
+    /// acted on it, while the connection's own identity sat unused in scope — so
+    /// a request could name any session it liked. WebSocket is exempt from CORS,
+    /// which made that reachable from any page a user happened to visit.
+    ///
+    /// `None` for the six variants that legitimately precede or span a session:
+    /// Connect, Register, GetSessions, GetAccountInformation,
+    /// ConnectionManagement (which is how a session is claimed in the first
+    /// place) and Batched (whose inner commands are each checked on dispatch).
+    pub fn session_cid(&self) -> Option<u64> {
+        match self {
+            Self::Message { cid, .. } => Some(*cid),
+            Self::Disconnect { cid, .. } => Some(*cid),
+            Self::MediaOpen { cid, .. } => Some(*cid),
+            Self::MediaSend { cid, .. } => Some(*cid),
+            Self::MediaClose { cid, .. } => Some(*cid),
+            Self::Deregister { cid, .. } => Some(*cid),
+            Self::SendFile { cid, .. } => Some(*cid),
+            Self::RespondFileTransfer { cid, .. } => Some(*cid),
+            Self::DownloadFile { cid, .. } => Some(*cid),
+            Self::DeleteVirtualFile { cid, .. } => Some(*cid),
+            Self::PickFile { cid, .. } => Some(*cid),
+            Self::ListAllPeers { cid, .. } => Some(*cid),
+            Self::ListRegisteredPeers { cid, .. } => Some(*cid),
+            Self::PeerConnect { cid, .. } => Some(*cid),
+            Self::PeerDisconnect { cid, .. } => Some(*cid),
+            Self::PeerConnectAccept { cid, .. } => Some(*cid),
+            Self::PeerRegister { cid, .. } => Some(*cid),
+            Self::PeerRegisterRespond { cid, .. } => Some(*cid),
+            Self::LocalDBGetKV { cid, .. } => Some(*cid),
+            Self::LocalDBSetKV { cid, .. } => Some(*cid),
+            Self::LocalDBDeleteKV { cid, .. } => Some(*cid),
+            Self::LocalDBGetAllKV { cid, .. } => Some(*cid),
+            Self::LocalDBClearAllKV { cid, .. } => Some(*cid),
+            Self::GroupCreate { cid, .. } => Some(*cid),
+            Self::GroupLeave { cid, .. } => Some(*cid),
+            Self::GroupEnd { cid, .. } => Some(*cid),
+            Self::GroupMessage { cid, .. } => Some(*cid),
+            Self::GroupInvite { cid, .. } => Some(*cid),
+            Self::GroupRespondRequest { cid, .. } => Some(*cid),
+            Self::GroupKick { cid, .. } => Some(*cid),
+            Self::GroupListGroupsFor { cid, .. } => Some(*cid),
+            Self::GroupRequestJoin { cid, .. } => Some(*cid),
+            // Exhaustive on purpose: no `_` arm.
+            //
+            // The catch-all made this gate fail OPEN by omission — a variant
+            // added later would silently be exempt from the ownership check in
+            // requests/mod.rs, with nothing to notice. Naming the six turns
+            // that into a compile error for the next variant, which is the only
+            // reliable place to catch it.
+            //
+            // These six legitimately precede or span a session:
+            //   Connect / Register     — there is no session yet.
+            //   Batched                — the inner requests are gated one by one.
+            //   ConnectionManagement   — carries its target inside
+            //                            `management_command`; gated in
+            //                            requests/connection_management_auth.rs.
+            //   GetSessions /
+            //   GetAccountInformation  — enumerate what this agent holds.
+            Self::Connect { .. }
+            | Self::Register { .. }
+            | Self::Batched { .. }
+            | Self::ConnectionManagement { .. }
+            | Self::GetSessions { .. }
+            | Self::GetAccountInformation { .. } => None,
+        }
     }
 }
 

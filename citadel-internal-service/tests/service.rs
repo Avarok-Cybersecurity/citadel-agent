@@ -13,7 +13,7 @@ mod tests {
     use citadel_internal_service_types::{
         InternalServiceRequest, InternalServiceResponse, MessageNotification, MessageSendSuccess,
     };
-    use citadel_sdk::logging::info;
+    use citadel_sdk::logging::{error, info};
     use citadel_sdk::prelude::*;
     use core::panic;
     use futures::{SinkExt, StreamExt};
@@ -192,7 +192,7 @@ mod tests {
         sink.send(register_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::RegisterSuccess(
-            citadel_internal_service_types::RegisterSuccess { request_id: _, .. },
+            citadel_internal_service_types::RegisterSuccess { .. },
         ) = response_packet
         {
             panic!("Received Unexpected RegisterSuccess");
@@ -213,7 +213,7 @@ mod tests {
         sink.send(register_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::RegisterSuccess(
-            citadel_internal_service_types::RegisterSuccess { request_id: _, .. },
+            citadel_internal_service_types::RegisterSuccess { .. },
         ) = response_packet
         {
             panic!("Received Unexpected RegisterSuccess");
@@ -234,7 +234,7 @@ mod tests {
         sink.send(register_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::RegisterSuccess(
-            citadel_internal_service_types::RegisterSuccess { request_id: _, .. },
+            citadel_internal_service_types::RegisterSuccess { .. },
         ) = response_packet
         {
             info!(target: "citadel", "Successfully Registered to Server using Pre-Shared Key");
@@ -570,6 +570,39 @@ mod tests {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Receive one response, or fail the test with a message naming what was
+    /// being waited for.
+    ///
+    /// Every `recv().await` in the PSK negative test was unbounded, so any step
+    /// the protocol does not answer hung the test — and the whole file with it —
+    /// rather than failing. That is what "hangs indefinitely" in this test's
+    /// ignore attribute meant. A test that cannot fail cannot tell you anything,
+    /// and one that hangs takes CI down with it.
+    async fn recv_or_fail(
+        stream: &mut UnboundedReceiver<InternalServiceResponse>,
+        waiting_for: &str,
+    ) -> InternalServiceResponse {
+        match tokio::time::timeout(Duration::from_secs(30), stream.recv()).await {
+            Ok(Some(response)) => response,
+            Ok(None) => {
+                // Logged as well as panicked: the harness's panic hook in
+                // tests/common formats the payload as `Any { .. }`, so a bare
+                // panic message tells you the line but not which wait it was.
+                error!(target: "citadel", "Stream closed while waiting for {waiting_for}");
+                panic!("Stream closed while waiting for {waiting_for}")
+            }
+            Err(_) => {
+                error!(target: "citadel", "Timed out after 30s waiting for {waiting_for}");
+                panic!("Timed out after 30s waiting for {waiting_for}")
+            }
+        }
+    }
+
+    // Nine parameters because this drives BOTH sides of a peer handshake in one
+    // call — each side needs its own sink, stream and cid — plus the pre-shared
+    // key. Splitting the sides into a struct would only move the same nine
+    // values behind a name that exists for the lint's benefit.
+    #[allow(clippy::too_many_arguments)]
     async fn peer_connect_psk_attempt(
         peer_a_sink: &mut UnboundedSender<InternalServiceRequest>,
         peer_a_stream: &mut UnboundedReceiver<InternalServiceResponse>,
@@ -594,7 +627,8 @@ mod tests {
         peer_b_sink.send(peer_connect).unwrap();
 
         info!(target: "citadel", "Peer A Waiting to Receive Connect Notification");
-        let _register_connect_notification = peer_a_stream.recv().await.unwrap();
+        let _register_connect_notification =
+            recv_or_fail(peer_a_stream, "Peer A's connect notification").await;
 
         // Peer Responds with Connect Request with given PSK - may succeed or fail
         info!(target: "citadel", "Peer A Sending Connect Request with Given PSK");
@@ -608,7 +642,7 @@ mod tests {
         };
         peer_a_sink.send(peer_connect).unwrap();
         info!(target: "citadel", "Peer A Waiting for Connect Response");
-        let inbound_response = peer_a_stream.recv().await.unwrap();
+        let inbound_response = recv_or_fail(peer_a_stream, "Peer A's connect response").await;
         if expects_success {
             if let InternalServiceResponse::PeerConnectSuccess(..) = inbound_response {
                 info!(target: "citadel", "Peer A Successfully Connected as Expected");
@@ -617,7 +651,8 @@ mod tests {
                     "Peer Connection Unexpectedly Failed when using the correct Peer Session Password"
                 );
             }
-            let register_request_response = peer_b_stream.recv().await.unwrap();
+            let register_request_response =
+                recv_or_fail(peer_b_stream, "Peer B's PeerConnectSuccess").await;
             if let InternalServiceResponse::PeerConnectSuccess(..) = register_request_response {
                 info!(target: "citadel", "Peer B Received Expected PeerConnectSuccess Response");
             } else {
@@ -631,7 +666,8 @@ mod tests {
                     "Peer Connection Unexpectedly Succeeded with incorrect Peer Session Password"
                 );
             }
-            let register_request_response = peer_b_stream.recv().await.unwrap();
+            let register_request_response =
+                recv_or_fail(peer_b_stream, "Peer B's PeerConnectFailure").await;
             if let InternalServiceResponse::PeerConnectFailure(..) = register_request_response {
                 info!(target: "citadel", "Peer B Received Expected PeerConnectFailure Response");
             } else {
@@ -642,7 +678,29 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Test hangs indefinitely on PSK mismatch - needs investigation"]
+    // Was: "Test hangs indefinitely on PSK mismatch - needs investigation". It no
+    // longer hangs — every recv is bounded — and the failure is now located
+    // exactly: "Timed out after 30s waiting for Peer A's connect notification".
+    //
+    // The note that used to sit here asked whether the responding peer is meant
+    // to be notified of a connect whose PSK will not verify. Running the test
+    // answers that: it IS. The FIRST attempt notifies Peer A and both sides get
+    // their expected PeerConnectFailure. It is the SECOND attempt that dies,
+    // and it dies on the initiator's own side before A is involved:
+    // connect_to_peer_custom fails with "Rekey update error: Encryption
+    // failure", so no notification is ever generated.
+    //
+    // The defect is therefore not about notifications at all: a failed PSK
+    // connect leaves state that every later connect between the same two peers
+    // fails from, including one carrying the CORRECT password. That is
+    // reproduced minimally, with what has been ruled out and where the residue
+    // is, in tests/psk_retry_after_failure.rs.
+    //
+    // This test stays ignored because its later rounds all sit downstream of
+    // that defect; the focused reproduction is the one to work from.
+    #[ignore = "blocked on the peer-connect state residue proven in \
+                tests/psk_retry_after_failure.rs - every round after the first \
+                fails from the first one's leftovers"]
     async fn test_internal_service_peer_with_psk_negative_case() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
 
@@ -718,7 +776,8 @@ mod tests {
         peer_b_sink.send(peer_register).unwrap();
 
         info!(target: "citadel", "Peer A Waiting to Receive Register Notification");
-        let _register_request_notification = peer_a_stream.recv().await.unwrap();
+        let _register_request_notification =
+            recv_or_fail(peer_a_stream, "Peer A's register notification").await;
 
         // Peer Register with Correct PSK when it is expected
         info!(target: "citadel", "Peer A Sending Register Request with Correct PSK");
@@ -732,14 +791,15 @@ mod tests {
         };
         peer_a_sink.send(peer_register).unwrap();
         info!(target: "citadel", "Peer A Waiting for Register Response");
-        let inbound_response = peer_a_stream.recv().await.unwrap();
+        let inbound_response = recv_or_fail(peer_a_stream, "Peer A's register response").await;
         if let InternalServiceResponse::PeerRegisterSuccess(..) = inbound_response {
             info!(target: "citadel", "Peer A Received Register Response");
         } else {
             panic!("Peer Registration Unexpectedly Failed with correct Peer Register");
         }
 
-        let _register_request_response = peer_b_stream.recv().await.unwrap();
+        let _register_request_response =
+            recv_or_fail(peer_b_stream, "Peer B's register response").await;
 
         // Peer Register with Incorrect PSK when it is expected
         peer_connect_psk_attempt(

@@ -111,6 +111,12 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 Ok(connect_result) => match connect_result {
                     Ok(peer_connect_success) => {
                         info!(target: "citadel", "[PeerConnect] connect_to_peer_custom succeeded!");
+                        let mut peer_connect_success = peer_connect_success;
+                        // Taken before the channel is split and the struct is
+                        // consumed. This is the only moment the UDP channel is
+                        // offered; dropping it here would mean no call with this
+                        // peer could ever use a datagram path.
+                        let udp_rx = peer_connect_success.udp_channel_rx.take();
                         let (sink, mut stream) = peer_connect_success.channel.split();
                         {
                             let mut map = this.server_connection_map.write();
@@ -119,6 +125,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                                     peer_cid,
                                     sink,
                                     peer_connect_success.remote,
+                                    udp_rx,
                                 );
                                 info!(target: "citadel", "[PeerConnect] Added peer {} to cid {}'s peers. Total peers: {}", peer_cid, cid, conn.peers.len());
                             } else {
@@ -156,42 +163,40 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
                                 info!(target:"citadel","[P2P-RECV] Forwarding to TCP uuid: {current_tcp_uuid}");
 
-                                // First try the target connection directly
+                                // Send only to that one client. This used to
+                                // fall back to broadcasting the notification to
+                                // EVERY live TCP entry when the target uuid was
+                                // stale — which handed the decrypted body of a
+                                // P2P message to every other session
+                                // multiplexed through this agent, including
+                                // other users' sessions and any other origin
+                                // holding a socket.
+                                //
+                                // The acceptor side (responses/peer_channel_created.rs)
+                                // already removed exactly this broadcast, for
+                                // exactly this reason, and the comment there
+                                // spells it out. The fix was applied to one of
+                                // the two paths.
+                                //
+                                // The stale-uuid case the broadcast was working
+                                // around is real, and the answer is the one that
+                                // side settled on: the session's current
+                                // `associated_localhost_connection` — re-read
+                                // above, after any ClaimSession — is the sole
+                                // authoritative destination, and if it is not in
+                                // the live map then ILM is the layer that
+                                // retries. Delivering to the wrong client is not
+                                // a recovery.
                                 let tcp_map = hm_for_conn.read();
-                                let mut sent_via_target = false;
 
                                 if let Some(sender) = tcp_map.get(&current_tcp_uuid) {
-                                    info!(target:"citadel","[P2P-RECV] Found TCP entry, sending MessageNotification");
-                                    if sender.send(message.clone()).is_ok() {
-                                        info!(target:"citadel","[P2P-RECV] Successfully sent MessageNotification to target client");
-                                        sent_via_target = true;
+                                    if sender.send(message).is_ok() {
+                                        info!(target:"citadel","[P2P-RECV] Delivered MessageNotification to {current_tcp_uuid}");
                                     } else {
-                                        error!(target:"citadel","[P2P-RECV] Error sending message to target client, will try fallback");
+                                        warn!(target:"citadel","[P2P-RECV] TCP {current_tcp_uuid} is closed; ILM will retry");
                                     }
-                                }
-
-                                // FALLBACK: If target not found or send failed, broadcast to all active connections
-                                // This handles: TCP drop during send, race with ClaimSession, stale UUID
-                                if !sent_via_target {
-                                    warn!(target:"citadel","[P2P-RECV] Target TCP {} not found or send failed, broadcasting MessageNotification to all {} connections", current_tcp_uuid, tcp_map.len());
-
-                                    let mut sent_count = 0;
-                                    for (uuid, sender) in tcp_map.iter() {
-                                        // Skip the connection we already tried (if any)
-                                        if *uuid == current_tcp_uuid {
-                                            continue;
-                                        }
-                                        if sender.send(message.clone()).is_ok() {
-                                            sent_count += 1;
-                                            info!(target:"citadel","[P2P-RECV] Broadcast sent to {}", uuid);
-                                        }
-                                    }
-
-                                    if sent_count == 0 {
-                                        warn!(target:"citadel","[P2P-RECV] No active connections for MessageNotification - message may be queued in ILM");
-                                    } else {
-                                        info!(target:"citadel","[P2P-RECV] Successfully broadcast MessageNotification to {} connections", sent_count);
-                                    }
+                                } else {
+                                    warn!(target:"citadel","[P2P-RECV] No live TCP for {current_tcp_uuid}; ILM will retry");
                                 }
 
                                 drop(tcp_map);

@@ -6,7 +6,9 @@ use citadel_internal_service_types::{
     SendFileRequestSuccess,
 };
 use citadel_sdk::logging::{error, info, warn};
-use citadel_sdk::prelude::{NetworkError, NodeRequest, Ratchet, SendObject, VirtualTargetType};
+use citadel_sdk::prelude::{
+    NetworkError, NodeRequest, Ratchet, SendObject, TransferType, VirtualTargetType,
+};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -686,18 +688,39 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         } => {
             let lock = this.server_connection_map.read();
             match lock.get(&cid) {
-                Some(conn) => match conn.picked_files.get(&pick_file_request_id) {
-                    Some(picked_info) => {
-                        info!(target: "citadel", "Resolved PickFileRef {:?} to path {:?}",
-                            pick_file_request_id, picked_info.file_path);
-                        Ok(picked_info.file_path.clone())
+                Some(conn) => {
+                    // The two failures are different problems with different
+                    // fixes. This reported both as "may have expired" -- and
+                    // nothing expired anything, so the only diagnosis the user
+                    // ever got named a cause that could not occur, and sent
+                    // them to re-open a picker that would fail the same way.
+                    match crate::kernel::picked_files::lookup(
+                        &conn.picked_files,
+                        &pick_file_request_id,
+                        std::time::Instant::now(),
+                    ) {
+                        Ok(picked_info) => {
+                            info!(target: "citadel", "Resolved PickFileRef {:?} to path {:?}",
+                                pick_file_request_id, picked_info.file_path);
+                            Ok(picked_info.file_path.clone())
+                        }
+                        Err(crate::kernel::picked_files::PickLookupFailure::Expired) => {
+                            Err(NetworkError::msg(format!(
+                                "The file picked for {:?} has expired; pick it again.",
+                                pick_file_request_id
+                            )))
+                        }
+                        Err(crate::kernel::picked_files::PickLookupFailure::Unknown) => {
+                            Err(NetworkError::msg(format!(
+                                "No file picker result for {:?} on this session.                                  It belongs to a different session, or the agent restarted.",
+                                pick_file_request_id
+                            )))
+                        }
                     }
-                    None => Err(NetworkError::msg(format!(
-                        "PickFile reference not found: {:?}. The file picker result may have expired.",
-                        pick_file_request_id
-                    ))),
-                },
-                None => Err(NetworkError::msg("Connection not found for PickFileRef lookup")),
+                }
+                None => Err(NetworkError::msg(
+                    "Connection not found for PickFileRef lookup",
+                )),
             }
         }
         FileSource::ByteContents { file_name, data } => {
@@ -714,13 +737,28 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         }
     };
 
-    // Build the NodeRequest under a brief read lock, then drop the lock
+    // A REVFS push needs its completion reported back to the requesting
+    // browser: `SendFileRequestSuccess` below only means "queued", so the
+    // browser waits for the Sender-side TransferComplete tick — which must
+    // carry this request_id. `SendObject` has no field to thread it through,
+    // so it is registered here and consumed when the Sender handle arrives
+    // (responses/object_transfer_handle.rs). The Sender-handle scope key is
+    // the peer's cid for P2P, and — because a c2s Sender handle carries
+    // source == receiver == session_cid — the session's own cid for c2s.
+    let is_revfs_push = matches!(
+        transfer_type,
+        TransferType::RemoteEncryptedVirtualFilesystem { .. }
+    );
+    let correlation_scope = peer_cid.unwrap_or(cid);
+
+    // Build the NodeRequest under a brief lock, then drop the lock
     // before any await (the SDK `remote.send` below is async and must not
-    // happen while the RwLock is held).
+    // happen while the RwLock is held). Write lock: REVFS pushes also
+    // register their tick correlation here (see above).
     let send_request: Result<NodeRequest, NetworkError> = match resolved_path {
         Ok(file_path) => {
-            let lock = this.server_connection_map.read();
-            match lock.get(&cid) {
+            let mut lock = this.server_connection_map.write();
+            match lock.get_mut(&cid) {
                 Some(conn) => {
                     if let Some(peer_cid) = peer_cid {
                         if conn.peers.contains_key(&peer_cid) {
@@ -737,6 +775,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                             // direction whenever the sender wasn't also the
                             // P2P initiator. Same shape we already use for
                             // messaging via the sink works for SendObject too.
+                            if is_revfs_push {
+                                conn.revfs_correlations
+                                    .register_push(correlation_scope, request_id);
+                            }
                             Ok(NodeRequest::SendObject(SendObject {
                                 source: Box::new(file_path),
                                 chunk_size,
@@ -751,6 +793,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
+                        if is_revfs_push {
+                            conn.revfs_correlations
+                                .register_push(correlation_scope, request_id);
+                        }
                         Ok(NodeRequest::SendObject(SendObject {
                             source: Box::new(file_path),
                             chunk_size,
@@ -784,6 +830,14 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 }
                 Err(err) => {
                     error!(target: "citadel","InternalServiceRequest Send File Failure");
+                    // The push never went out — its correlation entry must
+                    // not sit in the FIFO and claim the NEXT push's ticks.
+                    if is_revfs_push {
+                        if let Some(conn) = this.server_connection_map.write().get_mut(&cid) {
+                            conn.revfs_correlations
+                                .cancel_push(correlation_scope, request_id);
+                        }
+                    }
                     let response =
                         InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
                             cid,

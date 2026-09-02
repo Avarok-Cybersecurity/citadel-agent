@@ -1,3 +1,4 @@
+use citadel_internal_service_connector::io_interface::origin_policy::OriginPolicy;
 use citadel_internal_service_connector::io_interface::{
     websockets::WebSocketInterface, IOInterface,
 };
@@ -14,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Use 0.0.0.0 to allow connections from Docker containers
     let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8081".to_string());
     let addr: SocketAddr = bind_addr.parse()?;
-    let mut interface = WebSocketInterface::new(addr).await?;
+    let mut interface = WebSocketInterface::new(addr, OriginPolicy::Any).await?;
 
     println!("✅ WebSocket server listening on {}", addr);
     println!("📡 Waiting for client connections...\n");

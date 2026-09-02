@@ -16,7 +16,12 @@ use futures::{Sink, Stream};
 // use send_wrapper::SendWrapper;  // Not needed with channel-based approach
 use ws_stream_wasm::{WsMessage, WsMeta};
 // use futures_util::{SinkExt as FuturesSinkExt, StreamExt as FuturesStreamExt};
-use once_cell::sync::OnceCell;
+use once_cell::sync::{Lazy, OnceCell};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+mod connection_lifecycle;
+use connection_lifecycle::{refuse_init, should_report_death, teardown_before_connect};
+use std::sync::RwLock as StdRwLock;
 use wasm_bindgen::prelude::*;
 
 // WASM exports and logging setup - defined early for use in functions below
@@ -176,11 +181,39 @@ use citadel_internal_service_connector::messenger::backend::CitadelWorkspaceBack
 
 // Global state management
 static WORKSPACE_STATE: OnceCell<Arc<RwLock<Option<WorkspaceState>>>> = OnceCell::new();
-static SINK_CHANNEL: OnceCell<mpsc::UnboundedSender<InternalServicePayload>> = OnceCell::new();
+/// The WebSocket sink, replaced on every (re)connect.
+///
+/// Was a `OnceCell`, which made reconnection impossible AND destructive:
+/// `restart()` calls `close_connection()` first and then re-runs the connect
+/// path, where `OnceCell::set` returns `Err` because the cell was already
+/// populated by the original `init()`. So every restart tore down a working
+/// client and then failed with "Failed to store sink channel", leaving nothing
+/// running — and every subsequent attempt failed the same way. The recovery
+/// path in InternalServiceWasmClient therefore could never succeed; it retried
+/// until it gave up.
+///
+/// A re-settable holder is the whole fix: connect writes, teardown clears.
+/// Which connection is the live one.
+///
+/// Bumped by `close_connection`, so a communication task that ends because we
+/// tore its connection down can tell that it is no longer current and stay
+/// quiet. See `connection_lifecycle::should_report_death`.
+static CONNECTION_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+static SINK_CHANNEL: Lazy<StdRwLock<Option<mpsc::UnboundedSender<InternalServicePayload>>>> =
+    Lazy::new(|| StdRwLock::new(None));
+
+/// The current sink, if a connection is up.
+fn sink_channel() -> Option<mpsc::UnboundedSender<InternalServicePayload>> {
+    SINK_CHANNEL.read().ok().and_then(|guard| guard.clone())
+}
 
 struct WorkspaceState {
     messenger: CitadelWorkspaceMessenger<CitadelWorkspaceBackend>,
     stream: Option<citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>>,
+    // Messages rescued from a stream that was replaced while `next_message` had
+    // it checked out. Without this they were dropped with the receiver.
+    pending: std::collections::VecDeque<InternalServiceResponse>,
     // Wrapped in Arc so we can clone handles and release the RwLock before long async operations
     connections: Arc<DashMap<u64, Arc<MessengerTx<CitadelWorkspaceBackend>>>>,
     // Track CIDs that are currently being opened to prevent duplicate multiplex calls
@@ -244,23 +277,34 @@ pub async fn restart(ws_url: String) -> Result<(), JsValue> {
 }
 
 async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
-    if restart {
-        if !is_initialized() {
-            return Err(JsValue::from_str("Not initialized. Call init() first."));
-        }
+    let initialized = is_initialized();
+
+    if refuse_init(restart, initialized) {
+        return Err(JsValue::from_str(
+            "Already initialized. If required, call restart() instead followed by claiming any orphaned connections.",
+        ));
+    }
+
+    if teardown_before_connect(restart, initialized) {
         console_log!("Restarting WASM client with URL: {}", ws_url);
         close_connection().await?;
+    } else if restart {
+        // A restart with nothing to tear down. This used to be rejected with
+        // "Not initialized. Call init() first." -- and because the teardown
+        // above happens BEFORE the connect, a restart whose connect failed left
+        // exactly this state. The UI's "Retry Now" button calls only restart(),
+        // so one failed retry disabled retrying for the life of the page.
+        console_log!("Restarting WASM client with no live connection to replace");
     } else {
-        if is_initialized() {
-            return Err(JsValue::from_str(
-                "Already initialized. If required, call restart() instead followed by claiming any orphaned connections.",
-            ));
-        }
         // Initialize the Rust log crate to route to browser console
         // This makes log::info!, log::warn!, etc. visible in DevTools
         console_log::init_with_level(log::Level::Info).ok();
         console_log!("Initializing WASM client with URL: {}", ws_url);
     }
+
+    // Captured AFTER any teardown, so this task is stamped with the generation
+    // it actually belongs to.
+    let connection_generation = CONNECTION_GENERATION.load(Ordering::SeqCst);
 
     // Create channels for WebSocket communication
     let (sink_tx, mut sink_rx) = mpsc::unbounded_channel::<InternalServicePayload>();
@@ -269,9 +313,11 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
         mpsc::unbounded_channel::<std::io::Result<InternalServicePayload>>();
 
     // Store the sink channel globally for direct message sending
-    SINK_CHANNEL
-        .set(sink_tx.clone())
-        .map_err(|_| JsValue::from_str("Failed to store sink channel"))?;
+    // Replace, not set-once: a restart must be able to install a new sink.
+    match SINK_CHANNEL.write() {
+        Ok(mut guard) => *guard = Some(sink_tx.clone()),
+        Err(_) => return Err(JsValue::from_str("Sink channel lock poisoned")),
+    }
 
     // Connect to WebSocket and spawn communication task
     let (_ws_meta, ws_stream) = WsMeta::connect(&ws_url, None)
@@ -317,8 +363,18 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
                     match message {
                         WsMessage::Text(text) => {
                             // DEBUG: Log raw JSON for ListRegisteredPeersResponse to trace HashMap data
+                            //
+                            // Sliced by byte, this panicked when byte 500 fell
+                            // mid-codepoint -- a registered peer with an emoji
+                            // or CJK username near that offset was enough. The
+                            // panic lands in the WebSocket read loop, so a debug
+                            // log line killed the user's connection to their own
+                            // agent.
                             if text.contains("ListRegisteredPeersResponse") {
-                                console_log!("[WASM-DEBUG] Raw JSON (ListRegisteredPeersResponse): {}", &text[..text.len().min(500)]);
+                                console_log!(
+                                    "[WASM-DEBUG] Raw JSON (ListRegisteredPeersResponse): {}",
+                                    truncate_on_char_boundary(&text, 500)
+                                );
                             }
 
                             match serde_json::from_str::<InternalServicePayload>(&text) {
@@ -352,9 +408,21 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
 
         console_log!("WebSocket communication task ended");
 
-        // Notify JavaScript that the WebSocket connection has died
-        // This allows the UI to show a retry modal
-        on_websocket_disconnected("WebSocket communication task ended");
+        // Only if this is still the LIVE connection. `close_connection` drops
+        // the state, which ends this task -- so every deliberate teardown used
+        // to look exactly like a failure: the retry modal reappeared during a
+        // restart the user had just asked for, and background services were
+        // stopped on a clean sign-out.
+        if should_report_death(
+            connection_generation,
+            CONNECTION_GENERATION.load(Ordering::SeqCst),
+        ) {
+            // Notify JavaScript that the WebSocket connection has died
+            // This allows the UI to show a retry modal
+            on_websocket_disconnected("WebSocket communication task ended");
+        } else {
+            console_log!("Connection was closed deliberately; not reporting a failure");
+        }
     });
 
     // Create IO implementation with channels
@@ -371,6 +439,7 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
     let state = WorkspaceState {
         messenger,
         stream: Some(stream),
+        pending: std::collections::VecDeque::new(),
         connections,
         pending_opens,
         shutdown_tx,
@@ -643,19 +712,70 @@ pub async fn ensure_messenger_open(cid_str: String) -> Result<bool, JsValue> {
 /// `.expect("Workspace stream corrupted")`-ed on the `None` case, turning an
 /// ordinary connection drop into a Rust panic (`RuntimeError: unreachable`) in
 /// the WASM client.
+/// Move everything still queued in `stream` onto `sink`, returning how many were
+/// moved.
+///
+/// This exists as its own function because the alternative - letting the
+/// receiver fall out of scope - is silent and lossy: a dropped tokio
+/// `UnboundedReceiver` takes every message still queued in it, with no error and
+/// no log. Order is preserved, so rescued messages stay ahead of traffic that
+/// arrives after them.
+fn drain_queued<T>(
+    stream: &mut citadel_io::tokio::sync::mpsc::UnboundedReceiver<T>,
+    sink: &mut std::collections::VecDeque<T>,
+) -> usize {
+    let mut moved = 0usize;
+    while let Ok(msg) = stream.try_recv() {
+        sink.push_back(msg);
+        moved += 1;
+    }
+    moved
+}
+
 async fn restore_message_stream(
-    stream: citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
+    mut stream: citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
 ) {
     let mut guard = get_workspace_state().write().await;
     let Some(state) = guard.as_mut() else {
         // Workspace was torn down (`close_connection`) while we awaited the
-        // message; our stream is obsolete, so drop it instead of panicking.
+        // message; our stream is obsolete. There is nowhere left to put its
+        // contents, but say so rather than letting them vanish silently - these
+        // are messages ILM already reported as delivered.
+        let mut discarded = std::collections::VecDeque::new();
+        let lost = drain_queued(&mut stream, &mut discarded);
+        if lost > 0 {
+            // Tagged ILM, not WASM. These lines describe the fate of messages
+            // ILM has already reported as delivered, and the integration
+            // harness captures console output by keyword — the list is
+            // ['P2P', 'error', 'Error', 'ILM'], so a '[WASM]' prefix was
+            // dropped before it reached any log. The diagnostic existed, ran,
+            // and could never be read, which is why the reconnect loss stayed
+            // unfalsifiable across several CI runs.
+            console_log!(
+                "[ILM-RESCUE] workspace torn down while {} delivered message(s) were still queued",
+                lost
+            );
+        }
         return;
     };
-    // Only restore if no newer stream has replaced ours (e.g. `restart`
-    // installed a fresh state with its own stream while we awaited).
+
     if state.stream.is_none() {
         state.stream.replace(stream);
+        return;
+    }
+
+    // A newer stream replaced ours - `restart` installing a fresh state while we
+    // awaited. Letting our receiver fall out of scope here discarded EVERY
+    // message still queued in it, which is the reconnect message loss: ILM
+    // reports the message delivered (it did send into the channel) and the
+    // client never sees it, with no drop logged anywhere because it never
+    // reached JS. Rescue them instead.
+    let rescued = drain_queued(&mut stream, &mut state.pending);
+    if rescued > 0 {
+        console_log!(
+            "[ILM-RESCUE] rescued {} queued message(s) from a replaced stream",
+            rescued
+        );
     }
 }
 
@@ -667,6 +787,11 @@ pub async fn next_message() -> Result<JsValue, JsValue> {
     // Take the stream so that the open_p2p_connection and send_p2p_connection functions
     // are not blocked while listening
     if let Some(state) = guard.as_mut() {
+        // Rescued messages go out before anything new is awaited, so a reconnect
+        // cannot leave them stranded behind later traffic.
+        if let Some(response) = state.pending.pop_front() {
+            return serialize_response(&response);
+        }
         if let Some(mut stream) = state.stream.take() {
             drop(guard); // drop the guard to unblock
             if let Some(response) = stream.recv().await {
@@ -758,6 +883,54 @@ pub async fn send_p2p_message_reliable(
     }
 }
 
+/// Send one encoded media frame to a peer.
+///
+/// A dedicated binding rather than send_direct_to_internal_service, purely for
+/// the hot path: frames arrive 30-60 times a second per track, and routing each
+/// through a JsValue and serde-wasm-bindgen would deserialize a whole request
+/// object — payload included — per frame. This takes the bytes directly and
+/// builds the request in Rust.
+///
+/// Fire-and-forget by design. There is no ack to wait for; a frame that cannot
+/// be queued is a frame worth dropping, because by the time a retry arrived it
+/// would be too late to play.
+#[wasm_bindgen]
+pub fn send_media_frame(
+    local_cid_str: String,
+    peer_cid_str: String,
+    track: u8,
+    kind: u8,
+    timestamp: u32,
+    flags: u8,
+    payload: Vec<u8>,
+) -> Result<(), JsValue> {
+    let local_cid: u64 = local_cid_str
+        .parse()
+        .map_err(|e| JsValue::from_str(&format!("Invalid local CID format: {}", e)))?;
+    let peer_cid: u64 = peer_cid_str
+        .parse()
+        .map_err(|e| JsValue::from_str(&format!("Invalid peer CID format: {}", e)))?;
+
+    let request = InternalServiceRequest::MediaSend {
+        request_id: uuid::Uuid::new_v4(),
+        cid: local_cid,
+        peer_cid,
+        track,
+        kind,
+        timestamp,
+        flags,
+        payload,
+    };
+
+    let Some(sink_tx) = sink_channel() else {
+        return Err(JsValue::from_str("Client not properly initialized"));
+    };
+
+    sink_tx
+        .send(InternalServicePayload::Request(request))
+        .map_err(|e| JsValue::from_str(&format!("Failed to send media frame: {}", e)))
+}
+
 #[wasm_bindgen]
 pub async fn send_direct_to_internal_service(message: JsValue) -> Result<(), JsValue> {
     // Note: Verbose logging removed to reduce console noise
@@ -767,7 +940,7 @@ pub async fn send_direct_to_internal_service(message: JsValue) -> Result<(), JsV
     // debug_log!("Deserialized request: {:?}", request);
 
     // Use direct WebSocket channel instead of bypasser to avoid workspace lock
-    if let Some(sink_tx) = SINK_CHANNEL.get() {
+    if let Some(sink_tx) = sink_channel() {
         let payload = InternalServicePayload::Request(request);
         match sink_tx.send(payload) {
             Ok(()) => {
@@ -789,16 +962,56 @@ pub async fn send_direct_to_internal_service(message: JsValue) -> Result<(), JsV
 pub async fn close_connection() -> Result<(), JsValue> {
     console_log!("Closing WASM client connection");
 
+    // Before anything is dropped: the communication task ends as a CONSEQUENCE
+    // of this teardown, and it checks this counter to decide whether its ending
+    // is worth reporting. Bumping first means it can never observe the old
+    // value after we have begun tearing down.
+    CONNECTION_GENERATION.fetch_add(1, Ordering::SeqCst);
+
+    // Drop the sink first, so a subsequent connect installs a fresh one rather
+    // than failing against a stale handle. Without this, reconnection was dead.
+    if let Ok(mut guard) = SINK_CHANNEL.write() {
+        *guard = None;
+    }
+
     let workspace_state = get_workspace_state();
     let mut guard = workspace_state.write().await;
 
-    if let Some(state) = guard.take() {
+    if let Some(mut state) = guard.take() {
         // Close all P2P connections
         state.connections.clear();
 
+        // Count what teardown is about to destroy, and say so.
+        //
+        // Dropping WorkspaceState drops the receiver AND `pending` — every
+        // message ILM has already reported as delivered but that JavaScript has
+        // not yet taken. Nothing logged that, and the [ILM-RESCUE] probe does
+        // NOT cover it: that only runs when a `next_message` call had the
+        // stream checked out at the moment it was replaced. During recovery the
+        // loop is usually parked in backoff with the stream sitting in the
+        // state, so this teardown is the common case and was entirely silent.
+        //
+        // Zero rescues therefore never meant zero loss, which is exactly the
+        // wrong conclusion to invite from a diagnostic.
+        let mut discarded = std::collections::VecDeque::new();
+        let queued = state
+            .stream
+            .as_mut()
+            .map(|stream| drain_queued(stream, &mut discarded))
+            .unwrap_or(0);
+        let already_pending = state.pending.len();
+        if queued > 0 || already_pending > 0 {
+            // ILM-prefixed so the integration harness's keyword filter keeps it.
+            console_log!(
+                "[ILM-TEARDOWN] closing with {} queued and {} pending message(s) still undelivered",
+                queued,
+                already_pending
+            );
+        }
+
         // Note: CitadelWorkspaceMessenger doesn't have a close() method
         // The connection will be cleaned up when the state is dropped
-        console_log!("WASM client connection closed");
+        console_log!("[ILM-TEARDOWN] WASM client connection closed");
         Ok(())
     } else {
         Err(JsValue::from_str("Workspace not initialized"))
@@ -819,5 +1032,98 @@ pub fn is_initialized() -> bool {
         guard.is_some()
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod drain_queued_tests {
+    use super::drain_queued;
+    use std::collections::VecDeque;
+
+    #[test]
+    fn moves_every_queued_message_in_order() {
+        // The regression: these are messages ILM has already reported as
+        // delivered. Dropping the receiver loses them with no error anywhere.
+        let (tx, mut rx) = citadel_io::tokio::sync::mpsc::unbounded_channel();
+        for i in 0..3 {
+            tx.send(i).unwrap();
+        }
+        let mut sink = VecDeque::new();
+        assert_eq!(drain_queued(&mut rx, &mut sink), 3);
+        // Order matters: rescued messages are replayed before newer traffic, so
+        // reversing them here would reorder a conversation on every reconnect.
+        assert_eq!(sink.into_iter().collect::<Vec<_>>(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn appends_rather_than_replacing_what_the_sink_already_holds() {
+        // The sink is the live pending queue, which may already hold messages
+        // rescued from an earlier replacement.
+        let (tx, mut rx) = citadel_io::tokio::sync::mpsc::unbounded_channel();
+        tx.send(9).unwrap();
+        let mut sink: VecDeque<i32> = VecDeque::from(vec![7, 8]);
+        assert_eq!(drain_queued(&mut rx, &mut sink), 1);
+        assert_eq!(sink.into_iter().collect::<Vec<_>>(), vec![7, 8, 9]);
+    }
+
+    #[test]
+    fn reports_nothing_moved_for_an_empty_queue() {
+        // Guards the log line: claiming a rescue that did not happen would be
+        // as misleading as the silent loss it replaced.
+        let (_tx, mut rx) = citadel_io::tokio::sync::mpsc::unbounded_channel::<i32>();
+        let mut sink = VecDeque::new();
+        assert_eq!(drain_queued(&mut rx, &mut sink), 0);
+        assert!(sink.is_empty());
+    }
+}
+
+/// Truncate to at most `max_bytes`, never splitting a codepoint.
+///
+/// Byte slicing a string that came off the wire panics the moment a multi-byte
+/// character straddles the cut. Same helper as the internal service's file
+/// upload path, which learned this first.
+fn truncate_on_char_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+#[cfg(test)]
+mod truncate_tests {
+    use super::truncate_on_char_boundary;
+
+    #[test]
+    fn does_not_split_a_codepoint() {
+        // 'é' is two bytes; cutting at 1 must fall back to 0, not panic.
+        assert_eq!(truncate_on_char_boundary("é", 1), "");
+        assert_eq!(truncate_on_char_boundary("aé", 2), "a");
+        assert_eq!(truncate_on_char_boundary("aé", 3), "aé");
+    }
+
+    #[test]
+    fn returns_the_whole_string_when_it_fits() {
+        assert_eq!(truncate_on_char_boundary("hello", 500), "hello");
+    }
+
+    #[test]
+    fn survives_a_username_of_emoji_at_the_cut() {
+        // The shape that reached the read loop: a long frame whose byte 500
+        // lands inside a 4-byte emoji.
+        let padded = format!("{}{}", "x".repeat(498), "🙂🙂");
+        // The fixture is adversarial only if the naive slice would have blown
+        // up on it -- otherwise this test passes against the bug it names.
+        assert!(
+            !padded.is_char_boundary(500),
+            "fixture does not cut a codepoint"
+        );
+
+        let cut = truncate_on_char_boundary(&padded, 500);
+        assert!(cut.len() <= 500);
+        assert!(padded.starts_with(cut));
     }
 }

@@ -1,16 +1,16 @@
+use crate::kernel::requests::group::respond_wait::{
+    await_invitation_outcome, InvitationOutcome, GROUP_RESPOND_WAIT,
+};
 use crate::kernel::requests::{spawn_group_channel_receiver, HandledRequestResult};
+use crate::kernel::session_route::SessionRoute;
 use crate::kernel::{CitadelWorkspaceService, GroupConnection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     GroupRespondRequestFailure, GroupRespondRequestSuccess, InternalServiceRequest,
     InternalServiceResponse,
 };
-use citadel_sdk::prelude::{
-    GroupBroadcast, GroupBroadcastCommand, GroupChannelCreated, GroupEvent, NodeRequest,
-    NodeResult, Ratchet, TargetLockedRemote,
-};
-use futures::StreamExt;
-use std::sync::atomic::Ordering;
+use citadel_sdk::logging::warn;
+use citadel_sdk::prelude::{GroupBroadcast, GroupBroadcastCommand, NodeRequest, Ratchet};
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -47,99 +47,73 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         command: group_request,
     });
 
-    // Extract peer_remote and uuid inside lock block, then drop before await
+    // Extract the localhost-connection uuid inside the lock block, then drop
+    // before await. A peer connection to the inviter is deliberately NOT
+    // required: AcceptMembership is a client-to-server broadcast command (the
+    // SERVER owns group membership; compare create.rs, which builds its remote
+    // from the node remote for the same reason). Requiring a peer remote meant
+    // every invitee whose P2P connection was ACCEPTED rather than initiated —
+    // an acceptor-only connection carries no remote, and the group creator is
+    // normally the one who dialled — could never answer any invitation, so
+    // membership silently never formed.
     let remote_result = {
         let server_connection_map = this.server_connection_map.read();
         match server_connection_map.get(&cid) {
-            Some(connection) => {
-                let uuid = connection
-                    .associated_localhost_connection
-                    .load(Ordering::Relaxed);
-                match connection.peers.get(&peer_cid) {
-                    Some(peer_connection) => match &peer_connection.remote {
-                        Some(peer_remote) => Ok((peer_remote.clone(), uuid)),
-                        None => Err("Could Not Respond to Group Request - Peer connection missing remote (acceptor-only connection)".to_string()),
-                    },
-                    None => Err("Could Not Respond to Group Request - Peer Connection not found".to_string()),
-                }
-            }
+            // The uuid is deliberately NOT captured here. It used to be, and
+            // was handed to the spawned group receiver -- freezing the route at
+            // the moment the request was answered. See kernel/session_route.rs.
+            Some(_connection) => Ok(this.remote().clone()),
             None => Err("Could Not Respond to Group Request - Connection not found".to_string()),
         }
     }; // Lock dropped here - BEFORE any await
 
     let response = match remote_result {
-        Ok((peer_remote, uuid)) => {
-            match peer_remote
-                .remote()
-                .send_callback_subscription(request)
-                .await
-            {
+        Ok(remote) => {
+            match remote.send_callback_subscription(request).await {
                 Ok(mut subscription) => {
-                    let mut result = false;
-                    if invitation {
-                        while let Some(evt) = subscription.next().await {
-                            match evt {
-                                // When accepting an invite, we expect a GroupChannelCreated in response
-                                NodeResult::GroupChannelCreated(GroupChannelCreated {
-                                    ticket: _,
-                                    channel,
-                                    ..
-                                }) => {
-                                    let key = channel.key();
-                                    let group_cid = channel.cid();
-                                    let (tx, rx) = channel.split();
-                                    if let Some(connection) =
-                                        this.server_connection_map.write().get_mut(&cid)
-                                    {
-                                        connection.add_group_channel(
+                    let result = if invitation {
+                        match await_invitation_outcome(&mut subscription, GROUP_RESPOND_WAIT).await
+                        {
+                            InvitationOutcome::ChannelCreated(channel) => {
+                                let key = channel.key();
+                                let group_cid = channel.cid();
+                                let (tx, rx) = channel.split();
+                                if let Some(connection) =
+                                    this.server_connection_map.write().get_mut(&cid)
+                                {
+                                    connection.add_group_channel(
+                                        key,
+                                        GroupConnection {
                                             key,
-                                            GroupConnection {
-                                                key,
-                                                tx,
-                                                cid: group_cid,
-                                            },
-                                        );
+                                            tx,
+                                            cid: group_cid,
+                                        },
+                                    );
 
-                                        spawn_group_channel_receiver(
-                                            key,
-                                            cid,
-                                            uuid,
-                                            rx,
-                                            this.tx_to_localhost_clients.clone(),
-                                        );
+                                    let route = SessionRoute::new(
+                                        connection.associated_localhost_connection.clone(),
+                                        this.tx_to_localhost_clients.clone(),
+                                    );
+                                    let departed = connection.groups.departure_flag(&key);
+                                    spawn_group_channel_receiver(key, cid, route, departed, rx);
 
-                                        result = true;
-                                    } else {
-                                        citadel_sdk::logging::error!(target: "citadel", "Connection {} not found in server_connection_map during group respond request", cid);
-                                        result = false;
-                                    }
-                                    break;
+                                    true
+                                } else {
+                                    citadel_sdk::logging::error!(target: "citadel", "Connection {} not found in server_connection_map during group respond request", cid);
+                                    false
                                 }
-                                NodeResult::GroupEvent(GroupEvent {
-                                    session_cid: _,
-                                    ticket: _,
-                                    event:
-                                        GroupBroadcast::AcceptMembershipResponse { key: _, success },
-                                }) => {
-                                    result = success;
-                                    break;
-                                }
-                                NodeResult::GroupEvent(GroupEvent {
-                                    session_cid: _,
-                                    ticket: _,
-                                    event:
-                                        GroupBroadcast::DeclineMembershipResponse { key: _, success },
-                                }) => {
-                                    result = success;
-                                    break;
-                                }
-                                _ => {}
-                            };
+                            }
+                            InvitationOutcome::MembershipAnswered(success) => success,
+                            InvitationOutcome::Ended => false,
+                            InvitationOutcome::TimedOut => {
+                                warn!(target: "citadel", "Group respond for CID {cid} received no answer within {GROUP_RESPOND_WAIT:?}; the group owner may be offline");
+                                false
+                            }
                         }
                     } else {
                         // For now we return a Success response - we did, in fact, receive the KernelStreamSubscription
-                        result = true;
-                    }
+                        true
+                    };
 
                     match result {
                         true => InternalServiceResponse::GroupRespondRequestSuccess(

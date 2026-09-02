@@ -23,7 +23,21 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
 
-    let remote = super::generate_remote(this.remote(), cid, peer_cid).await;
+    // An unknown CID is a normal client input — the dev backend drops accounts
+    // on restart while browsers keep their CIDs — and it used to panic this
+    // task, so the request was never answered at all.
+    let remote = match super::generate_remote(this.remote(), cid, peer_cid).await {
+        Ok(remote) => remote,
+        Err(err) => {
+            let response = InternalServiceResponse::LocalDBGetKVFailure(LocalDBGetKVFailure {
+                cid,
+                peer_cid,
+                message: err.into_string(),
+                request_id: Some(request_id),
+            });
+            return Some(HandledRequestResult { response, uuid });
+        }
+    };
     let response = backend_handler_get(&remote, cid, peer_cid, key, Some(request_id)).await;
 
     Some(HandledRequestResult { response, uuid })

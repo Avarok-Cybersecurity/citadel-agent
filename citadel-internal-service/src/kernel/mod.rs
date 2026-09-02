@@ -1,11 +1,17 @@
 use crate::kernel::ext::IOInterfaceExt;
+use crate::kernel::media::{
+    media_lane, MediaLaneTx, PeerMediaSession, UdpState, MEDIA_LANE_CAPACITY,
+};
 use crate::kernel::requests::{handle_request, HandledRequestResult};
+use crate::kernel::session_route::SessionRoute;
 use citadel_internal_service_connector::connector::{
     InternalServiceConnector, WrappedSink, WrappedStream,
 };
 use citadel_internal_service_connector::io_interface::in_memory::{
     InMemoryInterface, InMemorySink, InMemoryStream,
 };
+#[cfg(feature = "websockets")]
+use citadel_internal_service_connector::io_interface::origin_policy::OriginPolicy;
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
 #[cfg(feature = "websockets")]
 use citadel_internal_service_connector::io_interface::websockets::WebSocketInterface;
@@ -26,13 +32,22 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::oneshot::Receiver as OneshotReceiver;
 use uuid::Uuid;
 
+pub(crate) mod credential_fingerprint;
 pub(crate) mod ext;
+pub(crate) mod group_channels;
+pub(crate) mod media;
+pub(crate) mod picked_files;
 pub(crate) mod requests;
 pub(crate) mod responses;
+pub(crate) mod revfs_correlation;
+pub(crate) mod session_route;
 
 pub type RatchetType = StackedRatchet;
+
+pub mod cid_scoped_state;
 
 pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub remote: Option<NodeRemote<R>>,
@@ -44,6 +59,15 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     /// like websocket clients for browser clients.
     pub tx_to_localhost_clients:
         Arc<RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+    /// The bounded, latest-frame lane to each localhost client, for media only.
+    ///
+    /// Parallel to `tx_to_localhost_clients` rather than replacing it: the two
+    /// carry traffic with opposite requirements. Control must arrive, so it
+    /// queues without limit; media must be timely, so it is capped and the
+    /// oldest frame is evicted when a client falls behind. One queue cannot
+    /// honour both, and sharing the unbounded one meant a slow browser
+    /// accumulated stale video until the connection ended.
+    pub media_lanes: Arc<RwLock<HashMap<Uuid, MediaLaneTx>>>,
     pub orphan_sessions: Arc<RwLock<HashMap<Uuid, bool>>>, // Maps TCP connection ID to orphan mode
     /// Stores pending PeerConnect signals awaiting UI acceptance.
     /// Key is (session_cid, peer_cid), value is the original PeerSignal for responding.
@@ -67,6 +91,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             remote: self.remote.clone(),
             server_connection_map: self.server_connection_map.clone(),
             tx_to_localhost_clients: self.tx_to_localhost_clients.clone(),
+            media_lanes: self.media_lanes.clone(),
             orphan_sessions: self.orphan_sessions.clone(),
             pending_peer_connect_signals: self.pending_peer_connect_signals.clone(),
             pending_peer_registrations: self.pending_peer_registrations.clone(),
@@ -83,6 +108,7 @@ impl<T: IOInterface, R: Ratchet> From<T> for CitadelWorkspaceService<T, R> {
             remote: None,
             server_connection_map: Arc::new(RwLock::new(Default::default())),
             tx_to_localhost_clients: Arc::new(RwLock::new(Default::default())),
+            media_lanes: Arc::new(RwLock::new(Default::default())),
             orphan_sessions: Arc::new(RwLock::new(Default::default())),
             pending_peer_connect_signals: Arc::new(RwLock::new(Default::default())),
             pending_peer_registrations: Arc::new(RwLock::new(Default::default())),
@@ -111,10 +137,14 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
     }
 
     #[cfg(feature = "websockets")]
+    /// `origins` is required, not optional: see
+    /// `io_interface::origin_policy` for why the convenient default is the
+    /// hole this closes.
     pub async fn new_websocket(
         bind_address: SocketAddr,
+        origins: OriginPolicy,
     ) -> std::io::Result<CitadelWorkspaceService<WebSocketInterface, R>> {
-        let ws_server_io = WebSocketInterface::new(bind_address).await?;
+        let ws_server_io = WebSocketInterface::new(bind_address, origins).await?;
         Ok(ws_server_io.into())
     }
 }
@@ -170,13 +200,30 @@ pub struct Connection<R: Ratchet> {
     pub peers: HashMap<u64, PeerConnection<R>>,
     pub(crate) associated_localhost_connection: Arc<AtomicUuid>,
     pub c2s_file_transfer_handlers: HashMap<ObjectId, Option<ObjectTransferHandler>>,
-    pub groups: HashMap<MessageGroupKey, GroupConnection>,
+    /// Group channels this session is a member of. Not a plain HashMap: the
+    /// map was insert-only, so entries outlived the membership they described
+    /// and a GroupMessage to a group the user had left still found a working
+    /// sender and reported success. See kernel/group_channels.rs for how
+    /// entries expire when this session leaves or ends a group.
+    pub groups: group_channels::GroupChannels,
     pub username: String,
     pub server_address: String,
     /// Storage for files picked via PickFile command.
     /// Key is the request_id from the PickFile request.
     /// Used to resolve FileSource::PickFileRef in SendFile commands.
     pub picked_files: HashMap<Uuid, PickedFileInfo>,
+    /// Pending REVFS pull/push request ids, consumed when the matching
+    /// ObjectTransferHandle arrives so its ticks carry the browser's
+    /// request_id instead of the meaningless TCP-connection uuid fallback.
+    /// See kernel/revfs_correlation.rs for the mechanism.
+    pub revfs_correlations: revfs_correlation::RevfsCorrelations,
+    /// The client-side password hash this session was opened with.
+    ///
+    /// Consulted when a later `Connect` names this session's username, so the
+    /// session cannot be handed over -- message stream and all -- to a caller
+    /// who only knew the username. See kernel/credential_fingerprint.rs for why
+    /// this is a recorded fingerprint rather than a local credential check.
+    pub credential_fingerprint: Option<Vec<u8>>,
 }
 
 #[allow(dead_code)]
@@ -187,6 +234,33 @@ pub struct PeerConnection<R: Ratchet> {
     remote: Option<PeerRemote<R>>,
     handler_map: HashMap<ObjectId, Option<ObjectTransferHandler>>,
     associated_localhost_connection: Arc<AtomicUuid>,
+    /// Where this peer's UDP transport currently lives. The SDK delivers the
+    /// channel at most once per peer connection, so media sessions borrow the
+    /// halves through this state machine and return them on close — consuming
+    /// them would make every call after the first impossible.
+    pub udp: UdpState<R>,
+    /// The live call with this peer, if any. Dropping it stops the inbound pump.
+    ///
+    /// Boxed because a MediaSession carries the packetizer's 256-entry
+    /// per-track sequence table — over a kilobyte — and this struct is stored
+    /// per peer whether or not there is ever a call. Inline, every peer paid for
+    /// a call almost none of them make.
+    pub media: Option<Box<PeerMediaSession<R>>>,
+    /// Bumped by every media close/teardown. An open that had to await captures
+    /// this first and refuses to install its session if the value moved, so a
+    /// close landing mid-open wins instead of leaving a zombie session.
+    pub media_generation: u64,
+    /// The localhost connection whose `MediaOpen` is currently awaiting a UDP
+    /// channel, if one is.
+    ///
+    /// A close bumps `media_generation` even when no session exists yet, so
+    /// that a close landing mid-open cancels it rather than letting a zombie
+    /// pump install itself. That bump is unauthenticated on its own: once a
+    /// reconnect hands the client a fresh uuid, a delayed `MediaClose` from the
+    /// dead connection would cancel the NEW connection's open. Recording who is
+    /// opening lets the close tell "the owner changed its mind" from "a stale
+    /// connection is cancelling someone else's call".
+    pub media_pending_owner: Option<Uuid>,
 }
 
 #[allow(dead_code)]
@@ -203,6 +277,7 @@ impl<R: Ratchet> Connection<R> {
         associated_tcp_connection: Arc<AtomicUuid>,
         username: String,
         server_address: String,
+        credential_fingerprint: Option<Vec<u8>>,
     ) -> Self {
         Connection {
             peers: HashMap::new(),
@@ -211,9 +286,11 @@ impl<R: Ratchet> Connection<R> {
             associated_localhost_connection: associated_tcp_connection,
             c2s_file_transfer_handlers: HashMap::new(),
             username,
-            groups: HashMap::new(),
+            groups: group_channels::GroupChannels::new(),
             server_address,
             picked_files: HashMap::new(),
+            revfs_correlations: revfs_correlation::RevfsCorrelations::default(),
+            credential_fingerprint,
         }
     }
 
@@ -222,16 +299,9 @@ impl<R: Ratchet> Connection<R> {
         peer_cid: u64,
         sink: PeerChannelSendHalf<R>,
         remote: PeerRemote<R>,
+        udp_rx: Option<OneshotReceiver<UdpChannel<R>>>,
     ) {
-        self.peers.insert(
-            peer_cid,
-            PeerConnection {
-                sink: Arc::new(tokio::sync::Mutex::new(sink)),
-                remote: Some(remote),
-                handler_map: HashMap::new(),
-                associated_localhost_connection: self.associated_localhost_connection.clone(),
-            },
-        );
+        self.upsert_peer_connection(peer_cid, sink, Some(remote), udp_rx);
     }
 
     /// Add a peer connection without a PeerRemote (for acceptor-side channels)
@@ -239,21 +309,59 @@ impl<R: Ratchet> Connection<R> {
         &mut self,
         peer_cid: u64,
         sink: PeerChannelSendHalf<R>,
+        udp_rx: Option<OneshotReceiver<UdpChannel<R>>>,
     ) {
-        self.peers.insert(
-            peer_cid,
-            PeerConnection {
-                sink: Arc::new(tokio::sync::Mutex::new(sink)),
-                remote: None,
-                handler_map: HashMap::new(),
-                associated_localhost_connection: self.associated_localhost_connection.clone(),
-            },
-        );
+        self.upsert_peer_connection(peer_cid, sink, None, udp_rx);
     }
 
-    #[allow(dead_code)]
-    fn clear_peer_connection(&mut self, peer_cid: u64) -> Option<PeerConnection<R>> {
-        self.peers.remove(&peer_cid)
+    /// Insert-or-update. On update the fresh sink replaces the stale one, but a
+    /// live media session and its UDP transport survive: blind `insert` used to
+    /// replace the whole entry on duplicate PeerChannelCreated events or mid-call
+    /// re-handshakes, and the replaced entry's Drop aborted the call's inbound
+    /// pump — silently destroying a working call.
+    fn upsert_peer_connection(
+        &mut self,
+        peer_cid: u64,
+        sink: PeerChannelSendHalf<R>,
+        remote: Option<PeerRemote<R>>,
+        udp_rx: Option<OneshotReceiver<UdpChannel<R>>>,
+    ) {
+        match self.peers.entry(peer_cid) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let peer = entry.get_mut();
+                peer.sink = Arc::new(tokio::sync::Mutex::new(sink));
+                if remote.is_some() {
+                    peer.remote = remote;
+                }
+                // A fresh UDP offer is adopted only between calls: a live call
+                // keeps the transport it is using, and an open mid-await keeps
+                // its `Opening` marker so its commit logic stays single-owner.
+                if peer.media.is_none() && !matches!(peer.udp, UdpState::Opening) {
+                    if let Some(rx) = udp_rx {
+                        // APPENDED, not assigned. A simultaneous connect makes
+                        // two peer connections and the SDK offers a UDP channel
+                        // once per connection, so the second offer used to
+                        // overwrite the first and drop it -- and when the
+                        // surviving connection was not the one whose offer was
+                        // kept, the receiver never fired and every call to that
+                        // peer failed with "no UDP channel within 5s".
+                        peer.udp.offer(rx);
+                    }
+                }
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(PeerConnection {
+                    sink: Arc::new(tokio::sync::Mutex::new(sink)),
+                    remote,
+                    handler_map: HashMap::new(),
+                    associated_localhost_connection: self.associated_localhost_connection.clone(),
+                    udp: UdpState::from_optional_channel(udp_rx),
+                    media: None,
+                    media_generation: 0,
+                    media_pending_owner: None,
+                });
+            }
+        }
     }
 
     fn add_object_transfer_handler(
@@ -278,6 +386,9 @@ impl<R: Ratchet> Connection<R> {
         group_key: MessageGroupKey,
         group_channel: GroupConnection,
     ) {
+        // The insert wraps the SDK send half so the entry expires when this
+        // session leaves or ends the group — a bare HashMap insert left the
+        // entry (and the membership it implied) alive for the whole session.
         self.groups.insert(group_key, group_channel);
     }
 
@@ -326,18 +437,6 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             }
         })
     }
-
-    #[allow(dead_code)]
-    fn clear_peer_connection(
-        &self,
-        implicated_cid: u64,
-        peer_cid: u64,
-    ) -> Option<PeerConnection<R>> {
-        self.server_connection_map
-            .write()
-            .get_mut(&implicated_cid)?
-            .clear_peer_connection(peer_cid)
-    }
 }
 
 #[async_trait]
@@ -358,20 +457,29 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
         let tcp_connection_map = &self.tx_to_localhost_clients;
+        let media_lanes = &self.media_lanes;
         let server_connection_map = &self.server_connection_map;
 
         let listener_task = async move {
             while let Some((sink, stream)) = io.next_connection().await {
                 let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel::<InternalServiceResponse>();
+                // Media gets a second, bounded lane to the same socket. Created
+                // here beside the reliable one so every connection has both for
+                // its whole life, rather than appearing when a call starts and
+                // needing a null case everywhere else.
+                let (media_tx, media_rx) = media_lane(MEDIA_LANE_CAPACITY);
                 let id = Uuid::new_v4();
                 tcp_connection_map.write().insert(id, tx1);
+                media_lanes.write().insert(id, media_tx);
                 io.spawn_connection_handler(
                     sink,
                     stream,
                     tx.clone(),
                     rx1,
+                    media_rx,
                     id,
                     tcp_connection_map.clone(),
+                    media_lanes.clone(),
                     server_connection_map.clone(),
                     self.orphan_sessions.clone(),
                 );
@@ -397,6 +505,9 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
                             // The TCP connection no longer exists. Delete it from both maps
                             error!(target: "citadel", "Failed to send response to TCP client: {err:?}");
                             this.tx_to_localhost_clients.write().remove(&uuid);
+                            if let Some(lane) = this.media_lanes.write().remove(&uuid) {
+                                lane.close();
+                            }
                             this.server_connection_map.write().retain(|_, v| {
                                 v.associated_localhost_connection.load(Ordering::Relaxed) != uuid
                             });
@@ -421,7 +532,29 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
     }
 
     async fn on_node_event_received(&self, message: NodeResult<R>) -> Result<(), NetworkError> {
-        responses::handle_node_result(self, message).await
+        // Log and continue. Returning Err here does NOT fail one event — the
+        // SDK's KernelExecutor treats it as fatal:
+        //
+        //   if let Err(err) = kernel_ref.on_node_event_received(message).await {
+        //       log::error!(target: "citadel", "Kernel threw an error: {:?}. Will end", err);
+        //       citadel_server_remote.clone().shutdown().await?;
+        //
+        // so ONE failed delivery shut down the entire local agent — every
+        // session for every account multiplexed through it — and with the
+        // default in-memory backend, every account with it.
+        //
+        // The reachable triggers are ordinary: a P2P channel arriving for a
+        // session that was just removed from the map (connect.rs removes and
+        // then sleeps 200ms before reconnecting), or a send to a tcp entry
+        // whose receiver was dropped a moment ago because a tab closed. Neither
+        // means the node cannot continue; both used to end it.
+        //
+        // Err is reserved for conditions that genuinely mean this kernel cannot
+        // keep running. A per-session routing failure is not one.
+        if let Err(error) = responses::handle_node_result(self, message).await {
+            error!(target: "citadel", "[Kernel] Failed to handle node event: {error:?}. Continuing — this is not fatal to the agent.");
+        }
+        Ok(())
     }
 
     async fn on_stop(&mut self) -> Result<(), NetworkError> {
@@ -486,43 +619,45 @@ fn spawn_tick_updater<R: Ratchet>(
         let uuid = connection
             .associated_localhost_connection
             .load(Ordering::Relaxed);
+        // The REQUEST id may be frozen -- it names the request that started the
+        // transfer and does not change. The ROUTE may not: a reclaim re-points
+        // this session mid-transfer and every remaining tick has to follow it.
+        // See kernel/session_route.rs.
         let request_id = Some(request_id.unwrap_or(uuid));
+        let route = SessionRoute::new(
+            connection.associated_localhost_connection.clone(),
+            tcp_connection_map,
+        );
         let sender_status_updater = async move {
             while let Some(status) = handle_inner.next().await {
                 let status_message = status.clone();
-                // Clone the sender outside the lock to avoid holding lock across send
-                let sender = { tcp_connection_map.read().get(&uuid).cloned() };
-                match sender {
-                    Some(entry) => {
-                        let message = InternalServiceResponse::FileTransferTickNotification(
-                            FileTransferTickNotification {
-                                cid: implicated_cid,
-                                peer_cid,
-                                status: status_message,
-                                request_id,
-                            },
-                        );
-                        match entry.send(message.clone()) {
-                            Ok(_res) => {
-                                info!(target: "citadel", "File Transfer Status Tick Sent {status:?}");
-                            }
-                            Err(err) => {
-                                warn!(target: "citadel", "File Transfer Status Tick Not Sent: {err:?}");
-                            }
-                        }
-
-                        if matches!(
-                            status,
-                            ObjectTransferStatus::TransferComplete
-                                | ObjectTransferStatus::ReceptionComplete
-                        ) {
-                            info!(target: "citadel", "File Transfer Completed - Ending Tick Updater");
-                            break;
-                        }
+                let message = InternalServiceResponse::FileTransferTickNotification(
+                    FileTransferTickNotification {
+                        cid: implicated_cid,
+                        peer_cid,
+                        status: status_message,
+                        request_id,
+                    },
+                );
+                match route.send(message) {
+                    Some(target) => {
+                        info!(target: "citadel", "File Transfer Status Tick Sent to {target:?}: {status:?}")
                     }
                     None => {
-                        warn!(target:"citadel","Connection not found during File Transfer Status Tick")
+                        warn!(target: "citadel", "No localhost connection owns CID {implicated_cid} - File Transfer Status Tick dropped")
                     }
+                }
+
+                // Outside the delivery result on purpose. The transfer is over
+                // whether or not anybody was listening; keeping the task alive
+                // because a tab happened to be closed is how these leak.
+                if matches!(
+                    status,
+                    ObjectTransferStatus::TransferComplete
+                        | ObjectTransferStatus::ReceptionComplete
+                ) {
+                    info!(target: "citadel", "File Transfer Completed - Ending Tick Updater");
+                    break;
                 }
             }
             info!(target:"citadel", "Spawned Tick Updater has ended for {implicated_cid:?}");

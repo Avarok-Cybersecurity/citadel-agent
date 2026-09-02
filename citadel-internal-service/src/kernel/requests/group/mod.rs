@@ -6,4 +6,6 @@ pub mod kick;
 pub mod leave;
 pub mod message;
 pub mod request_join;
+mod request_join_wait;
 pub mod respond_request;
+mod respond_wait;

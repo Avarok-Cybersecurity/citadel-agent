@@ -23,7 +23,7 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "test": "echo \"No tests configured yet\" && exit 0"
+    "test": "tsc && node scripts/assert-tests-exist.mjs && node --test $(node scripts/assert-tests-exist.mjs --print)"
   },
   "sideEffects": [
     "./snippets/*"

@@ -4,8 +4,13 @@
  * Source for file transfer operations.
  * Allows either a direct file path, a reference to a previously picked file,
  * or inline byte contents (for browser-selected files).
+ *
+ * NOTE: the `Debug` below is `custom_debug::Debug` (imported at the top of
+ * this module, shadowing `std`'s), written out explicitly here so it's
+ * obvious the `#[debug(with = ...)]` field attribute on `ByteContents.data`
+ * is supported — the std derive would not accept it.
  */
-export type FileSource = { "Path": string } | { "PickFileRef": { pick_file_request_id: string, } } | { "ByteContents": { file_name: string,
+export type FileSource = { "Path": string } | { "PickFileRef": { pick_file_request_id: string, } } | { "ByteContents": { file_name: string, 
 /**
  * Raw payload bytes of the file.
  */

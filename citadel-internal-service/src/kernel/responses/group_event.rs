@@ -123,27 +123,38 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             GroupBroadcast::EndResponse {
                 key: group_key,
                 success,
-            } => Some(InternalServiceResponse::GroupEndNotification(
-                GroupEndNotification {
-                    cid: implicated_cid,
-                    group_key,
-                    success,
-                    request_id: None,
-                },
-            )),
+            } => {
+                // The group is gone, whoever ended it. `leave()`/`end()` only
+                // cover departures THIS session initiates; without this the
+                // channel entry outlived the group and a later GroupMessage to
+                // it was answered with success.
+                if success {
+                    let _ = connection.groups.mark_departed(&group_key);
+                }
+                Some(InternalServiceResponse::GroupEndNotification(
+                    GroupEndNotification {
+                        cid: implicated_cid,
+                        group_key,
+                        success,
+                        request_id: None,
+                    },
+                ))
+            }
 
-            GroupBroadcast::Disconnected { key: group_key } => connection
-                .groups
-                .get_mut(&group_key)
-                .map(|_group_connection| {
+            GroupBroadcast::Disconnected { key: group_key } => {
+                // Marked AFTER the membership question is answered: marking
+                // first would make `mark_departed` report false and suppress the
+                // notification the UI needs to clear the room.
+                connection.groups.mark_departed(&group_key).then_some(
                     InternalServiceResponse::GroupDisconnectNotification(
                         GroupDisconnectNotification {
                             cid: implicated_cid,
                             group_key,
                             request_id: None,
                         },
-                    )
-                }),
+                    ),
+                )
+            }
 
             GroupBroadcast::AddResponse {
                 key: _group_key,

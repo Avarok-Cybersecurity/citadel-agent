@@ -61,6 +61,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         // SDK is source of truth - clean up session to mirror SDK state
         // NOTE: SDK has already disconnected, so we don't call disconnect_removed.
         // We just remove from our map and let the struct drop.
+        this.prune_cid_scoped_state(cid, None);
         if let Some(disconnected) = cleanup_state(&this.server_connection_map, cid, None) {
             let tcp_uuid = match &disconnected {
                 DisconnectedConnection::C2S { tcp_uuid, .. } => *tcp_uuid,

@@ -201,7 +201,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Flaky test - peer_cid assertion fails intermittently, needs investigation"]
     /// Have every client connect to every other client and send messages via a ping/pong test to every other client
     async fn test_messenger_messaging() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
@@ -287,7 +286,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Flaky test - peer_cid assertion fails intermittently, needs investigation"]
     async fn test_citadel_workspace_backend_ping_pong() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         let bind_address_internal_service_a: SocketAddr =
@@ -367,6 +365,54 @@ mod tests {
         Ok(())
     }
 
+    /// Wait for a MessageNotification from `from_peer` carrying `payload`,
+    /// ignoring anything else that arrives first.
+    ///
+    /// The receiver is one stream carrying notifications from EVERY peer this
+    /// client is connected to, interleaved with other response types.
+    /// `test_messenger_messaging` has three clients messaging each other
+    /// concurrently, so the next item on the stream is frequently a message from
+    /// a different peer. Taking the first item and asserting `peer_cid == cid_a`
+    /// on it was really asserting an arrival ORDER that nothing guarantees —
+    /// which is the intermittent failure both these tests were ignored for.
+    ///
+    /// Skipping non-matching items is what makes the assertion mean "this
+    /// message arrived", rather than "this message arrived first".
+    async fn expect_message_from(
+        rx: &mut UnboundedReceiver<InternalServiceResponse>,
+        local_cid: u64,
+        from_peer: u64,
+        payload: &[u8],
+    ) {
+        let budget = std::time::Duration::from_secs(30);
+
+        let wait = async {
+            loop {
+                let resp = rx
+                    .recv()
+                    .await
+                    .expect("Stream closed before the expected message arrived");
+
+                if let InternalServiceResponse::MessageNotification(message) = &resp {
+                    if message.peer_cid == from_peer && message.message == payload {
+                        // Only checked once we know which message this is; asserting
+                        // it on an unrelated notification is what produced the
+                        // confusing peer_cid mismatch.
+                        assert_eq!(message.cid, local_cid);
+                        return;
+                    }
+                }
+            }
+        };
+
+        time::timeout(budget, wait).await.unwrap_or_else(|_| {
+            panic!(
+                "No MessageNotification from peer {from_peer} carrying the expected \
+                 payload arrived within {budget:?}"
+            )
+        });
+    }
+
     async fn test_ping_pong<B>(
         tx_a: &MessengerTx<B>,
         rx_a: &mut UnboundedReceiver<InternalServiceResponse>,
@@ -386,35 +432,14 @@ mod tests {
             tx_a.send_message_to(cid_b, ping)
                 .await
                 .expect("Failed to send message");
-            let resp = rx_b
-                .recv()
-                .await
-                .expect("Expected a message from the internal server");
-
-            if let InternalServiceResponse::MessageNotification(message) = &resp {
-                assert_eq!(message.cid, cid_b);
-                assert_eq!(message.peer_cid, cid_a);
-                assert_eq!(message.message, ping);
-            } else {
-                panic!("Expected a MessageNotification, got: {resp:?}");
-            }
+            expect_message_from(rx_b, cid_b, cid_a, ping).await;
         };
 
         let task_b = async move {
             tx_b.send_message_to(cid_a, pong)
                 .await
                 .expect("Failed to send message");
-            let resp = rx_a
-                .recv()
-                .await
-                .expect("Expected a message from the internal server");
-            if let InternalServiceResponse::MessageNotification(message) = &resp {
-                assert_eq!(message.cid, cid_a);
-                assert_eq!(message.peer_cid, cid_b);
-                assert_eq!(message.message, pong);
-            } else {
-                panic!("Expected a MessageNotification, got: {resp:?}");
-            }
+            expect_message_from(rx_a, cid_a, cid_b, pong).await;
         };
 
         // Send messages concurrently

@@ -1,3 +1,4 @@
+use crate::kernel::media::{MediaLaneRx, MediaLaneTx};
 use crate::kernel::{send_to_kernel, sink_send_payload, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -23,8 +24,10 @@ pub trait IOInterfaceExt: IOInterface {
         mut stream: Self::Stream,
         to_kernel: UnboundedSender<(InternalServiceRequest, Uuid)>,
         mut from_kernel: UnboundedReceiver<InternalServiceResponse>,
+        mut media_from_kernel: MediaLaneRx,
         conn_id: Uuid,
         tcp_connection_map: Arc<RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+        media_lanes: Arc<RwLock<HashMap<Uuid, MediaLaneTx>>>,
         server_connection_map: Arc<RwLock<HashMap<u64, Connection<R>>>>,
         orphan_sessions: Arc<RwLock<HashMap<Uuid, bool>>>,
     ) {
@@ -41,7 +44,35 @@ pub trait IOInterfaceExt: IOInterface {
                     return;
                 }
 
-                while let Some(kernel_response) = from_kernel.recv().await {
+                // Media rides its own bounded lane, drained here alongside the
+                // reliable one. Two queues, one socket: control cannot be
+                // dropped and media cannot be allowed to accumulate, and a
+                // single queue can only offer one of those.
+                let mut media_open = true;
+                loop {
+                    let kernel_response = tokio::select! {
+                        // Biased, and control first. A call saturating the
+                        // socket must never delay a session close or a response
+                        // the client is blocked waiting on -- under exactly the
+                        // congestion this lane exists for, an unbiased select
+                        // would hand roughly half the socket to stale video.
+                        biased;
+                        response = from_kernel.recv() => match response {
+                            Some(response) => response,
+                            // The reliable side ending is the connection
+                            // ending; queued media has no one left to reach.
+                            None => break,
+                        },
+                        frame = media_from_kernel.recv(), if media_open => match frame {
+                            Some(frame) => frame,
+                            None => {
+                                // Disable the branch rather than break: control
+                                // traffic outlives any one call.
+                                media_open = false;
+                                continue;
+                            }
+                        },
+                    };
                     debug!(target: "citadel", "Sending kernel response to client: {:?}", kernel_response);
                     if let Err(err) = sink_send_payload::<Self>(kernel_response, &mut sink).await {
                         error!(target: "citadel", "Failed to send to client: {err:?}");
@@ -75,6 +106,7 @@ pub trait IOInterfaceExt: IOInterface {
             }
 
             tcp_connection_map.write().remove(&conn_id);
+            retire_media_lane(&media_lanes, &conn_id);
 
             // ALWAYS preserve sessions when TCP drops.
             //
@@ -120,3 +152,115 @@ pub trait IOInterfaceExt: IOInterface {
 }
 
 impl<T: IOInterface> IOInterfaceExt for T {}
+
+/// Take a dropped connection's media lane out of the map and close it.
+///
+/// Closing as well as dropping is the point: a pump still holding a producer
+/// handle learns the client is gone and stops, instead of decoding frames into
+/// a queue nobody will ever read.
+///
+/// Its own function because the pump's own test performs this action itself --
+/// the fixture calls `lane_tx.close()` before spawning -- so deleting the close
+/// from the connection-drop path left that test green while a dropped WebSocket
+/// leaked a pump per call, forever.
+pub(crate) fn retire_media_lane(
+    media_lanes: &Arc<RwLock<HashMap<Uuid, MediaLaneTx>>>,
+    conn_id: &Uuid,
+) {
+    if let Some(lane) = media_lanes.write().remove(conn_id) {
+        lane.close();
+    }
+}
+
+#[cfg(test)]
+mod lane_retirement_tests {
+    use super::retire_media_lane;
+    use crate::kernel::media::lane::{media_lane, PushOutcome};
+    use crate::kernel::media::MediaLaneTx;
+    use citadel_internal_service_types::InternalServiceResponse;
+    use parking_lot::RwLock;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use uuid::Uuid;
+
+    fn lanes() -> Arc<RwLock<HashMap<Uuid, MediaLaneTx>>> {
+        Arc::new(RwLock::new(HashMap::new()))
+    }
+
+    fn a_frame() -> InternalServiceResponse {
+        InternalServiceResponse::MediaGapNotification(
+            citadel_internal_service_types::MediaGapNotification {
+                cid: 1,
+                peer_cid: 2,
+                track: 0,
+                missing_from: 1,
+                missing_to: 2,
+                request_id: None,
+            },
+        )
+    }
+
+    /// The pump's own test closes the lane itself before spawning, so it says
+    /// nothing about whether the connection-drop path does. Deleting the close
+    /// left that test green while every dropped WebSocket leaked a pump.
+    #[test]
+    fn retiring_a_lane_closes_it_so_a_live_pump_stops() {
+        let map = lanes();
+        let conn = Uuid::new_v4();
+        let (tx, _rx) = media_lane(8);
+        map.write().insert(conn, tx.clone());
+
+        assert!(
+            !matches!(tx.push(a_frame()), PushOutcome::Closed),
+            "the lane must accept frames before the connection drops"
+        );
+
+        retire_media_lane(&map, &conn);
+
+        assert!(
+            matches!(tx.push(a_frame()), PushOutcome::Closed),
+            "a pump still holding a producer handle must learn the client is gone"
+        );
+    }
+
+    #[test]
+    fn retiring_removes_the_lane_from_the_map() {
+        let map = lanes();
+        let conn = Uuid::new_v4();
+        let (tx, _rx) = media_lane(8);
+        map.write().insert(conn, tx);
+
+        retire_media_lane(&map, &conn);
+
+        assert!(
+            map.read().is_empty(),
+            "a dropped connection must not keep its lane"
+        );
+    }
+
+    #[test]
+    fn retiring_a_connection_with_no_lane_is_harmless() {
+        // The common case: a connection that never opened a call.
+        let map = lanes();
+        retire_media_lane(&map, &Uuid::new_v4());
+        assert!(map.read().is_empty());
+    }
+
+    #[test]
+    fn retiring_one_connection_leaves_another_alone() {
+        let map = lanes();
+        let mine = Uuid::new_v4();
+        let theirs = Uuid::new_v4();
+        let (my_tx, _my_rx) = media_lane(8);
+        let (their_tx, _their_rx) = media_lane(8);
+        map.write().insert(mine, my_tx);
+        map.write().insert(theirs, their_tx.clone());
+
+        retire_media_lane(&map, &mine);
+
+        assert!(
+            !matches!(their_tx.push(a_frame()), PushOutcome::Closed),
+            "one client's disconnect must not end another's call"
+        );
+    }
+}

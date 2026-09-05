@@ -477,12 +477,17 @@ where
                                     stream_id: ISM_STREAM_ID,
                                 };
 
-                                let available_keys: Vec<StreamKey> =
-                                    this.txs_to_inbound.iter().map(|r| *r.key()).collect();
+                                // Collected only when it is about to be SAID. This ran on
+                                // every routed message — a Vec allocation and a walk of the
+                                // whole stream map per message — to fill a log line that the
+                                // success path does not print.
+                                let available_keys = || -> Vec<StreamKey> {
+                                    this.txs_to_inbound.iter().map(|r| *r.key()).collect()
+                                };
                                 log::info!(target: "ism", "[MSG-ROUTE] Routing message: source={} dest={} msg_id={} | Looking for stream_key={:?} | Available: {:?}",
                                     ism_message.source_id(), ism_message.destination_id(),
                                     match &ism_message { InternalMessage::Message(m) => m.message_id, _ => 0 },
-                                    stream_key, available_keys);
+                                    stream_key, available_keys());
 
                                 if let Some(tx) = this.txs_to_inbound.get(&stream_key) {
                                     if let Err(err) = tx.send(ism_message) {
@@ -494,7 +499,7 @@ where
                                     // Queue message for later delivery when multiplex() is called.
                                     // This fixes the race condition where messages arrive before ILM is ready.
                                     log::warn!(target: "ism", "[MSG-ROUTE] QUEUED - No ILM registered for CID {}. Queuing for later delivery. Available: {:?}",
-                                        stream_key.cid, available_keys);
+                                        stream_key.cid, available_keys());
                                     this.pending_inbound_messages
                                         .entry(stream_key.cid)
                                         .or_default()

@@ -27,6 +27,7 @@ mod get_sessions;
 mod media;
 mod message;
 mod register;
+pub mod session_liveness;
 
 mod connection_management;
 pub(crate) mod connection_management_auth;

@@ -20,6 +20,7 @@
 //! - `register.rs` → `remote.register()` → Creates NEW account with NEW CID
 //! - `connect.rs` (this file) → `remote.connect()` → Connects to EXISTING account, SAME CID
 
+use crate::kernel::requests::session_liveness;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::{create_client_server_remote, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -89,14 +90,32 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     if let Some(cid) = existing_cid {
         citadel_sdk::logging::info!(target: "citadel", "[Connect] Found existing session {} for user {}, checking SDK...", cid, username);
 
-        // Query SDK to see if session is actually active
-        let sdk_active = match remote.sessions().await {
-            Ok(sessions) => sessions.sessions.iter().any(|sess| sess.cid == cid),
-            Err(e) => {
-                citadel_sdk::logging::warn!(target: "citadel", "[Connect] Failed to query SDK sessions: {:?}, assuming inactive", e);
-                false
-            }
-        };
+        // Ask the SDK whether that session is still alive — and treat "could not ask" as its
+        // own answer. This mapped `Err` to `false`, took the stale branch, and DELETED the map
+        // entry for a session that was, as far as anyone knew, still live; `remote.connect()`
+        // is then refused because the SDK still holds it, and the account is unreachable until
+        // the agent restarts. See requests/session_liveness.rs.
+        let sdk_cids: Result<Vec<u64>, _> = remote
+            .sessions()
+            .await
+            .map(|s| s.sessions.iter().map(|sess| sess.cid).collect());
+        let liveness = session_liveness::classify(sdk_cids.as_deref(), cid);
+        if liveness == session_liveness::SessionLiveness::Unknown {
+            let reason = sdk_cids.err();
+            citadel_sdk::logging::warn!(
+                target: "citadel",
+                "[Connect] Could not verify session {cid} for {username}: {reason:?}; refusing rather than tearing it down"
+            );
+            let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                cid,
+                message: "Could not verify the state of the existing session for this account. \
+                          Nothing was changed; try again."
+                    .to_string(),
+                request_id: Some(request_id),
+            });
+            return Some(HandledRequestResult { response, uuid });
+        }
+        let sdk_active = liveness == session_liveness::SessionLiveness::Active;
 
         if sdk_active {
             // Prove the caller knows the password before handing them the

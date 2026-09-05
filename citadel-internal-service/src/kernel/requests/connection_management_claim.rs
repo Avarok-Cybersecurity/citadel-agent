@@ -8,6 +8,7 @@
 
 use crate::kernel::requests::connection_management::{owner_of, refusal};
 use crate::kernel::requests::connection_management_auth::{may_claim, Authorization, SessionOwner};
+use crate::kernel::requests::session_liveness;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -78,13 +79,36 @@ pub(super) async fn claim_session<T: IOInterface, R: Ratchet>(
 
     // Step 3: Verify session is active in SDK before allowing claim
     let remote = this.remote();
-    let sdk_active_cids: Vec<u64> = match remote.sessions().await {
-        Ok(conns) => conns.sessions.into_iter().map(|s| s.cid).collect(),
-        Err(e) => {
-            warn!(target: "citadel", "ClaimSession: Failed to query SDK sessions: {:?}", e);
-            vec![]
-        }
-    };
+    // "Could not ask" is not "it is gone". This mapped an SDK error to an EMPTY session list,
+    // which walks straight into the not-active branch below and deletes the very session being
+    // claimed — after a reload, that is the user's own live session. See
+    // requests/session_liveness.rs.
+    let sdk_cids: Result<Vec<u64>, _> = remote
+        .sessions()
+        .await
+        .map(|conns| conns.sessions.into_iter().map(|s| s.cid).collect());
+    if session_liveness::classify(sdk_cids.as_deref(), session_cid)
+        == session_liveness::SessionLiveness::Unknown
+    {
+        warn!(
+            target: "citadel",
+            "ClaimSession: could not verify session {session_cid}: {:?}; refusing rather than tearing it down",
+            sdk_cids.err()
+        );
+        return Some(HandledRequestResult {
+            response: InternalServiceResponse::ConnectionManagementFailure(
+                ConnectionManagementFailure {
+                    cid: session_cid,
+                    error: "Could not verify the state of this session. Nothing was changed; \
+                            try again."
+                        .to_string(),
+                    request_id: Some(request_id),
+                },
+            ),
+            uuid: conn_id,
+        });
+    }
+    let sdk_active_cids: Vec<u64> = sdk_cids.unwrap_or_default();
 
     info!(target: "citadel", "ClaimSession: SDK reports {} active sessions: {:?}", sdk_active_cids.len(), sdk_active_cids);
 

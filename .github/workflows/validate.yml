@@ -30,9 +30,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "ci-${{ matrix.os }}"
-      - run: cargo nextest run --features=vendored
+      # `websockets` is not a default feature, so without naming it here the
+      # entire io_interface module is `#[cfg]`-ed out and 27 tests never
+      # compile -- among them every test of the Origin allowlist, the Host
+      # policy, and TLS enforcement on the loopback listener. Measured on this
+      # crate: 6 tests without it, 33 with.
+      #
+      # Those are the tests that hold the agent's security boundary: an
+      # unlisted origin refused at the handshake, a permitted origin on a
+      # foreign Host refused 403, plain ws to the TLS listener refused, and the
+      # wildcard unable to hide inside a list. The agent is loopback-only by
+      # design and this is what enforces it.
+      - run: cargo nextest run --features=vendored,websockets
         if: startsWith(matrix.os, 'windows')
-      - run: cargo nextest run
+      - run: cargo nextest run --features=websockets
         if: ${{ !startsWith(matrix.os, 'windows') }}
 
   clippy:

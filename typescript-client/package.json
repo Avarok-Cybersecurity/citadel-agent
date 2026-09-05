@@ -23,7 +23,7 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "test": "tsc && node scripts/assert-tests-exist.mjs && node --test \"dist/**/*.test.js\""
+    "test": "tsc && node scripts/assert-tests-exist.mjs && node --test $(node scripts/assert-tests-exist.mjs --print)"
   },
   "sideEffects": [
     "./snippets/*"

@@ -147,6 +147,21 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
         let ws_server_io = WebSocketInterface::new(bind_address, origins).await?;
         Ok(ws_server_io.into())
     }
+
+    /// The WebSocket agent terminating TLS on the user's own machine: see
+    /// citadel_internal_service_connector::io_interface::tls for why, and host_policy for
+    /// what `published_name` gates.
+    #[cfg(feature = "websockets")]
+    pub async fn new_websocket_tls(
+        bind_address: SocketAddr,
+        origins: OriginPolicy,
+        published_name: Option<&str>,
+        acceptor: citadel_internal_service_connector::io_interface::tls::TlsAcceptor,
+    ) -> std::io::Result<CitadelWorkspaceService<WebSocketInterface, R>> {
+        let ws_server_io =
+            WebSocketInterface::new_tls(bind_address, origins, published_name, acceptor).await?;
+        Ok(ws_server_io.into())
+    }
 }
 
 impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {

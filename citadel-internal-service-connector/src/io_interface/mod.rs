@@ -2,11 +2,15 @@ use async_trait::async_trait;
 use citadel_internal_service_types::InternalServicePayload;
 use futures::{Sink, Stream};
 
+#[cfg(feature = "websockets")]
+pub mod host_policy;
 pub mod in_memory;
 #[cfg(feature = "websockets")]
 pub mod origin_policy;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tcp;
+#[cfg(feature = "websockets")]
+pub mod tls;
 #[cfg(feature = "websockets")]
 pub mod websockets;
 

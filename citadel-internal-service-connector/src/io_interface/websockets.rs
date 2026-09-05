@@ -11,7 +11,22 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+/// How long one client's TLS accept plus HTTP upgrade may take before its socket is dropped.
+///
+/// Generous for a real browser on loopback (both are sub-millisecond there) and short enough
+/// that a client which connects and says nothing cannot hold a slot: it is the whole reason
+/// the handshake is bounded at all.
+const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How many completed-but-unclaimed connections may wait for the kernel to take them.
+///
+/// Bounded on purpose: if the kernel stops draining, the acceptor should slow down rather than
+/// let a queue of live sockets grow without limit.
+const READY_CONNECTION_BUFFER: usize = 16;
+
+use crate::io_interface::host_policy::HostPolicy;
 use crate::io_interface::origin_policy::OriginPolicy;
+use crate::io_interface::tls::{TlsAcceptor, Transport};
 use citadel_io::tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{
     accept_hdr_async,
@@ -22,19 +37,68 @@ use tokio_tungstenite::{
 };
 
 pub struct WebSocketInterface {
-    listener: TcpListener,
+    listener: Option<TcpListener>,
+    /// Recorded at bind time so `local_addr()` keeps answering after the listener moves into
+    /// the accept task.
+    bound_addr: SocketAddr,
     origins: OriginPolicy,
+    hosts: HostPolicy,
+    tls: Option<TlsAcceptor>,
+    /// Connections whose handshake COMPLETED, filled by a task started on first use.
+    ready: Option<citadel_io::tokio::sync::mpsc::Receiver<(WebSocketSink, WebSocketStream_)>>,
+}
+
+impl std::fmt::Debug for WebSocketInterface {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebSocketInterface")
+            .field("local_addr", &self.bound_addr)
+            .field("origins", &self.origins)
+            .field("hosts", &self.hosts)
+            .field("tls", &self.tls.as_ref().map(|_| "acceptor"))
+            .finish()
+    }
 }
 
 impl WebSocketInterface {
-    /// Bind, admitting only handshakes `origins` permits.
-    ///
-    /// The policy is a required argument rather than an option with a default:
-    /// the convenient default is `Any`, which is exactly the hole this closes,
-    /// and a caller that has not thought about it should be made to.
+    /// A plain listener: any Host (a proxy in front validates it), no TLS.
     pub async fn new(addr: SocketAddr, origins: OriginPolicy) -> std::io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
-        Ok(Self { listener, origins })
+        let bound_addr = listener.local_addr()?;
+        Ok(Self {
+            listener: Some(listener),
+            bound_addr,
+            origins,
+            hosts: HostPolicy::Any,
+            tls: None,
+            ready: None,
+        })
+    }
+
+    /// A TLS listener on the user's own machine, reachable as `127.0.0.1`, `localhost`, `[::1]`
+    /// and -- if given -- one `published_name` that the operator points at 127.0.0.1 and holds
+    /// the certificate for. The Host allowlist is derived from the port actually bound, so the
+    /// two cannot disagree. See io_interface/tls.rs and host_policy.rs for why each exists.
+    pub async fn new_tls(
+        addr: SocketAddr,
+        origins: OriginPolicy,
+        published_name: Option<&str>,
+        acceptor: TlsAcceptor,
+    ) -> std::io::Result<Self> {
+        let listener = TcpListener::bind(addr).await?;
+        let bound_addr = listener.local_addr()?;
+        let hosts = HostPolicy::loopback(bound_addr.port(), published_name);
+        Ok(Self {
+            listener: Some(listener),
+            bound_addr,
+            origins,
+            hosts,
+            tls: Some(acceptor),
+            ready: None,
+        })
+    }
+
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        Ok(self.bound_addr)
     }
 }
 
@@ -47,9 +111,10 @@ impl WebSocketInterface {
 // this closure has to satisfy. It cannot be boxed without failing to implement
 // the trait, and it is constructed at most once per refused handshake.
 #[allow(clippy::result_large_err)]
-fn origin_check(
-    origins: &OriginPolicy,
-) -> impl FnOnce(&Request, Response) -> Result<Response, ErrorResponse> + '_ {
+fn origin_check<'a>(
+    origins: &'a OriginPolicy,
+    hosts: &'a HostPolicy,
+) -> impl FnOnce(&Request, Response) -> Result<Response, ErrorResponse> + 'a {
     move |request: &Request, response: Response| {
         // A header that is not valid UTF-8 is not an origin we listed, so it
         // is treated as present-and-unrecognised rather than as absent.
@@ -57,6 +122,23 @@ fn origin_check(
             .headers()
             .get("origin")
             .map(|value| value.to_str().unwrap_or("<invalid>"));
+        let host: Option<&str> = request
+            .headers()
+            .get("host")
+            .map(|value| value.to_str().unwrap_or("<invalid>"));
+        if origins.permits(origin) && !hosts.permits(host) {
+            // A permitted Origin on a Host that is not this socket's: DNS rebinding, or a
+            // proxy that rewrote Host. Refuse before the Origin branch below can say "ok".
+            log::warn!(
+                target: "citadel",
+                "WebSocket handshake REFUSED for host {:?}: not one of this listener's names",
+                host.unwrap_or("<none>")
+            );
+            let mut refusal =
+                ErrorResponse::new(Some("host not one of this agent's names".to_string()));
+            *refusal.status_mut() = StatusCode::FORBIDDEN;
+            return Err(refusal);
+        }
 
         if origins.permits(origin) {
             return Ok(response);
@@ -80,37 +162,106 @@ impl IOInterface for WebSocketInterface {
     type Sink = WebSocketSink;
     type Stream = WebSocketStream_;
 
+    /// Hand back the next connection whose handshake COMPLETED.
+    ///
+    /// Accepting and handshaking are separated on purpose. The TLS accept and the HTTP upgrade
+    /// both READ from the socket, and this used to await them inline on the accept path, so a
+    /// client that connected and then said nothing parked the only consumer of this listener
+    /// (kernel/mod.rs runs `while let Some(..) = io.next_connection().await`) for as long as it
+    /// cared to wait. No allowed Origin was needed: the Origin and Host checks live inside the
+    /// upgrade, i.e. AFTER the read, so any page could keep the agent unreachable with a
+    /// `<link rel="preconnect">` to the loopback socket. Now one task accepts, each socket
+    /// handshakes in its own task under a timeout, and only finished connections arrive here.
     async fn next_connection(&mut self) -> Option<(Self::Sink, Self::Stream)> {
-        loop {
-            match self.listener.accept().await {
-                Ok((stream, addr)) => {
-                    log::debug!(target: "citadel", "New WebSocket connection from {}", addr);
+        if self.ready.is_none() {
+            self.ready = Some(self.spawn_accept_loop()?);
+        }
+        self.ready.as_mut().expect("just set").recv().await
+    }
+}
 
-                    match accept_hdr_async(stream, origin_check(&self.origins)).await {
-                        Ok(ws_stream) => {
-                            let (sink, stream) = ws_stream.split();
-                            return Some((
+impl WebSocketInterface {
+    /// Start accepting. Returns the receiving end of completed connections, or `None` if this
+    /// interface's listener was already taken (only possible if it is polled after a move).
+    ///
+    /// The channel is bounded: a kernel that stops draining slows the acceptor down rather than
+    /// letting a queue of live sockets grow without limit.
+    fn spawn_accept_loop(
+        &mut self,
+    ) -> Option<citadel_io::tokio::sync::mpsc::Receiver<(WebSocketSink, WebSocketStream_)>> {
+        let listener = self.listener.take()?;
+        let (tx, rx) = citadel_io::tokio::sync::mpsc::channel(READY_CONNECTION_BUFFER);
+        let tls = self.tls.clone();
+        let origins = self.origins.clone();
+        let hosts = self.hosts.clone();
+        citadel_io::tokio::task::spawn(async move {
+            loop {
+                let (stream, addr) = match listener.accept().await {
+                    Ok(pair) => pair,
+                    Err(err) => {
+                        log::error!(target: "citadel", "Failed to accept TCP connection: {}", err);
+                        continue;
+                    }
+                };
+                log::debug!(target: "citadel", "New WebSocket connection from {}", addr);
+                let tx = tx.clone();
+                let tls = tls.clone();
+                let origins = origins.clone();
+                let hosts = hosts.clone();
+                citadel_io::tokio::task::spawn(async move {
+                    let handshake = async {
+                        let transport = match tls {
+                            None => Transport::Plain(stream),
+                            Some(acceptor) => match acceptor.accept(stream).await {
+                                Ok(tls_stream) => Transport::Tls(Box::new(tls_stream)),
+                                Err(err) => {
+                                    // A plain `ws://` client, or a browser that does not trust
+                                    // the certificate. Not this listener's problem to solve.
+                                    log::warn!(target: "citadel", "TLS handshake failed from {}: {}", addr, err);
+                                    return None;
+                                }
+                            },
+                        };
+                        match accept_hdr_async(transport, origin_check(&origins, &hosts)).await {
+                            Ok(ws_stream) => Some(ws_stream),
+                            Err(err) => {
+                                log::error!(target: "citadel", "WebSocket handshake failed: {}", err);
+                                None
+                            }
+                        }
+                    };
+                    let done = match citadel_io::tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake)
+                        .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => {
+                            log::warn!(
+                                target: "citadel",
+                                "WebSocket handshake from {} did not complete within {:?}; dropping it",
+                                addr, HANDSHAKE_TIMEOUT
+                            );
+                            None
+                        }
+                    };
+                    if let Some(ws_stream) = done {
+                        let (sink, stream) = ws_stream.split();
+                        // A send failure means this interface was dropped; the socket goes too.
+                        let _ = tx
+                            .send((
                                 WebSocketSink { inner: sink },
                                 WebSocketStream_ { inner: stream },
-                            ));
-                        }
-                        Err(err) => {
-                            log::error!(target: "citadel", "WebSocket handshake failed: {}", err);
-                            continue;
-                        }
+                            ))
+                            .await;
                     }
-                }
-                Err(err) => {
-                    log::error!(target: "citadel", "Failed to accept TCP connection: {}", err);
-                    continue;
-                }
+                });
             }
-        }
+        });
+        Some(rx)
     }
 }
 
 pub struct WebSocketSink {
-    inner: futures_util::stream::SplitSink<WebSocketStream<TcpStream>, Message>,
+    inner: futures_util::stream::SplitSink<WebSocketStream<Transport>, Message>,
 }
 
 impl Sink<InternalServicePayload> for WebSocketSink {
@@ -148,7 +299,7 @@ impl Sink<InternalServicePayload> for WebSocketSink {
 }
 
 pub struct WebSocketStream_ {
-    inner: futures_util::stream::SplitStream<WebSocketStream<TcpStream>>,
+    inner: futures_util::stream::SplitStream<WebSocketStream<Transport>>,
 }
 
 impl Stream for WebSocketStream_ {
@@ -308,7 +459,7 @@ mod tests {
         let mut interface = WebSocketInterface::new(addr, OriginPolicy::Any)
             .await
             .unwrap();
-        let bound_addr = interface.listener.local_addr().unwrap();
+        let bound_addr = interface.local_addr().unwrap();
 
         // Spawn server task
         let server_task = tokio::spawn(async move {
@@ -394,7 +545,7 @@ mod tests {
         let mut interface = WebSocketInterface::new(addr, OriginPolicy::Any)
             .await
             .unwrap();
-        let bound_addr = interface.listener.local_addr().unwrap();
+        let bound_addr = interface.local_addr().unwrap();
 
         // Spawn server task that echoes JSON
         let server_task = tokio::spawn(async move {
@@ -473,7 +624,7 @@ mod tests {
         let mut interface = WebSocketInterface::new(addr, OriginPolicy::Any)
             .await
             .unwrap();
-        let bound_addr = interface.listener.local_addr().unwrap();
+        let bound_addr = interface.local_addr().unwrap();
 
         // Spawn server task that handles multiple messages
         let server_task = tokio::spawn(async move {
@@ -550,7 +701,7 @@ mod tests {
         let mut interface = WebSocketInterface::new(addr, OriginPolicy::Any)
             .await
             .unwrap();
-        let bound_addr = interface.listener.local_addr().unwrap();
+        let bound_addr = interface.local_addr().unwrap();
 
         // Spawn server task
         let server_task = tokio::spawn(async move {
@@ -605,7 +756,7 @@ mod tests {
             let interface = WebSocketInterface::new(addr, OriginPolicy::parse(spec).unwrap())
                 .await
                 .unwrap();
-            let bound = interface.listener.local_addr().unwrap();
+            let bound = interface.local_addr().unwrap();
             (interface, bound)
         }
 

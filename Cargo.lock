@@ -668,9 +668,11 @@ dependencies = [
  "log",
  "parking_lot",
  "rand 0.8.5",
+ "rcgen",
  "serde",
  "serde_json",
  "tokio 1.49.0",
+ "tokio-rustls",
  "tokio-tungstenite 0.21.0",
  "tungstenite 0.21.0",
  "uuid",
@@ -3521,6 +3523,7 @@ version = "0.23.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c665f33d38cea657d9614f766881e4d510e0eda4239891eea56b4cadcf01801b"
 dependencies = [
+ "log",
  "once_cell",
  "ring",
  "rustls-pki-types",

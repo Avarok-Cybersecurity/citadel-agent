@@ -50,6 +50,59 @@ pub enum DisconnectedConnection<R: Ratchet> {
     },
 }
 
+/// Put back what STEP 1 removed, and answer a failure.
+///
+/// The map entry is removed BEFORE the SDK disconnect so RAII cleanup cannot fire mid-call.
+/// When that disconnect then fails or times out, the SDK may well still hold the session —
+/// and both failure branches used to log "Proceeding anyway" and return a
+/// DisconnectNotification, i.e. success. The result is a session the SDK has and the
+/// connection map does not: the next `Connect` for that username finds no entry, goes straight
+/// to `remote.connect()`, and is refused because the SDK still has one. The account is
+/// unreachable until the agent restarts, and the person was told they had signed out.
+///
+/// Restoring the entry makes the two views agree again. A later `Connect` then asks the SDK
+/// what is true and either claims the session or clears a genuinely stale one
+/// (requests/session_liveness.rs), which is the recovery path that exists for exactly this.
+fn restore_and_report<R: Ratchet>(
+    this: &CitadelWorkspaceService<impl IOInterface, R>,
+    disconnected: DisconnectedConnection<R>,
+    cid: u64,
+    peer_cid: Option<u64>,
+    request_id: Uuid,
+    uuid: Uuid,
+    reason: String,
+) -> Option<HandledRequestResult> {
+    match disconnected {
+        DisconnectedConnection::C2S { connection, .. } => {
+            this.server_connection_map.write().insert(cid, connection);
+        }
+        DisconnectedConnection::P2P {
+            peer_connection,
+            peer_cid: target,
+            ..
+        } => {
+            if let Some(session) = this.server_connection_map.write().get_mut(&cid) {
+                session.peers.insert(target, peer_connection);
+            }
+        }
+    }
+    Some(HandledRequestResult {
+        response: InternalServiceResponse::PeerDisconnectFailure(PeerDisconnectFailure {
+            cid,
+            message: match peer_cid {
+                Some(peer) => format!(
+                    "Peer {peer} was not disconnected ({reason}). Nothing was changed; try again."
+                ),
+                None => format!(
+                    "The session was not disconnected ({reason}). Nothing was signed out; try again."
+                ),
+            },
+            request_id: Some(request_id),
+        }),
+        uuid,
+    })
+}
+
 /// Disconnects a peer or C2S connection at the SDK/protocol layer.
 ///
 /// On success, guarantees the peer/session has been disconnected from the network AND cleared from the SDK.
@@ -371,18 +424,36 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         }
         Ok(Err(err)) => {
             citadel_sdk::logging::warn!(
-                "[Disconnect] SDK disconnect failed for CID {} peer {:?}: {:?}. Proceeding anyway.",
+                "[Disconnect] SDK disconnect FAILED for CID {} peer {:?}: {:?}. Restoring state and reporting failure.",
                 cid,
                 peer_cid,
                 err
             );
+            return restore_and_report(
+                this,
+                disconnected,
+                cid,
+                peer_cid,
+                request_id,
+                uuid,
+                format!("{err:?}"),
+            );
         }
         Err(_elapsed) => {
             citadel_sdk::logging::warn!(
-                "[Disconnect] SDK disconnect timed out after {:?} for CID {} peer {:?}. Proceeding anyway.",
+                "[Disconnect] SDK disconnect TIMED OUT after {:?} for CID {} peer {:?}. Restoring state and reporting failure.",
                 SDK_DISCONNECT_TIMEOUT,
                 cid,
                 peer_cid
+            );
+            return restore_and_report(
+                this,
+                disconnected,
+                cid,
+                peer_cid,
+                request_id,
+                uuid,
+                format!("the protocol layer did not respond within {SDK_DISCONNECT_TIMEOUT:?}"),
             );
         }
     }

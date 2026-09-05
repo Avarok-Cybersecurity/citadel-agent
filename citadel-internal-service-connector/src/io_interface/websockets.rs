@@ -11,7 +11,9 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use crate::io_interface::host_policy::HostPolicy;
 use crate::io_interface::origin_policy::OriginPolicy;
+use crate::io_interface::tls::{TlsAcceptor, Transport};
 use citadel_io::tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{
     accept_hdr_async,
@@ -24,17 +26,55 @@ use tokio_tungstenite::{
 pub struct WebSocketInterface {
     listener: TcpListener,
     origins: OriginPolicy,
+    hosts: HostPolicy,
+    tls: Option<TlsAcceptor>,
+}
+
+impl std::fmt::Debug for WebSocketInterface {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebSocketInterface")
+            .field("local_addr", &self.listener.local_addr().ok())
+            .field("origins", &self.origins)
+            .field("hosts", &self.hosts)
+            .field("tls", &self.tls.as_ref().map(|_| "acceptor"))
+            .finish()
+    }
 }
 
 impl WebSocketInterface {
-    /// Bind, admitting only handshakes `origins` permits.
-    ///
-    /// The policy is a required argument rather than an option with a default:
-    /// the convenient default is `Any`, which is exactly the hole this closes,
-    /// and a caller that has not thought about it should be made to.
+    /// A plain listener: any Host (a proxy in front validates it), no TLS.
     pub async fn new(addr: SocketAddr, origins: OriginPolicy) -> std::io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
-        Ok(Self { listener, origins })
+        Ok(Self {
+            listener,
+            origins,
+            hosts: HostPolicy::Any,
+            tls: None,
+        })
+    }
+
+    /// A TLS listener on the user's own machine, reachable as `127.0.0.1`, `localhost`, `[::1]`
+    /// and -- if given -- one `published_name` that the operator points at 127.0.0.1 and holds
+    /// the certificate for. The Host allowlist is derived from the port actually bound, so the
+    /// two cannot disagree. See io_interface/tls.rs and host_policy.rs for why each exists.
+    pub async fn new_tls(
+        addr: SocketAddr,
+        origins: OriginPolicy,
+        published_name: Option<&str>,
+        acceptor: TlsAcceptor,
+    ) -> std::io::Result<Self> {
+        let listener = TcpListener::bind(addr).await?;
+        let hosts = HostPolicy::loopback(listener.local_addr()?.port(), published_name);
+        Ok(Self {
+            listener,
+            origins,
+            hosts,
+            tls: Some(acceptor),
+        })
+    }
+
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.listener.local_addr()
     }
 }
 
@@ -47,9 +87,10 @@ impl WebSocketInterface {
 // this closure has to satisfy. It cannot be boxed without failing to implement
 // the trait, and it is constructed at most once per refused handshake.
 #[allow(clippy::result_large_err)]
-fn origin_check(
-    origins: &OriginPolicy,
-) -> impl FnOnce(&Request, Response) -> Result<Response, ErrorResponse> + '_ {
+fn origin_check<'a>(
+    origins: &'a OriginPolicy,
+    hosts: &'a HostPolicy,
+) -> impl FnOnce(&Request, Response) -> Result<Response, ErrorResponse> + 'a {
     move |request: &Request, response: Response| {
         // A header that is not valid UTF-8 is not an origin we listed, so it
         // is treated as present-and-unrecognised rather than as absent.
@@ -57,6 +98,23 @@ fn origin_check(
             .headers()
             .get("origin")
             .map(|value| value.to_str().unwrap_or("<invalid>"));
+        let host: Option<&str> = request
+            .headers()
+            .get("host")
+            .map(|value| value.to_str().unwrap_or("<invalid>"));
+        if origins.permits(origin) && !hosts.permits(host) {
+            // A permitted Origin on a Host that is not this socket's: DNS rebinding, or a
+            // proxy that rewrote Host. Refuse before the Origin branch below can say "ok".
+            log::warn!(
+                target: "citadel",
+                "WebSocket handshake REFUSED for host {:?}: not one of this listener's names",
+                host.unwrap_or("<none>")
+            );
+            let mut refusal =
+                ErrorResponse::new(Some("host not one of this agent's names".to_string()));
+            *refusal.status_mut() = StatusCode::FORBIDDEN;
+            return Err(refusal);
+        }
 
         if origins.permits(origin) {
             return Ok(response);
@@ -86,7 +144,21 @@ impl IOInterface for WebSocketInterface {
                 Ok((stream, addr)) => {
                     log::debug!(target: "citadel", "New WebSocket connection from {}", addr);
 
-                    match accept_hdr_async(stream, origin_check(&self.origins)).await {
+                    let transport = match &self.tls {
+                        None => Transport::Plain(stream),
+                        Some(acceptor) => match acceptor.accept(stream).await {
+                            Ok(tls) => Transport::Tls(Box::new(tls)),
+                            Err(err) => {
+                                // A plain `ws://` client, or a browser that does not trust the
+                                // certificate. Not this listener's problem to solve; say so.
+                                log::warn!(target: "citadel", "TLS handshake failed from {}: {}", addr, err);
+                                continue;
+                            }
+                        },
+                    };
+                    match accept_hdr_async(transport, origin_check(&self.origins, &self.hosts))
+                        .await
+                    {
                         Ok(ws_stream) => {
                             let (sink, stream) = ws_stream.split();
                             return Some((
@@ -110,7 +182,7 @@ impl IOInterface for WebSocketInterface {
 }
 
 pub struct WebSocketSink {
-    inner: futures_util::stream::SplitSink<WebSocketStream<TcpStream>, Message>,
+    inner: futures_util::stream::SplitSink<WebSocketStream<Transport>, Message>,
 }
 
 impl Sink<InternalServicePayload> for WebSocketSink {
@@ -148,7 +220,7 @@ impl Sink<InternalServicePayload> for WebSocketSink {
 }
 
 pub struct WebSocketStream_ {
-    inner: futures_util::stream::SplitStream<WebSocketStream<TcpStream>>,
+    inner: futures_util::stream::SplitStream<WebSocketStream<Transport>>,
 }
 
 impl Stream for WebSocketStream_ {

@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-websockets = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:futures-util"]
+websockets = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:futures-util", "dep:tokio-rustls"]
 js = ["uuid/js"]
 vendored = ["citadel_sdk/vendored"]
 
@@ -35,6 +35,11 @@ citadel_sdk = { workspace = true, optional = true }
 
 # WebSocket dependencies
 tokio-tungstenite = { version = "0.21", optional = true }
+# TLS on the loopback listener (io_interface/tls.rs). rustls, not OpenSSL: the vendored
+# OpenSSL the release links is for the SDK; this listener wants no second copy of it.
+# `ring`, explicitly: tokio-rustls 0.26 defaults to aws-lc-rs, and the rest of the graph
+# (citadel_wire) is on ring -- one provider, not two, and `crypto::ring` must exist.
+tokio-rustls = { version = "0.26", optional = true, default-features = false, features = ["ring", "tls12", "logging"] }
 tungstenite = { version = "0.21", optional = true }
 futures-util = { version = "0.3", optional = true }
 
@@ -55,6 +60,8 @@ citadel-internal-service-test-common = { workspace = true }
 citadel_io = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+# Self-signed certificates for the TLS listener tests; already in the graph via citadel_wire.
+rcgen = "0.14"
 rand = "0.8.5"
 tokio = { workspace = true, features = ["full"] }
 env_logger = "0.10"

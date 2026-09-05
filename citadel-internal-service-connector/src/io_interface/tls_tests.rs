@@ -158,3 +158,35 @@ fn html_where_a_certificate_should_be_is_named_not_swallowed() {
         .expect("html is not a key");
     assert!(err.contains("private key"), "{err}");
 }
+
+/// A client that connects and then says nothing must not hold the listener.
+///
+/// The TLS accept and the HTTP upgrade both read from the socket. When they ran inline on the
+/// accept loop, one idle socket parked `next_connection` -- the kernel's only consumer -- for
+/// as long as the client cared to wait, and no allowed Origin was needed to open it. This
+/// asserts the property that fixes it: a second client completes while the first is idle.
+#[tokio::test]
+async fn an_idle_client_does_not_block_the_next_one() {
+    let (mut interface, addr, connector) = listener().await;
+    let served = tokio::spawn(async move { interface.next_connection().await.is_some() });
+
+    // Connect and send nothing at all: no TLS ClientHello, no bytes.
+    let _idle = TcpStream::connect(addr).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // A real client, arriving second, must still be served promptly.
+    let ok = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        handshake(addr, &connector, &format!("{NAME}:{}", addr.port())),
+    )
+    .await
+    .expect("the second client's handshake must not wait on the idle one");
+    ok.expect("101");
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(5), served)
+            .await
+            .expect("the interface must hand out the second connection")
+            .unwrap(),
+        "the server never saw the second connection"
+    );
+}

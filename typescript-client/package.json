@@ -31,7 +31,7 @@
   "dependencies": {
     "@avarok/citadel-protocol-types": "^0.14.0",
     "ws": "^8.0.0",
-    "uuid": "^9.0.0"
+    "uuid": "^14.0.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0",

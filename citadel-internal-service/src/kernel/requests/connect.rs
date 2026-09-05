@@ -113,6 +113,16 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     .to_string(),
                 request_id: Some(request_id),
             });
+            // Released before returning, like every other exit from this
+            // function. It was not, and this is the one path that can be taken
+            // by a transient fault rather than a user decision: one `Err` from
+            // `remote.sessions()` left the username in `connecting_usernames`
+            // for the life of the process, so every later Connect was refused
+            // by GUARD 1 with "Connection already in progress". The account was
+            // unreachable until the agent restarted -- and the message above
+            // tells the user to try again, which is the one thing that could
+            // never work.
+            cleanup_username(this, &username);
             return Some(HandledRequestResult { response, uuid });
         }
         let sdk_active = liveness == session_liveness::SessionLiveness::Active;

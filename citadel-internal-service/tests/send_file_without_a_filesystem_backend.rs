@@ -159,3 +159,53 @@ async fn a_peer_sending_to_an_in_memory_agent_is_told_why_it_cannot() {
         "refused, but not saying why: {message}"
     );
 }
+
+/// A pull the server cannot fulfil must be reported too. PullObject also went
+/// out with a plain `send`: the client was told DownloadFileSuccess, the
+/// server's refusal (a RE-VFS result carrying the error) fell into the kernel's
+/// catch-all as "Unhandled node result", and the correlation registered for the
+/// pull stayed queued -- where it would claim the NEXT pull's ticks. The browser
+/// gave up after its own 30 s timeout, without a reason.
+#[tokio::test]
+async fn a_download_the_server_cannot_fulfil_is_reported() {
+    common::setup_log();
+    let (server, server_addr) = server_test_node_skip_cert_verification(
+        ReceiverFileTransferKernel::<StackedRatchet>(None, Arc::new(AtomicBool::new(false))),
+        |b| {
+            b.with_backend(test_backend());
+        },
+    );
+    tokio::task::spawn(server);
+    let agent = spawn_agent(test_backend()).await;
+    tokio::time::sleep(Duration::from_millis(2000)).await;
+    let (tx, mut rx, cid) = login(agent, server_addr, "john.doe").await;
+
+    let request_id = Uuid::new_v4();
+    tx.send(InternalServiceRequest::DownloadFile {
+        virtual_directory: PathBuf::from("/vfs/never-uploaded.txt"),
+        security_level: None,
+        delete_on_pull: false,
+        cid,
+        peer_cid: None,
+        request_id,
+    })
+    .unwrap();
+    let found = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            match rx.recv().await.expect("service stream closed") {
+                InternalServiceResponse::DownloadFileFailure(f) => return f,
+                // "under way": the refusal must still follow it.
+                InternalServiceResponse::DownloadFileSuccess(_) => continue,
+                other => panic!("unexpected response while waiting for the refusal: {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("DownloadFile went silent: no DownloadFileFailure within 20 s");
+    assert_eq!(
+        found.request_id,
+        Some(request_id),
+        "the refusal names another request"
+    );
+    assert!(!found.message.is_empty(), "refused without a reason");
+}

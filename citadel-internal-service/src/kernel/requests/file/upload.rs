@@ -880,33 +880,35 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     let this = this.clone();
                     tokio::task::spawn(async move {
                         use futures::StreamExt;
-                        match subscription.next().await {
-                            Some(citadel_sdk::prelude::NodeResult::InternalServerError(err)) => {
-                                if is_revfs_push {
-                                    if let Some(conn) =
-                                        this.server_connection_map.write().get_mut(&cid)
-                                    {
-                                        conn.revfs_correlations
-                                            .cancel_push(correlation_scope, request_id);
+                        if let Some(evt) = subscription.next().await {
+                            match super::refusal(&evt) {
+                                Some(message) => {
+                                    if is_revfs_push {
+                                        if let Some(conn) =
+                                            this.server_connection_map.write().get_mut(&cid)
+                                        {
+                                            conn.revfs_correlations
+                                                .cancel_push(correlation_scope, request_id);
+                                        }
                                     }
+                                    let _ = crate::kernel::send_response_to_tcp_client(
+                                        &this.tx_to_localhost_clients,
+                                        InternalServiceResponse::SendFileRequestFailure(
+                                            SendFileRequestFailure {
+                                                cid,
+                                                message,
+                                                request_id: Some(request_id),
+                                            },
+                                        ),
+                                        uuid,
+                                    );
                                 }
-                                let _ = crate::kernel::send_response_to_tcp_client(
-                                    &this.tx_to_localhost_clients,
-                                    InternalServiceResponse::SendFileRequestFailure(
-                                        SendFileRequestFailure {
-                                            cid,
-                                            message: err.message,
-                                            request_id: Some(request_id),
-                                        },
-                                    ),
-                                    uuid,
-                                );
+                                None => {
+                                    let _ =
+                                        crate::kernel::responses::handle_node_result(&this, evt)
+                                            .await;
+                                }
                             }
-                            Some(other) => {
-                                let _ = crate::kernel::responses::handle_node_result(&this, other)
-                                    .await;
-                            }
-                            None => {}
                         }
                     });
                     None

@@ -1056,6 +1056,7 @@ mod tests {
 
             let internal_service = NodeBuilder::default()
                 .with_node_type(NodeType::Peer)
+                .with_backend(crate::common::test_backend())
                 .with_insecure_skip_cert_verification()
                 .build(internal_service_kernel)?;
 

@@ -303,6 +303,7 @@ pub async fn register_and_connect_to_server_then_peers_with_udp<R: Ratchet>(
         let internal_service_kernel =
             CitadelWorkspaceService::<_, R>::new_tcp(bind_address_internal_service).await?;
         let internal_service = NodeBuilder::default()
+            .with_backend(test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
             .build(internal_service_kernel)?;
@@ -589,6 +590,19 @@ pub async fn send<T: IOInterface>(
     Ok(())
 }
 
+/// A filesystem store in a fresh directory under the OS temp dir.
+///
+/// A node built with no backend gets the SDK's default: a filesystem store under
+/// ~/.citadel, never removed. Every run of every test through these helpers left
+/// one directory per node there -- 27,000 on one developer machine. In-memory is
+/// not a substitute: RE-VFS file transfer needs a filesystem backend, and with
+/// one in memory the transfer tests hang instead of failing. So: the same kind
+/// of store, somewhere the OS cleans up.
+pub fn test_backend() -> BackendType {
+    let dir = std::env::temp_dir().join(format!("citadel-test-{}", uuid::Uuid::new_v4()));
+    BackendType::Filesystem(dir.to_string_lossy().into_owned())
+}
+
 pub fn server_test_node_skip_cert_verification<'a, K: NetKernel<R> + 'a, R: Ratchet>(
     kernel: K,
     opts: impl FnOnce(&mut NodeBuilder<R>),
@@ -597,6 +611,7 @@ pub fn server_test_node_skip_cert_verification<'a, K: NetKernel<R> + 'a, R: Ratc
     let tcp_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let bind_addr = tcp_listener.local_addr().unwrap();
     let builder = builder
+        .with_backend(test_backend())
         .with_node_type(NodeType::Server(bind_addr))
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(ServerMode::OrderedReliable(
@@ -621,6 +636,7 @@ pub fn server_test_node_skip_cert_verification_with_password<
     let tcp_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let bind_addr = tcp_listener.local_addr().unwrap();
     let builder = builder
+        .with_backend(test_backend())
         .with_node_type(NodeType::Server(bind_addr))
         .with_server_password(server_password)
         .with_insecure_skip_cert_verification()

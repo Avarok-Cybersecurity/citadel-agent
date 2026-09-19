@@ -10,7 +10,7 @@ use citadel_sdk::prelude::{
 };
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
@@ -90,11 +90,54 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     }; // Lock dropped here - BEFORE any await
 
     let response = match pull_request {
-        Ok(request) => match remote.send(request).await {
-            Ok(_) => InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess {
-                cid,
-                request_id: Some(request_id),
-            }),
+        Ok(request) => match remote.send_callback_subscription(request).await {
+            Ok(mut subscription) => {
+                // A plain `send` left the SDK's refusal of this pull (e.g. an
+                // in-memory backend: "Both nodes must use a filesystem backend")
+                // with no listener: it fell into the kernel's catch-all, the
+                // client had already been told the pull was under way, and the
+                // correlation registered above stayed queued -- to claim the
+                // NEXT pull's ticks. Same shape as SendFile (upload.rs).
+                let _ = crate::kernel::send_response_to_tcp_client(
+                    &this.tx_to_localhost_clients,
+                    InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess {
+                        cid,
+                        request_id: Some(request_id),
+                    }),
+                    uuid,
+                );
+                let this = this.clone();
+                tokio::task::spawn(async move {
+                    use futures::StreamExt;
+                    if let Some(evt) = subscription.next().await {
+                        match super::refusal(&evt) {
+                            Some(message) => {
+                                if let Some(conn) = this.server_connection_map.write().get_mut(&cid)
+                                {
+                                    conn.revfs_correlations
+                                        .cancel_pull(correlation_scope, request_id);
+                                }
+                                let _ = crate::kernel::send_response_to_tcp_client(
+                                    &this.tx_to_localhost_clients,
+                                    InternalServiceResponse::DownloadFileFailure(
+                                        DownloadFileFailure {
+                                            cid,
+                                            message,
+                                            request_id: Some(request_id),
+                                        },
+                                    ),
+                                    uuid,
+                                );
+                            }
+                            None => {
+                                let _ =
+                                    crate::kernel::responses::handle_node_result(&this, evt).await;
+                            }
+                        }
+                    }
+                });
+                return None;
+            }
             Err(err) => {
                 // The pull never went out, so its correlation entry must not
                 // sit in the FIFO and claim the NEXT pull's tick stream.

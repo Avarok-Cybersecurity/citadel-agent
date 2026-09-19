@@ -627,7 +627,7 @@ async fn materialize_byte_contents_in(
     }
 }
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
@@ -861,16 +861,55 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
     match send_request {
         Ok(request) => {
-            let result = remote.send(request).await;
+            let result = remote.send_callback_subscription(request).await;
             match result {
-                Ok(_) => {
+                Ok(mut subscription) => {
                     info!(target: "citadel","InternalServiceRequest Send File Success");
                     let response =
                         InternalServiceResponse::SendFileRequestSuccess(SendFileRequestSuccess {
                             cid,
                             request_id: Some(request_id),
                         });
-                    Some(HandledRequestResult { response, uuid })
+                    // "Queued" goes out first, so a later failure is never
+                    // overtaken by it.
+                    let _ = crate::kernel::send_response_to_tcp_client(
+                        &this.tx_to_localhost_clients,
+                        response,
+                        uuid,
+                    );
+                    let this = this.clone();
+                    tokio::task::spawn(async move {
+                        use futures::StreamExt;
+                        match subscription.next().await {
+                            Some(citadel_sdk::prelude::NodeResult::InternalServerError(err)) => {
+                                if is_revfs_push {
+                                    if let Some(conn) =
+                                        this.server_connection_map.write().get_mut(&cid)
+                                    {
+                                        conn.revfs_correlations
+                                            .cancel_push(correlation_scope, request_id);
+                                    }
+                                }
+                                let _ = crate::kernel::send_response_to_tcp_client(
+                                    &this.tx_to_localhost_clients,
+                                    InternalServiceResponse::SendFileRequestFailure(
+                                        SendFileRequestFailure {
+                                            cid,
+                                            message: err.message,
+                                            request_id: Some(request_id),
+                                        },
+                                    ),
+                                    uuid,
+                                );
+                            }
+                            Some(other) => {
+                                let _ = crate::kernel::responses::handle_node_result(&this, other)
+                                    .await;
+                            }
+                            None => {}
+                        }
+                    });
+                    None
                 }
                 Err(err) => {
                     error!(target: "citadel","InternalServiceRequest Send File Failure");

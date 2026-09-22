@@ -76,12 +76,12 @@ custom_debug = { version = "0.6.2" }
 # On macOS/Windows, native dialogs work without extra features
 rfd = { version = "0.15", default-features = false, features = ["tokio"] }
 
-# SPIKE ONLY (feat/connect-over-wss): build against the local Citadel-Protocol branch
-# feat/native-wss-client. Not for merge.
+# NOT FOR MERGE (feat/cloudflare-tenants): build against the local Citadel-Protocol branch
+# feat/cloudflare-tenants (../../cp-int), the integration of the Cloudflare-tenant work.
 [patch."https://github.com/Avarok-Cybersecurity/Citadel-Protocol"]
-citadel_sdk = { path = "../../cp-wss/citadel_sdk" }
-citadel_types = { path = "../../cp-wss/citadel_types" }
-citadel_user = { path = "../../cp-wss/citadel_user" }
-citadel_logging = { path = "../../cp-wss/citadel_logging" }
-citadel_crypt = { path = "../../cp-wss/citadel_crypt" }
-citadel_io = { path = "../../cp-wss/citadel_io" }
+citadel_sdk = { path = "../../cp-int/citadel_sdk" }
+citadel_types = { path = "../../cp-int/citadel_types" }
+citadel_user = { path = "../../cp-int/citadel_user" }
+citadel_logging = { path = "../../cp-int/citadel_logging" }
+citadel_crypt = { path = "../../cp-int/citadel_crypt" }
+citadel_io = { path = "../../cp-int/citadel_io" }

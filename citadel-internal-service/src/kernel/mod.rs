@@ -43,6 +43,7 @@ pub(crate) mod picked_files;
 pub(crate) mod requests;
 pub(crate) mod responses;
 pub(crate) mod revfs_correlation;
+pub(crate) mod server_address;
 pub(crate) mod session_route;
 
 pub type RatchetType = StackedRatchet;

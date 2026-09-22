@@ -288,13 +288,23 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             //
             // Refuse instead. The session is up either way; what we cannot do
             // is report it under a name nothing will match.
-            let server_address = match remote
-                .account_manager()
-                .get_persistence_handler()
-                .get_cnac_by_cid(cid)
-                .await
-            {
-                Ok(Some(cnac)) => cnac.get_connect_info().addr.to_string(),
+            //
+            // An account registered to a WebSocket URL is reported under the URL: its
+            // CNAC address is one of the HTTP edge's, shared by every workspace behind
+            // it, so two sessions on two workspaces would carry the same address.
+            let server_address = match remote.server_endpoint(cid).await {
+                Ok(Some(endpoint)) => Ok(Some(endpoint.to_string())),
+                Ok(None) => remote
+                    .account_manager()
+                    .get_persistence_handler()
+                    .get_cnac_by_cid(cid)
+                    .await
+                    .map(|cnac| cnac.map(|cnac| cnac.get_connect_info().addr.to_string()))
+                    .map_err(|err| err.into_string()),
+                Err(err) => Err(err.into_string()),
+            };
+            let server_address = match server_address {
+                Ok(Some(server_address)) => server_address,
                 Ok(None) | Err(_) => {
                     citadel_sdk::logging::warn!(
                         target: "citadel",

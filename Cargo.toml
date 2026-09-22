@@ -75,3 +75,13 @@ custom_debug = { version = "0.6.2" }
 # Default features disabled to avoid wayland dependency issues in Docker
 # On macOS/Windows, native dialogs work without extra features
 rfd = { version = "0.15", default-features = false, features = ["tokio"] }
+
+# SPIKE ONLY (feat/connect-over-wss): build against the local Citadel-Protocol branch
+# feat/native-wss-client. Not for merge.
+[patch."https://github.com/Avarok-Cybersecurity/Citadel-Protocol"]
+citadel_sdk = { path = "../../cp-wss/citadel_sdk" }
+citadel_types = { path = "../../cp-wss/citadel_types" }
+citadel_user = { path = "../../cp-wss/citadel_user" }
+citadel_logging = { path = "../../cp-wss/citadel_logging" }
+citadel_crypt = { path = "../../cp-wss/citadel_crypt" }
+citadel_io = { path = "../../cp-wss/citadel_io" }

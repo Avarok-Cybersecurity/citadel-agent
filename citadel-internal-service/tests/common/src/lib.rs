@@ -106,14 +106,18 @@ pub fn get_free_port() -> u16 {
     panic!("no free port in {PORT_BASE}..{}", PORT_BASE + SPAN);
 }
 
+/// `A` is what `Register.server_addr` is built from: a `SocketAddr` for the
+/// in-process servers most tests start, or a `ws(s)://` URL string for a server
+/// reached by WebSocket.
 pub struct RegisterAndConnectItems<
     T: Into<String>,
     R: Into<String>,
     S: Into<SecBuffer>,
     Q: Into<PreSharedKey>,
+    A: ToString = SocketAddr,
 > {
     pub internal_service_addr: SocketAddr,
-    pub server_addr: SocketAddr,
+    pub server_addr: A,
     pub full_name: T,
     pub username: R,
     pub password: S,
@@ -148,8 +152,9 @@ pub async fn register_and_connect_to_server<
     R: Into<String>,
     S: Into<SecBuffer>,
     Q: Into<PreSharedKey>,
+    A: ToString,
 >(
-    services_to_create: Vec<RegisterAndConnectItems<T, R, S, Q>>,
+    services_to_create: Vec<RegisterAndConnectItems<T, R, S, Q, A>>,
 ) -> Result<
     Vec<(
         UnboundedSender<InternalServiceRequest>,

@@ -74,9 +74,19 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         })
     };
 
-    let registered = match crate::kernel::server_address::classify(&server_addr) {
+    let address = match crate::kernel::server_address::classify(&server_addr) {
         Err(err) => return refuse(format!("invalid server address {server_addr}: {err}")),
-        Ok(crate::kernel::server_address::ServerAddress::WebSocket(endpoint)) => {
+        Ok(address) => address,
+    };
+    // Validated before anything is dialled: an address whose host cannot be
+    // recorded is refused rather than registered under a host nothing reports.
+    let server_host = match crate::kernel::server_host::from_typed(&address) {
+        Err(err) => return refuse(format!("invalid server address {server_addr}: {err}")),
+        Ok(server_host) => server_host,
+    };
+
+    let registered = match address {
+        crate::kernel::server_address::ServerAddress::WebSocket(endpoint) => {
             info!(target: "citadel", "About to register to {endpoint} for user {username}");
             remote
                 .register_to_endpoint(
@@ -89,7 +99,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 )
                 .await
         }
-        Ok(crate::kernel::server_address::ServerAddress::HostPort(host_port)) => {
+        crate::kernel::server_address::ServerAddress::HostPort(host_port) => {
             let server_addr = match tokio::net::lookup_host(&host_port).await {
                 Ok(mut addrs) => match addrs.next() {
                     Some(addr) => addr,
@@ -110,6 +120,21 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 .await
         }
     };
+
+    if let Ok(res) = &registered {
+        // Before the connect below, so the session it opens reports the host.
+        //
+        // Logged, not answered as a failure: the server has already created the
+        // account, and a RegisterFailure would send the user to register again
+        // into "username taken". The account works without the label.
+        if let Err(err) = crate::kernel::server_host::store(remote, res.cid, &server_host).await {
+            citadel_sdk::logging::warn!(
+                target: "citadel",
+                "[Register] Registered {} but could not record its server host {}: {}",
+                res.cid, server_host, err
+            );
+        }
+    }
 
     match registered {
         Ok(res) => match connect_after_register {

@@ -612,8 +612,17 @@ pub fn server_test_node_skip_cert_verification<'a, K: NetKernel<R> + 'a, R: Ratc
     kernel: K,
     opts: impl FnOnce(&mut NodeBuilder<R>),
 ) -> (NodeFuture<'a, K>, SocketAddr) {
-    let mut builder = NodeBuilder::<R>::default();
     let tcp_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    server_test_node_on_listener(kernel, tcp_listener, opts)
+}
+
+/// As [`server_test_node_skip_cert_verification`], on a listener the caller bound.
+pub fn server_test_node_on_listener<'a, K: NetKernel<R> + 'a, R: Ratchet>(
+    kernel: K,
+    tcp_listener: TcpListener,
+    opts: impl FnOnce(&mut NodeBuilder<R>),
+) -> (NodeFuture<'a, K>, SocketAddr) {
+    let mut builder = NodeBuilder::<R>::default();
     let bind_addr = tcp_listener.local_addr().unwrap();
     let builder = builder
         .with_backend(test_backend())

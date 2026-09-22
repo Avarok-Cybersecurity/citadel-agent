@@ -79,6 +79,7 @@ fn build_response_from_internal_state<T: IOInterface, R: Ratchet>(
             cid: *cid,
             username: connection.username.clone(),
             server_address: connection.server_address.clone(),
+            server_host: connection.server_host.clone(),
             peer_connections: HashMap::new(),
         };
 

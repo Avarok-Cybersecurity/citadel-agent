@@ -334,6 +334,21 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 }
             };
 
+            // best-effort: the host is informational (a label for the account),
+            // and a session must not be refused over a label. An unreadable one
+            // is reported as absent and logged.
+            let server_host = match crate::kernel::server_host::load(remote, cid).await {
+                Ok(server_host) => server_host,
+                Err(err) => {
+                    citadel_sdk::logging::warn!(
+                        target: "citadel",
+                        "[Connect] Could not read the recorded server host for {}: {}; reporting none",
+                        cid, err
+                    );
+                    None
+                }
+            };
+
             // Recorded from the password the SERVER just accepted, so a later
             // reuse request has something to prove itself against.
             let fingerprint = crate::kernel::credential_fingerprint::derive(
@@ -349,6 +364,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 Arc::new(AtomicUuid::new(uuid)),
                 username,
                 server_address,
+                server_host,
                 fingerprint,
             );
             this.server_connection_map

@@ -44,6 +44,7 @@ pub(crate) mod requests;
 pub(crate) mod responses;
 pub(crate) mod revfs_correlation;
 pub(crate) mod server_address;
+pub(crate) mod server_host;
 pub(crate) mod session_route;
 
 pub type RatchetType = StackedRatchet;
@@ -227,6 +228,9 @@ pub struct Connection<R: Ratchet> {
     pub groups: group_channels::GroupChannels,
     pub username: String,
     pub server_address: String,
+    /// The `host[:port]` the account registered to, as typed; `None` for an
+    /// account registered before the agent recorded it. See kernel/server_host.rs.
+    pub server_host: Option<String>,
     /// Storage for files picked via PickFile command.
     /// Key is the request_id from the PickFile request.
     /// Used to resolve FileSource::PickFileRef in SendFile commands.
@@ -296,6 +300,7 @@ impl<R: Ratchet> Connection<R> {
         associated_tcp_connection: Arc<AtomicUuid>,
         username: String,
         server_address: String,
+        server_host: Option<String>,
         credential_fingerprint: Option<Vec<u8>>,
     ) -> Self {
         Connection {
@@ -307,6 +312,7 @@ impl<R: Ratchet> Connection<R> {
             username,
             groups: group_channels::GroupChannels::new(),
             server_address,
+            server_host,
             picked_files: HashMap::new(),
             revfs_correlations: revfs_correlation::RevfsCorrelations::default(),
             credential_fingerprint,

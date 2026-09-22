@@ -37,6 +37,7 @@ use uuid::Uuid;
 
 const ENDPOINT_VAR: &str = "CITADEL_WS_PROOF_ENDPOINT";
 const INSECURE_VAR: &str = "CITADEL_WS_PROOF_INSECURE";
+const SECOND_ENDPOINT_VAR: &str = "CITADEL_WS_PROOF_SECOND_ENDPOINT";
 
 async fn spawn_agent(insecure: bool) -> Result<SocketAddr, Box<dyn Error>> {
     let bind: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse()?;
@@ -183,5 +184,47 @@ async fn two_agents_exchange_a_p2p_message_through_a_websocket_server() -> Resul
          after as long again idle={frames_idle:?}"
     );
     println!("PROOF PASS {endpoint}");
+    Ok(())
+}
+
+/// One agent, two hosted workspaces behind one edge address, logged in to at the same time.
+///
+/// Both endpoints resolve to the edge's address; the SDK once keyed a client's in-flight
+/// connections by that address alone, so the second registration or login collided with the
+/// first (`ProvisionalConnectionExists`, "Localhost is already trying to connect to …").
+/// `CITADEL_WS_PROOF_SECOND_ENDPOINT` names the other workspace, e.g. ws://localhost:8797/globex.
+#[tokio::test]
+#[ignore = "needs two Citadel servers behind one address (e.g. wrangler dev, two tenants)"]
+async fn one_agent_logs_in_to_two_workspaces_behind_one_edge_at_once() -> Result<(), Box<dyn Error>>
+{
+    common::setup_log();
+    let first = std::env::var(ENDPOINT_VAR)
+        .map_err(|_| format!("{ENDPOINT_VAR} must name the first workspace"))?;
+    let second = std::env::var(SECOND_ENDPOINT_VAR)
+        .map_err(|_| format!("{SECOND_ENDPOINT_VAR} must name the second workspace"))?;
+    let insecure = std::env::var(INSECURE_VAR).as_deref() == Ok("1");
+    let agent = spawn_agent(insecure).await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let run = Uuid::new_v4().to_string();
+    let item = |endpoint: &str, who: &str| RegisterAndConnectItems {
+        internal_service_addr: agent,
+        server_addr: endpoint.to_string(),
+        full_name: format!("Proof {who}"),
+        username: format!("proof.{who}.{}", &run[..8]),
+        password: format!("secret-{who}-{run}").into_bytes(),
+        pre_shared_key: None::<PreSharedKey>,
+    };
+    let (a, b) = tokio::join!(
+        register_and_connect_to_server(vec![item(&first, "first")]),
+        register_and_connect_to_server(vec![item(&second, "second")]),
+    );
+    let (a, b) = (a?, b?);
+    println!(
+        "CONNECTED one agent to {first} (cid {}) and {second} (cid {}) concurrently",
+        a[0].2, b[0].2
+    );
+    assert_ne!(a[0].2, b[0].2);
+    println!("PROOF PASS two workspaces, one edge address, one agent");
     Ok(())
 }

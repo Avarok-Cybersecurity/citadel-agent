@@ -1,3 +1,4 @@
+use crate::kernel::requests::peer::turn::path_report;
 use crate::kernel::session_route::SessionRoute;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -30,8 +31,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let channel = *peer_channel_created.channel;
     let session_cid = channel.get_session_cid();
     let peer_cid = channel.get_peer_cid();
+    let path = path_report(channel.p2p_path());
 
-    info!(target: "citadel", "[PeerChannelCreated] *** RECEIVED P2P CHANNEL *** session_cid={}, peer_cid={}", session_cid, peer_cid);
+    info!(target: "citadel", "[PeerChannelCreated] *** RECEIVED P2P CHANNEL *** session_cid={}, peer_cid={}, path={:?}", session_cid, peer_cid, path);
     info!(target: "citadel", "[PeerChannelCreated] This is the SDK event indicating successful P2P handshake");
 
     // Split the channel into send and receive halves
@@ -117,6 +119,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 PeerConnectSuccess {
                     cid: session_cid,
                     peer_cid,
+                    path,
                     request_id: None,
                 },
             ))

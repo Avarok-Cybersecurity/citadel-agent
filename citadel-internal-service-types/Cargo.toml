@@ -23,3 +23,6 @@ ts-rs = { version = "11", optional = true, features = [
     "bytes-impl",
     "chrono-impl",
 ]}
+
+[dev-dependencies]
+serde_json = "1.0"

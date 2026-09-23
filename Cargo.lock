@@ -713,6 +713,7 @@ dependencies = [
  "citadel_types",
  "custom_debug",
  "serde",
+ "serde_json",
  "ts-rs",
  "uuid",
 ]

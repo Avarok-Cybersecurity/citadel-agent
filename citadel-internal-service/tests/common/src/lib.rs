@@ -1,11 +1,14 @@
 #![allow(dead_code)]
+pub mod coturn;
+
 use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service::StunServers;
 use citadel_internal_service_connector::connector::{InternalServiceConnector, WrappedSink};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    FileTransferTickNotification, InternalServiceRequest, InternalServiceResponse,
+    FileTransferTickNotification, InternalServiceRequest, InternalServiceResponse, P2pPathReport,
     PeerConnectNotification, PeerConnectSuccess, PeerRegisterNotification, PeerRegisterSuccess,
+    PeerTurnConfig,
 };
 use citadel_sdk::logging::info;
 use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
@@ -233,7 +236,11 @@ pub async fn register_and_connect_to_server<
                     // take messages from the service and send them to from_service
                     while let Some(msg) = stream.next().await {
                         info!(target = "citadel", "Service to test {msg:?}");
-                        to_service.send(msg).unwrap();
+                        // The test dropped its receiver: it is over, and traffic still in
+                        // flight (media frames, late notifications) has nowhere to go.
+                        if to_service.send(msg).is_err() {
+                            break;
+                        }
                     }
                 };
 
@@ -266,30 +273,11 @@ pub async fn register_and_connect_to_server<
     Ok(return_results)
 }
 
-pub async fn register_and_connect_to_server_then_peers<R: Ratchet>(
+/// One internal service per address, each with one session registered and connected to a
+/// shared server. No peer registration or connection is made.
+pub async fn services_connected_to_one_server<R: Ratchet>(
     int_svc_addrs: Vec<SocketAddr>,
     server_session_password: Option<PreSharedKey>,
-    peer_session_password: Option<PreSharedKey>,
-) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
-    register_and_connect_to_server_then_peers_with_udp::<R>(
-        int_svc_addrs,
-        server_session_password,
-        peer_session_password,
-        Default::default(),
-    )
-    .await
-}
-
-/// `register_and_connect_to_server_then_peers`, with the peer connection's
-/// `UdpMode` stated explicitly.
-///
-/// The default is `Disabled`, so without this no Rust test can reach the media
-/// path at all — see `connect_p2p_with_udp`.
-pub async fn register_and_connect_to_server_then_peers_with_udp<R: Ratchet>(
-    int_svc_addrs: Vec<SocketAddr>,
-    server_session_password: Option<PreSharedKey>,
-    peer_session_password: Option<PreSharedKey>,
-    udp_mode: citadel_sdk::prelude::UdpMode,
 ) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
     // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
     let (server, server_bind_address) = if server_session_password.is_some() {
@@ -344,7 +332,36 @@ pub async fn register_and_connect_to_server_then_peers_with_udp<R: Ratchet>(
     }
 
     // Registers and Connects all peers to Server
-    let mut returned_service_info = register_and_connect_to_server(to_spawn).await?;
+    register_and_connect_to_server(to_spawn).await
+}
+
+pub async fn register_and_connect_to_server_then_peers<R: Ratchet>(
+    int_svc_addrs: Vec<SocketAddr>,
+    server_session_password: Option<PreSharedKey>,
+    peer_session_password: Option<PreSharedKey>,
+) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
+    register_and_connect_to_server_then_peers_with_udp::<R>(
+        int_svc_addrs,
+        server_session_password,
+        peer_session_password,
+        Default::default(),
+    )
+    .await
+}
+
+/// `register_and_connect_to_server_then_peers`, with the peer connection's
+/// `UdpMode` stated explicitly.
+///
+/// The default is `Disabled`, so without this no Rust test can reach the media
+/// path at all — see `connect_p2p_with_udp`.
+pub async fn register_and_connect_to_server_then_peers_with_udp<R: Ratchet>(
+    int_svc_addrs: Vec<SocketAddr>,
+    server_session_password: Option<PreSharedKey>,
+    peer_session_password: Option<PreSharedKey>,
+    udp_mode: citadel_sdk::prelude::UdpMode,
+) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
+    let mut returned_service_info =
+        services_connected_to_one_server::<R>(int_svc_addrs, server_session_password).await?;
 
     info!(
         target = "citadel",
@@ -511,6 +528,38 @@ pub async fn connect_p2p_with_udp(
     session_password: Option<PreSharedKey>,
     udp_mode: citadel_sdk::prelude::UdpMode,
 ) -> Result<(), Box<dyn Error>> {
+    connect_p2p_with_turn(
+        to_service_a,
+        from_service_a,
+        cid_a,
+        to_service_b,
+        from_service_b,
+        cid_b,
+        session_security_settings,
+        session_password,
+        udp_mode,
+        [None, None],
+    )
+    .await
+    .map(|_| ())
+}
+
+/// `connect_p2p_with_udp`, with each side's TURN config (`[a, b]`) stated explicitly.
+/// Returns the path each side's `PeerConnectSuccess` reported, `[a, b]`.
+#[allow(clippy::too_many_arguments)]
+pub async fn connect_p2p_with_turn(
+    to_service_a: &mut UnboundedSender<InternalServiceRequest>,
+    from_service_a: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid_a: u64,
+    to_service_b: &mut UnboundedSender<InternalServiceRequest>,
+    from_service_b: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid_b: u64,
+    session_security_settings: SessionSecuritySettings,
+    session_password: Option<PreSharedKey>,
+    udp_mode: citadel_sdk::prelude::UdpMode,
+    turn: [Option<PeerTurnConfig>; 2],
+) -> Result<[P2pPathReport; 2], Box<dyn Error>> {
+    let [turn_a, turn_b] = turn;
     // Service A Requests To Connect
     to_service_a
         .send(InternalServiceRequest::PeerConnect {
@@ -520,6 +569,7 @@ pub async fn connect_p2p_with_udp(
             udp_mode,
             session_security_settings,
             peer_session_password: session_password.clone(),
+            turn: turn_a,
         })
         .unwrap();
 
@@ -550,28 +600,32 @@ pub async fn connect_p2p_with_udp(
             udp_mode,
             session_security_settings,
             peer_session_password: session_password,
+            turn: turn_b,
         })
         .unwrap();
 
     // Receive Connect Success Responses
-    let signal = from_service_a.recv().await.unwrap();
-    let InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid, peer_cid, .. }) =
-        signal
-    else {
-        panic!("Invalid signal")
-    };
-    assert_eq!(cid, cid_a);
-    assert_eq!(peer_cid, cid_b);
-    let signal = from_service_b.recv().await.unwrap();
-    let InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid, peer_cid, .. }) =
-        signal
-    else {
-        panic!("Invalid signal")
-    };
-    assert_eq!(cid, cid_b);
-    assert_eq!(peer_cid, cid_a);
+    let mut paths = Vec::with_capacity(2);
+    for (rx, me, peer) in [
+        (from_service_a, cid_a, cid_b),
+        (from_service_b, cid_b, cid_a),
+    ] {
+        let signal = rx.recv().await.unwrap();
+        let InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
+            cid,
+            peer_cid,
+            path,
+            ..
+        }) = signal
+        else {
+            panic!("Invalid signal: {signal:?}")
+        };
+        assert_eq!(cid, me);
+        assert_eq!(peer_cid, peer);
+        paths.push(path);
+    }
 
-    Ok(())
+    Ok([paths[0], paths[1]])
 }
 
 pub fn spawn_services(futures_to_spawn: Vec<InternalServicesFutures>) {

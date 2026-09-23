@@ -14,6 +14,11 @@ use citadel_sdk::prelude::{NodeResult, Ratchet};
 /// other side could not do it (a pull of a path that does not exist). SendFile
 /// and DownloadFile watch their ticket for either, so neither is left with the
 /// client told only that the request was sent.
+/// How long a transfer request waits for its subscription's first event: the SDK's refusal of
+/// the request, or its first tick. The client was told the transfer is queued; without a bound, a
+/// subscription that never yields holds its task forever. Same budget as PEER_SEND_TIMEOUT.
+pub(crate) const FIRST_EVENT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub(crate) fn refusal<R: Ratchet>(result: &NodeResult<R>) -> Option<String> {
     match result {
         NodeResult::InternalServerError(err) => Some(err.message.clone()),

@@ -880,7 +880,14 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     let this = this.clone();
                     tokio::task::spawn(async move {
                         use futures::StreamExt;
-                        if let Some(evt) = subscription.next().await {
+                        let first =
+                            tokio::time::timeout(super::FIRST_EVENT_TIMEOUT, subscription.next())
+                                .await;
+                        let Ok(first) = first else {
+                            warn!(target: "citadel", "upload: no event from the transfer within {:?}; no longer waiting for it", super::FIRST_EVENT_TIMEOUT);
+                            return;
+                        };
+                        if let Some(evt) = first {
                             match super::refusal(&evt) {
                                 Some(message) => {
                                     if is_revfs_push {

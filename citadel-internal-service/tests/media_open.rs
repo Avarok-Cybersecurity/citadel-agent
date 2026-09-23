@@ -159,6 +159,7 @@ mod tests {
             udp_mode: UdpMode::Enabled,
             session_security_settings: SessionSecuritySettings::default(),
             peer_session_password: None::<PreSharedKey>,
+            turn: None,
         })
         .unwrap();
 

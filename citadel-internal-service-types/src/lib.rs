@@ -1618,6 +1618,11 @@ pub enum InternalServiceRequest {
         session_security_settings: SessionSecuritySettings,
         #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
         peer_session_password: Option<PreSharedKey>,
+        /// The accepting half of the TURN relay config: the initiator's PeerConnect carries the
+        /// other. Absent means no relay. Ignored on a decline.
+        #[serde(default)]
+        #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+        turn: Option<PeerTurnConfig>,
     },
     PeerRegister {
         request_id: Uuid,

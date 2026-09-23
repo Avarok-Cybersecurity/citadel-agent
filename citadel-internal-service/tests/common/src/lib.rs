@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 pub mod coturn;
+pub mod turn_harness;
 
 use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service::StunServers;

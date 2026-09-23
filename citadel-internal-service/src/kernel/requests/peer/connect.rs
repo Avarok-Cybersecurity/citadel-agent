@@ -1,4 +1,4 @@
-use crate::kernel::requests::peer::turn::{path_report, relay_config};
+use crate::kernel::requests::peer::turn::{path_report, set_peer_turn};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -123,15 +123,11 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         Ok(symmetric_identifier_handle_ref) => {
             info!(target: "citadel", "[PeerConnect] find_target succeeded, calling connect_to_peer_custom with 30s timeout...");
 
-            // Set (or clear) the relay for this attempt before connecting: the SDK consumes it
-            // when the attempt starts, and the peer's own PeerConnect supplies the other half.
-            // Clearing on `None` keeps a config left by an attempt that never started from
-            // being used by this one.
-            let relay = relay_config(turn.as_ref(), std::time::SystemTime::now());
-            info!(target: "citadel", "[PeerConnect] TURN relay for peer {}: {:?}", peer_cid, relay.as_ref().map(|r| (r.policy, r.servers.len())));
-            if let Err(err) = symmetric_identifier_handle_ref.set_turn_config(relay).await {
+            // Before connecting: the peer's own PeerConnect / PeerConnectAccept supplies the
+            // other half.
+            if let Err(err) = set_peer_turn(remote, cid, peer_cid, turn.as_ref()).await {
                 let err_str = err.into_string();
-                error!(target: "citadel", "[PeerConnect] set_turn_config FAILED: {}", err_str);
+                error!(target: "citadel", "[PeerConnect] set_peer_turn FAILED: {}", err_str);
                 return Some(HandledRequestResult {
                     response: InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
                         cid,

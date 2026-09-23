@@ -1,3 +1,4 @@
+use crate::kernel::requests::peer::turn::set_peer_turn;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -37,6 +38,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         udp_mode: _,
         session_security_settings: _,
         peer_session_password,
+        turn,
     } = request
     else {
         unreachable!("Should never happen if programmed properly")
@@ -103,6 +105,23 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
     // Get the remote to send the response
     let remote = this.remote();
+
+    // The accepting half of the TURN config, set before the accept lets the attempt start. A
+    // decline starts no attempt, so it only clears.
+    let turn = if accept { turn.as_ref() } else { None };
+    if let Err(err) = set_peer_turn(remote, cid, peer_cid, turn).await {
+        let err_str = err.into_string();
+        error!(target: "citadel", "[PeerConnectAccept] set_peer_turn FAILED: {}", err_str);
+        return Some(HandledRequestResult {
+            response: InternalServiceResponse::PeerConnectAcceptFailure(PeerConnectAcceptFailure {
+                cid,
+                peer_cid,
+                message: err_str,
+                request_id: Some(request_id),
+            }),
+            uuid,
+        });
+    }
 
     // Call the SDK's peer_connect response function
     // Both outcomes still answer with PeerConnectAcceptSuccess, because both

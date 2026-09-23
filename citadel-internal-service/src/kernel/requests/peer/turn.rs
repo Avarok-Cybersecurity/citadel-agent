@@ -1,10 +1,12 @@
-//! Maps the TURN servers a `PeerConnect` carries onto the SDK's relay configuration, and the
-//! SDK's settled path onto the wire report. Pure: the caller supplies the clock.
+//! Maps the TURN servers a `PeerConnect` / `PeerConnectAccept` carries onto the SDK's relay
+//! configuration, and the SDK's settled path onto the wire report. The mapping is pure (the
+//! caller supplies the clock); [`set_peer_turn`] is the one place it reaches the SDK.
 
 use citadel_internal_service_types::{P2pPathReport, PeerTurnConfig, TurnPolicy as WirePolicy};
-use citadel_sdk::logging::warn;
+use citadel_sdk::logging::{info, warn};
 use citadel_sdk::prelude::{
-    P2pPath, TurnPolicy, TurnRelayConfig, TurnServerCredential, TurnTransport,
+    NetworkError, NodeRemote, NodeRequest, P2pPath, Ratchet, SetPeerTurnConfig, TurnPolicy,
+    TurnRelayConfig, TurnServerCredential, TurnTransport,
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -49,6 +51,28 @@ pub fn relay_config(turn: Option<&PeerTurnConfig>, now: SystemTime) -> Option<Tu
         WirePolicy::RelayOnly => TurnPolicy::RelayOnly,
     };
     Some(TurnRelayConfig::new(servers, policy))
+}
+
+/// Sets (or, when `turn` maps to no relay, clears) the relay for the next P2P attempt between
+/// `session_cid` and `peer_cid`. Must run before that attempt starts: the SDK consumes the
+/// config when it does, and clearing keeps a config left by an attempt that never started from
+/// being used by this one.
+pub async fn set_peer_turn<R: Ratchet>(
+    remote: &NodeRemote<R>,
+    session_cid: u64,
+    peer_cid: u64,
+    turn: Option<&PeerTurnConfig>,
+) -> Result<(), NetworkError> {
+    let config = relay_config(turn, SystemTime::now());
+    info!(target: "citadel", "[TURN] relay for {session_cid} -> {peer_cid}: {:?}", config.as_ref().map(|r| (r.policy, r.servers.len())));
+    remote
+        .send(NodeRequest::SetPeerTurnConfig(SetPeerTurnConfig {
+            session_cid,
+            peer_cid,
+            config,
+        }))
+        .await
+        .map(|_| ())
 }
 
 fn transport_rank(transport: TurnTransport) -> u8 {

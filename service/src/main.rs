@@ -1,6 +1,7 @@
 mod data_format;
 
 use citadel_internal_service::kernel::CitadelWorkspaceService;
+use citadel_internal_service::stun::{StunServers, STUN_SERVERS_ENV};
 use citadel_internal_service::sweep_stale_browser_transfers;
 use citadel_sdk::prelude::{BackendType, NodeBuilder, NodeType, StackedRatchet};
 use std::error::Error;
@@ -27,6 +28,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let opts: Options = Options::from_args();
+
+    // Required, like --bind: resolved before anything listens, so a missing or
+    // malformed list stops startup instead of the SDK's built-in servers
+    // silently learning this machine's public address.
+    let stun_servers = StunServers::resolve(
+        std::env::var(STUN_SERVERS_ENV).ok().as_deref(),
+        opts.stun_servers.as_deref(),
+    )?;
+
     let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(opts.bind).await?;
 
     // Resolve the SDK backend from CLI + env (env takes precedence so docker
@@ -55,7 +65,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let mut builder = NodeBuilder::default();
-    let mut builder = builder.with_backend(backend).with_node_type(NodeType::Peer);
+    let mut builder = stun_servers
+        .apply(&mut builder)
+        .with_backend(backend)
+        .with_node_type(NodeType::Peer);
 
     if opts.dangerous.unwrap_or(false) {
         builder = builder.with_insecure_skip_cert_verification()
@@ -332,6 +345,11 @@ struct Options {
     /// `INTERNAL_SERVICE_DATA_DIR` env var overrides this.
     #[structopt(long, parse(from_os_str))]
     data_dir: Option<PathBuf>,
+    /// Exactly three comma-separated STUN servers as host:port (no scheme), e.g.
+    /// "stun.cloudflare.com:3478,stun1.l.google.com:19302,stun4.l.google.com:19302".
+    /// Required; `INTERNAL_SERVICE_STUN_SERVERS` env var overrides this.
+    #[structopt(long)]
+    stun_servers: Option<String>,
 }
 
 #[cfg(feature = "deadlock-detection")]

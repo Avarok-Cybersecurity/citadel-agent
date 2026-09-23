@@ -316,6 +316,18 @@ cd typescript-client
 npm run build
 ```
 
+### Running
+
+`--bind` and `--stun-servers` are both required. `--stun-servers` takes exactly three
+comma-separated `host:port` entries with no scheme; `INTERNAL_SERVICE_STUN_SERVERS`
+overrides it. There is no default: the agent refuses to start without a list.
+
+```bash
+cargo run -p citadel_service_bin --bin internal-service -- \
+  --bind 127.0.0.1:12345 \
+  --stun-servers stun.cloudflare.com:3478,stun1.l.google.com:19302,stun4.l.google.com:19302
+```
+
 ### Testing
 
 ```bash

@@ -48,7 +48,8 @@ pub async fn spawn_agent(store: &Path) -> Result<(SocketAddr, JoinHandle<()>), B
     let bind: SocketAddr = format!("127.0.0.1:{}", common::get_free_port()).parse()?;
     let kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind).await?;
     let mut builder = NodeBuilder::<StackedRatchet>::default();
-    let node = builder
+    let node = common::test_stun_servers()
+        .apply(&mut builder)
         .with_backend(BackendType::Filesystem(
             store.to_string_lossy().into_owned(),
         ))

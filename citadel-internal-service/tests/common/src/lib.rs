@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use citadel_internal_service::kernel::CitadelWorkspaceService;
+use citadel_internal_service::StunServers;
 use citadel_internal_service_connector::connector::{InternalServiceConnector, WrappedSink};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -307,7 +308,8 @@ pub async fn register_and_connect_to_server_then_peers_with_udp<R: Ratchet>(
         info!(target: "citadel", "Internal Service Spawning");
         let internal_service_kernel =
             CitadelWorkspaceService::<_, R>::new_tcp(bind_address_internal_service).await?;
-        let internal_service = NodeBuilder::default()
+        let internal_service = test_stun_servers()
+            .apply(&mut NodeBuilder::default())
             .with_backend(test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
@@ -606,6 +608,15 @@ pub async fn send<T: IOInterface>(
 pub fn test_backend() -> BackendType {
     let dir = std::env::temp_dir().join(format!("citadel-test-{}", uuid::Uuid::new_v4()));
     BackendType::Filesystem(dir.to_string_lossy().into_owned())
+}
+
+/// The STUN list every test agent is given. Loopback only: the tests build the
+/// SDK with `localhost-testing`, which skips STUN entirely, so nothing is ever
+/// sent to these. The agent still requires a list, so the tests pass one.
+pub const TEST_STUN_SERVERS: &str = "127.0.0.1:3478,127.0.0.1:3479,127.0.0.1:3480";
+
+pub fn test_stun_servers() -> StunServers {
+    StunServers::parse(TEST_STUN_SERVERS).expect("TEST_STUN_SERVERS is a valid list")
 }
 
 pub fn server_test_node_skip_cert_verification<'a, K: NetKernel<R> + 'a, R: Ratchet>(
@@ -1036,7 +1047,8 @@ pub async fn two_sessions_on_one_service(
 
     let service_addr: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
     let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
-    let internal_service = NodeBuilder::default()
+    let internal_service = test_stun_servers()
+        .apply(&mut NodeBuilder::default())
         .with_backend(BackendType::InMemory)
         .with_node_type(NodeType::Peer)
         .with_insecure_skip_cert_verification()

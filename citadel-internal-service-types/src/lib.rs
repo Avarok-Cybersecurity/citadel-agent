@@ -1842,6 +1842,12 @@ pub struct SessionInformation {
         ts(type = "Record<string, PeerSessionInformation>")
     )]
     pub peer_connections: HashMap<u64, PeerSessionInformation>,
+    /// The `host[:port]` the account registered to, as the user typed it (a hosted
+    /// tenant as `acme.work.avarok.net`, an IP as the IP). The resolved address
+    /// (`SessionInformation::server_address`) is, behind an edge, shared by many
+    /// workspaces. `None` for an account registered before the agent recorded it.
+    #[serde(default)]
+    pub server_host: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -1869,6 +1875,12 @@ pub struct AccountInformation {
         ts(type = "Record<string, PeerSessionInformation>")
     )]
     pub peers: HashMap<u64, PeerSessionInformation>,
+    /// The `host[:port]` the account registered to, as the user typed it (a hosted
+    /// tenant as `acme.work.avarok.net`, an IP as the IP). The resolved address
+    /// (`SessionInformation::server_address`) is, behind an edge, shared by many
+    /// workspaces. `None` for an account registered before the agent recorded it.
+    #[serde(default)]
+    pub server_host: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

@@ -288,13 +288,23 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             //
             // Refuse instead. The session is up either way; what we cannot do
             // is report it under a name nothing will match.
-            let server_address = match remote
-                .account_manager()
-                .get_persistence_handler()
-                .get_cnac_by_cid(cid)
-                .await
-            {
-                Ok(Some(cnac)) => cnac.get_connect_info().addr.to_string(),
+            //
+            // An account registered to a WebSocket URL is reported under the URL: its
+            // CNAC address is one of the HTTP edge's, shared by every workspace behind
+            // it, so two sessions on two workspaces would carry the same address.
+            let server_address = match remote.server_endpoint(cid).await {
+                Ok(Some(endpoint)) => Ok(Some(endpoint.to_string())),
+                Ok(None) => remote
+                    .account_manager()
+                    .get_persistence_handler()
+                    .get_cnac_by_cid(cid)
+                    .await
+                    .map(|cnac| cnac.map(|cnac| cnac.get_connect_info().addr.to_string()))
+                    .map_err(|err| err.into_string()),
+                Err(err) => Err(err.into_string()),
+            };
+            let server_address = match server_address {
+                Ok(Some(server_address)) => server_address,
                 Ok(None) | Err(_) => {
                     citadel_sdk::logging::warn!(
                         target: "citadel",
@@ -324,6 +334,21 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 }
             };
 
+            // best-effort: the host is informational (a label for the account),
+            // and a session must not be refused over a label. An unreadable one
+            // is reported as absent and logged.
+            let server_host = match crate::kernel::server_host::load(remote, cid).await {
+                Ok(server_host) => server_host,
+                Err(err) => {
+                    citadel_sdk::logging::warn!(
+                        target: "citadel",
+                        "[Connect] Could not read the recorded server host for {}: {}; reporting none",
+                        cid, err
+                    );
+                    None
+                }
+            };
+
             // Recorded from the password the SERVER just accepted, so a later
             // reuse request has something to prove itself against.
             let fingerprint = crate::kernel::credential_fingerprint::derive(
@@ -339,6 +364,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 Arc::new(AtomicUuid::new(uuid)),
                 username,
                 server_address,
+                server_host,
                 fingerprint,
             );
             this.server_connection_map

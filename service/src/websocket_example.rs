@@ -1,4 +1,5 @@
 use citadel_internal_service::kernel::{CitadelWorkspaceService, RatchetType};
+use citadel_internal_service::StunServers;
 use citadel_internal_service_connector::io_interface::origin_policy::OriginPolicy;
 use citadel_internal_service_connector::io_interface::websockets::WebSocketInterface;
 use citadel_sdk::prefabs::server::empty::EmptyKernel;
@@ -54,7 +55,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = CitadelWorkspaceService::<_, RatchetType>::new(websocket_interface);
 
     // Build and run the internal service node
-    let internal_service_node = NodeBuilder::default()
+    let stun_servers = StunServers::parse(
+        "stun.cloudflare.com:3478,stun1.l.google.com:19302,stun4.l.google.com:19302",
+    )?;
+    let internal_service_node = stun_servers
+        .apply(&mut NodeBuilder::default())
         .with_node_type(NodeType::Peer)
         .with_backend(BackendType::InMemory)
         .with_insecure_skip_cert_verification()

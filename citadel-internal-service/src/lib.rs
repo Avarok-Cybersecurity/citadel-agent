@@ -1,4 +1,7 @@
 pub mod kernel;
+pub mod stun;
+
+pub use stun::StunServers;
 
 // Re-export the browser-transfer startup sweep so the binary entrypoint
 // can call it before the runtime spins up, without exposing the full

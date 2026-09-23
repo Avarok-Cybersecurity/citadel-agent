@@ -50,58 +50,93 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
     // Resolve HERE, not in the browser.
     //
-    // `server_addr` arrives as `host:port`. It used to be a `SocketAddr`, which
-    // forced the page to resolve a hostname itself -- with a DNS-over-HTTPS
-    // fetch to `https://dns.google/resolve`. A hosted UI's Content-Security-
-    // Policy refuses that connection, so on work.avarok.net every hostname
-    // address timed out after 30 seconds while a raw IP worked, and where it
-    // did work it disclosed each user's server to a third party.
+    // `server_addr` arrives as `host:port`, a hosted workspace host, or a
+    // ws(s):// URL. It used to be a `SocketAddr`, which forced the page to
+    // resolve a hostname itself -- with a DNS-over-HTTPS fetch to
+    // `https://dns.google/resolve`. A hosted UI's Content-Security-Policy
+    // refuses that connection, so on work.avarok.net every hostname address
+    // timed out after 30 seconds while a raw IP worked, and where it did work it
+    // disclosed each user's server to a third party.
     //
     // A failed lookup is answered, not logged: registration is a foreground
     // action and "Registration timed out" is what the user saw for a name that
     // simply does not resolve.
-    let server_addr = match tokio::net::lookup_host(&server_addr).await {
-        Ok(mut addrs) => match addrs.next() {
-            Some(addr) => addr,
-            None => {
-                return Some(HandledRequestResult {
-                    response: InternalServiceResponse::RegisterFailure(
-                        citadel_internal_service_types::RegisterFailure {
-                            cid: 0,
-                            message: format!("{server_addr} resolved to no addresses"),
-                            request_id: Some(request_id),
-                        },
-                    ),
-                    uuid,
-                });
-            }
-        },
-        Err(err) => {
-            return Some(HandledRequestResult {
-                response: InternalServiceResponse::RegisterFailure(
-                    citadel_internal_service_types::RegisterFailure {
-                        cid: 0,
-                        message: format!("could not resolve {server_addr}: {err}"),
-                        request_id: Some(request_id),
-                    },
-                ),
-                uuid,
-            });
+    let refuse = |message: String| {
+        Some(HandledRequestResult {
+            response: InternalServiceResponse::RegisterFailure(
+                citadel_internal_service_types::RegisterFailure {
+                    cid: 0,
+                    message,
+                    request_id: Some(request_id),
+                },
+            ),
+            uuid,
+        })
+    };
+
+    let address = match crate::kernel::server_address::classify(&server_addr) {
+        Err(err) => return refuse(format!("invalid server address {server_addr}: {err}")),
+        Ok(address) => address,
+    };
+    // Validated before anything is dialled: an address whose host cannot be
+    // recorded is refused rather than registered under a host nothing reports.
+    let server_host = match crate::kernel::server_host::from_typed(&address) {
+        Err(err) => return refuse(format!("invalid server address {server_addr}: {err}")),
+        Ok(server_host) => server_host,
+    };
+
+    let registered = match address {
+        crate::kernel::server_address::ServerAddress::WebSocket(endpoint) => {
+            info!(target: "citadel", "About to register to {endpoint} for user {username}");
+            remote
+                .register_to_endpoint(
+                    endpoint,
+                    full_name,
+                    username.clone(),
+                    proposed_password.clone(),
+                    session_security_settings,
+                    server_password.clone(),
+                )
+                .await
+        }
+        crate::kernel::server_address::ServerAddress::HostPort(host_port) => {
+            let server_addr = match tokio::net::lookup_host(&host_port).await {
+                Ok(mut addrs) => match addrs.next() {
+                    Some(addr) => addr,
+                    None => return refuse(format!("{host_port} resolved to no addresses")),
+                },
+                Err(err) => return refuse(format!("could not resolve {host_port}: {err}")),
+            };
+            info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
+            remote
+                .register(
+                    server_addr,
+                    full_name,
+                    username.clone(),
+                    proposed_password.clone(),
+                    session_security_settings,
+                    server_password.clone(),
+                )
+                .await
         }
     };
 
-    info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
-    match remote
-        .register(
-            server_addr,
-            full_name,
-            username.clone(),
-            proposed_password.clone(),
-            session_security_settings,
-            server_password.clone(),
-        )
-        .await
-    {
+    if let Ok(res) = &registered {
+        // Before the connect below, so the session it opens reports the host.
+        //
+        // Logged, not answered as a failure: the server has already created the
+        // account, and a RegisterFailure would send the user to register again
+        // into "username taken". The account works without the label.
+        if let Err(err) = crate::kernel::server_host::store(remote, res.cid, &server_host).await {
+            citadel_sdk::logging::warn!(
+                target: "citadel",
+                "[Register] Registered {} but could not record its server host {}: {}",
+                res.cid, server_host, err
+            );
+        }
+    }
+
+    match registered {
         Ok(res) => match connect_after_register {
             false => {
                 let response = InternalServiceResponse::RegisterSuccess(

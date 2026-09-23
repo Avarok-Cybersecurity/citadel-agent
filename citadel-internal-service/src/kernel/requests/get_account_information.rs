@@ -106,12 +106,26 @@ async fn add_account_to_map<R: Ratchet>(
         );
     }
 
+    // best-effort, for the reason the peer list above is.
+    let server_host = match crate::kernel::server_host::load(remote, account.cid).await {
+        Ok(server_host) => server_host,
+        Err(err) => {
+            citadel_sdk::logging::warn!(
+                target: "citadel",
+                "[GetAccountInformation] Could not read the server host for {}: {}; reporting none",
+                account.cid, err
+            );
+            None
+        }
+    };
+
     accounts_ret.insert(
         account.cid,
         AccountInformation {
             username,
             full_name,
             peers,
+            server_host,
         },
     );
 }

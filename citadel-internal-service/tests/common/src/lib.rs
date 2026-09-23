@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use citadel_internal_service::kernel::CitadelWorkspaceService;
+use citadel_internal_service::StunServers;
 use citadel_internal_service_connector::connector::{InternalServiceConnector, WrappedSink};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -106,14 +107,18 @@ pub fn get_free_port() -> u16 {
     panic!("no free port in {PORT_BASE}..{}", PORT_BASE + SPAN);
 }
 
+/// `A` is what `Register.server_addr` is built from: a `SocketAddr` for the
+/// in-process servers most tests start, or a `ws(s)://` URL string for a server
+/// reached by WebSocket.
 pub struct RegisterAndConnectItems<
     T: Into<String>,
     R: Into<String>,
     S: Into<SecBuffer>,
     Q: Into<PreSharedKey>,
+    A: ToString = SocketAddr,
 > {
     pub internal_service_addr: SocketAddr,
-    pub server_addr: SocketAddr,
+    pub server_addr: A,
     pub full_name: T,
     pub username: R,
     pub password: S,
@@ -148,8 +153,9 @@ pub async fn register_and_connect_to_server<
     R: Into<String>,
     S: Into<SecBuffer>,
     Q: Into<PreSharedKey>,
+    A: ToString,
 >(
-    services_to_create: Vec<RegisterAndConnectItems<T, R, S, Q>>,
+    services_to_create: Vec<RegisterAndConnectItems<T, R, S, Q, A>>,
 ) -> Result<
     Vec<(
         UnboundedSender<InternalServiceRequest>,
@@ -302,7 +308,8 @@ pub async fn register_and_connect_to_server_then_peers_with_udp<R: Ratchet>(
         info!(target: "citadel", "Internal Service Spawning");
         let internal_service_kernel =
             CitadelWorkspaceService::<_, R>::new_tcp(bind_address_internal_service).await?;
-        let internal_service = NodeBuilder::default()
+        let internal_service = test_stun_servers()
+            .apply(&mut NodeBuilder::default())
             .with_backend(test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
@@ -603,12 +610,30 @@ pub fn test_backend() -> BackendType {
     BackendType::Filesystem(dir.to_string_lossy().into_owned())
 }
 
+/// The STUN list every test agent is given. Loopback only: the tests build the
+/// SDK with `localhost-testing`, which skips STUN entirely, so nothing is ever
+/// sent to these. The agent still requires a list, so the tests pass one.
+pub const TEST_STUN_SERVERS: &str = "127.0.0.1:3478,127.0.0.1:3479,127.0.0.1:3480";
+
+pub fn test_stun_servers() -> StunServers {
+    StunServers::parse(TEST_STUN_SERVERS).expect("TEST_STUN_SERVERS is a valid list")
+}
+
 pub fn server_test_node_skip_cert_verification<'a, K: NetKernel<R> + 'a, R: Ratchet>(
     kernel: K,
     opts: impl FnOnce(&mut NodeBuilder<R>),
 ) -> (NodeFuture<'a, K>, SocketAddr) {
-    let mut builder = NodeBuilder::<R>::default();
     let tcp_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    server_test_node_on_listener(kernel, tcp_listener, opts)
+}
+
+/// As [`server_test_node_skip_cert_verification`], on a listener the caller bound.
+pub fn server_test_node_on_listener<'a, K: NetKernel<R> + 'a, R: Ratchet>(
+    kernel: K,
+    tcp_listener: TcpListener,
+    opts: impl FnOnce(&mut NodeBuilder<R>),
+) -> (NodeFuture<'a, K>, SocketAddr) {
+    let mut builder = NodeBuilder::<R>::default();
     let bind_addr = tcp_listener.local_addr().unwrap();
     let builder = builder
         .with_backend(test_backend())
@@ -1022,7 +1047,8 @@ pub async fn two_sessions_on_one_service(
 
     let service_addr: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
     let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
-    let internal_service = NodeBuilder::default()
+    let internal_service = test_stun_servers()
+        .apply(&mut NodeBuilder::default())
         .with_backend(BackendType::InMemory)
         .with_node_type(NodeType::Peer)
         .with_insecure_skip_cert_verification()

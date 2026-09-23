@@ -108,8 +108,10 @@ fn entries_that_are_not_host_port_are_rejected() {
 
 #[test]
 fn an_overlong_entry_is_rejected() {
-    let host = format!("{}.example", "a".repeat(MAX_ENTRY_LEN));
-    let spec = format!("{host}:3478,b.example:2,c.example:3");
+    // The host and port checks alone accept this: u16 parsing allows leading
+    // zeros. Only the entry-length bound refuses it.
+    let port = format!("{}3478", "0".repeat(MAX_ENTRY_LEN));
+    let spec = format!("a.example:{port},b.example:2,c.example:3");
     assert!(StunServers::parse(&spec).is_err());
 }
 

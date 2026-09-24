@@ -12,7 +12,7 @@ mod group_channel_created;
 pub(crate) mod group_event;
 mod peer_event;
 
-pub async fn handle_node_result<T: IOInterface, R: Ratchet>(
+pub async fn handle_node_result<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     result: NodeResult<R>,
 ) -> Result<(), NetworkError> {

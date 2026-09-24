@@ -18,6 +18,8 @@ deadlock-detection = []
 
 [dependencies]
 citadel_sdk = { workspace = true, features=["multi-threaded"] }
+# `ErrorCode`: which failed reconnects are refusals (kernel/reconnect/policy.rs).
+citadel_io = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt", "macros"] }
 bincode2 = { workspace = true }
 citadel-internal-service-types = { workspace = true }

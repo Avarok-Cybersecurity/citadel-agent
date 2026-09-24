@@ -35,11 +35,13 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot::Receiver as OneshotReceiver;
 use uuid::Uuid;
 
+pub(crate) mod c2s_reader;
 pub(crate) mod credential_fingerprint;
 pub(crate) mod ext;
 pub(crate) mod group_channels;
 pub(crate) mod media;
 pub(crate) mod picked_files;
+pub(crate) mod reconnect;
 pub(crate) mod requests;
 pub(crate) mod responses;
 pub(crate) mod revfs_correlation;
@@ -247,6 +249,10 @@ pub struct Connection<R: Ratchet> {
     /// who only knew the username. See kernel/credential_fingerprint.rs for why
     /// this is a recorded fingerprint rather than a local credential check.
     pub credential_fingerprint: Option<Vec<u8>>,
+    /// What the session was opened with, so a server drop can be reconnected.
+    /// In memory only. See kernel/reconnect/mod.rs.
+    pub(crate) reconnect: reconnect::Credentials,
+    pub(crate) link: reconnect::LinkState,
 }
 
 #[allow(dead_code)]
@@ -294,6 +300,7 @@ pub struct GroupConnection {
 }
 
 impl<R: Ratchet> Connection<R> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         sink: PeerChannelSendHalf<R>,
         client_server_remote: ClientServerRemote<R>,
@@ -302,6 +309,7 @@ impl<R: Ratchet> Connection<R> {
         server_address: String,
         server_host: Option<String>,
         credential_fingerprint: Option<Vec<u8>>,
+        reconnect: reconnect::Credentials,
     ) -> Self {
         Connection {
             peers: HashMap::new(),
@@ -316,6 +324,8 @@ impl<R: Ratchet> Connection<R> {
             picked_files: HashMap::new(),
             revfs_correlations: revfs_correlation::RevfsCorrelations::default(),
             credential_fingerprint,
+            reconnect,
+            link: reconnect::LinkState::Up,
         }
     }
 

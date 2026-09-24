@@ -25,10 +25,8 @@ use crate::kernel::{create_client_server_remote, CitadelWorkspaceService, Connec
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     AtomicUuid, ConnectFailure, InternalServiceRequest, InternalServiceResponse,
-    MessageNotification,
 };
 use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt, Ratchet};
-use futures::StreamExt;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -89,32 +87,42 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     if let Some(cid) = existing_cid {
         citadel_sdk::logging::info!(target: "citadel", "[Connect] Found existing session {} for user {}, checking SDK...", cid, username);
 
-        // Query SDK to see if session is actually active
-        let sdk_active = match remote.sessions().await {
-            Ok(sessions) => sessions.sessions.iter().any(|sess| sess.cid == cid),
-            Err(e) => {
-                // A FAILED query is not an empty answer. This assumed
-                // "inactive", and the branch that assumption reaches is
-                // destructive: it removes the map entry, prunes CID-scoped
-                // state, and then runs the SDK connect against a session the
-                // SDK may still hold -- the ratchet reset the
-                // SessionAlreadyActive branch exists to prevent. Refuse and
-                // let the caller retry; a transient stream error must not
-                // cost the user a live session.
-                citadel_sdk::logging::warn!(target: "citadel", "[Connect] Failed to query SDK sessions: {:?}; refusing rather than assuming the session is gone", e);
-                cleanup_username(this, &username);
-                let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
-                    cid,
-                    message: format!(
-                        "Could not determine whether session {} is still active: {:?}. \
-                         Nothing was changed; try again.",
-                        cid, e
-                    ),
-                    request_id: Some(request_id),
-                });
-                return Some(HandledRequestResult { response, uuid });
-            }
+        // A session the agent is reconnecting after a server drop is held, not stale:
+        // the SDK has no session for it yet, and connecting here would race the
+        // reconnect with a second SDK connect for the same account.
+        let reconnecting = {
+            let lock = this.server_connection_map.read();
+            lock.get(&cid)
+                .is_some_and(|conn| conn.link == crate::kernel::reconnect::LinkState::Reconnecting)
         };
+
+        // Query SDK to see if session is actually active
+        let sdk_active = reconnecting
+            || match remote.sessions().await {
+                Ok(sessions) => sessions.sessions.iter().any(|sess| sess.cid == cid),
+                Err(e) => {
+                    // A FAILED query is not an empty answer. This assumed
+                    // "inactive", and the branch that assumption reaches is
+                    // destructive: it removes the map entry, prunes CID-scoped
+                    // state, and then runs the SDK connect against a session the
+                    // SDK may still hold -- the ratchet reset the
+                    // SessionAlreadyActive branch exists to prevent. Refuse and
+                    // let the caller retry; a transient stream error must not
+                    // cost the user a live session.
+                    citadel_sdk::logging::warn!(target: "citadel", "[Connect] Failed to query SDK sessions: {:?}; refusing rather than assuming the session is gone", e);
+                    cleanup_username(this, &username);
+                    let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                        cid,
+                        message: format!(
+                            "Could not determine whether session {} is still active: {:?}. \
+                         Nothing was changed; try again.",
+                            cid, e
+                        ),
+                        request_id: Some(request_id),
+                    });
+                    return Some(HandledRequestResult { response, uuid });
+                }
+            };
 
         if sdk_active {
             // Prove the caller knows the password before handing them the
@@ -197,6 +205,15 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
     // Save username for cleanup (will be moved into SDK connect)
     let username_for_cleanup = username.clone();
+    let reconnect_credentials = crate::kernel::reconnect::Credentials {
+        password: password.clone(),
+        connect_mode,
+        udp_mode,
+        keep_alive_timeout,
+        session_security_settings,
+        server_password: server_password.clone(),
+        connect_request_id: request_id,
+    };
 
     // Proceed with new connection (no existing session or stale session was cleaned)
     match remote
@@ -230,7 +247,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             // The liveness check that is actually used elsewhere is
             // `remote.sessions()`, which does not go through a subscription.
 
-            let (sink, mut stream) = conn_success.split();
+            let (sink, stream) = conn_success.split();
             let client_server_remote = create_client_server_remote(
                 stream.vconn_type,
                 remote.clone(),
@@ -366,13 +383,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 server_address,
                 server_host,
                 fingerprint,
+                reconnect_credentials,
             );
             this.server_connection_map
                 .write()
                 .insert(cid, connection_struct);
-
-            let hm_for_conn = this.tx_to_localhost_clients.clone();
-            let server_conn_map = this.server_connection_map.clone();
 
             let response = InternalServiceResponse::ConnectSuccess(
                 citadel_internal_service_types::ConnectSuccess {
@@ -381,42 +396,14 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 },
             );
 
-            let connection_read_stream = async move {
-                while let Some(message) = stream.next().await {
-                    let message =
-                        InternalServiceResponse::MessageNotification(MessageNotification {
-                            message: message.into_buffer().into(),
-                            cid,
-                            peer_cid: 0,
-                            request_id: Some(request_id),
-                        });
-
-                    // Get the current associated TCP connection for this session (may have changed via ClaimSession)
-                    let server_lock = server_conn_map.read();
-                    let current_tcp_uuid = server_lock
-                        .get(&cid)
-                        .map(|conn| {
-                            conn.associated_localhost_connection
-                                .load(std::sync::atomic::Ordering::Relaxed)
-                        })
-                        .unwrap_or(uuid);
-                    drop(server_lock);
-
-                    let lock = hm_for_conn.read();
-                    match lock.get(&current_tcp_uuid) {
-                        Some(entry) => {
-                            if let Err(err) = entry.send(message) {
-                                citadel_sdk::logging::error!(target:"citadel","Error sending message to client: {err:?}");
-                            }
-                        }
-                        None => {
-                            citadel_sdk::logging::info!(target:"citadel","Hash map connection not found for TCP uuid: {}", current_tcp_uuid)
-                        }
-                    }
-                }
-            };
-
-            tokio::spawn(connection_read_stream);
+            crate::kernel::c2s_reader::spawn(
+                this.server_connection_map.clone(),
+                this.tx_to_localhost_clients.clone(),
+                cid,
+                stream,
+                request_id,
+                uuid,
+            );
 
             cleanup_username(this, &username_for_cleanup);
             Some(HandledRequestResult { response, uuid })

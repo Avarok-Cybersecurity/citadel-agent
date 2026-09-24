@@ -7,22 +7,24 @@
 //! - C2S disconnects: `NodeResult::Disconnect { conn_type: ClientConnectionType::Server }`
 //! - P2P disconnects: `NodeResult::PeerEvent { PeerSignal::Disconnect }` (handled in peer_event.rs)
 //!
-//! ## Design: SDK is Source of Truth
-//! The SDK is the authoritative source for session state. When the SDK reports a disconnect,
-//! we MUST clean up our internal state to mirror it. This ensures consistency between
-//! the internal service layer and the underlying protocol layer.
+//! ## Design: a drop nobody asked for is reconnected
+//! This used to remove the session on every report, so a server deploy (which resets its
+//! WebSocket) signed every user out. Now an unrequested drop keeps the session under its
+//! CID and reconnects it; see kernel/reconnect/mod.rs. The session is removed here only
+//! while its user is ending it, and the reconnect removes it if it gives up.
 //!
 //! ## Distinction from Request Handler
 //! - `requests/peer/disconnect.rs`: User-initiated (outbound) disconnect - calls SDK then cleans state
 //! - `responses/disconnect.rs` (this file): SDK-initiated (inbound) C2S disconnect event
 
+use crate::kernel::reconnect::task::{self, Began};
 use crate::kernel::requests::peer::{cleanup_state, DisconnectedConnection};
 use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{DisconnectNotification, InternalServiceResponse};
 use citadel_sdk::prelude::{ClientConnectionType, Disconnect, NetworkError, Ratchet};
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     disconnect: Disconnect,
 ) -> Result<(), NetworkError> {
@@ -53,34 +55,48 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
         citadel_sdk::logging::info!(
             target: "citadel",
-            "[Disconnect Response] SDK reports C2S session {} disconnected - cleaning up internal state. Reason: {}",
+            "[Disconnect Response] SDK reports C2S session {} disconnected. Reason: {}",
             cid,
             disconnect.message
         );
 
-        // SDK is source of truth - clean up session to mirror SDK state
-        // NOTE: SDK has already disconnected, so we don't call disconnect_removed.
-        // We just remove from our map and let the struct drop.
-        this.prune_cid_scoped_state(cid, None);
-        if let Some(disconnected) = cleanup_state(&this.server_connection_map, cid, None) {
-            let tcp_uuid = match &disconnected {
-                DisconnectedConnection::C2S { tcp_uuid, .. } => *tcp_uuid,
-                DisconnectedConnection::P2P { tcp_uuid, .. } => *tcp_uuid,
-            };
-            // Let the struct drop - SDK already disconnected so RAII is harmless
-            drop(disconnected);
-
-            let response =
-                InternalServiceResponse::DisconnectNotification(DisconnectNotification {
-                    cid,
-                    peer_cid: None,
-                    request_id: None,
-                });
-            return send_response_to_tcp_client(&this.tx_to_localhost_clients, response, tcp_uuid);
+        match task::begin(&this.server_connection_map, cid) {
+            Began::NotTracked => {}
+            Began::AlreadyReconnecting => {
+                citadel_sdk::logging::info!(target: "citadel", "[Disconnect Response] {cid} is already reconnecting");
+            }
+            Began::Reconnecting => {
+                this.prune_cid_scoped_state(cid, None);
+                return task::spawn(this, cid);
+            }
+            Began::Remove => return remove(this, cid),
         }
     } else {
         citadel_sdk::logging::warn!(target: "citadel", "The disconnect request does not contain a connection type")
     }
 
     Ok(())
+}
+
+/// The session was being ended by its user: mirror the SDK, as this always did.
+fn remove<T: IOInterface + Sync, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    cid: u64,
+) -> Result<(), NetworkError> {
+    // NOTE: SDK has already disconnected, so we don't call disconnect_removed.
+    this.prune_cid_scoped_state(cid, None);
+    let Some(disconnected) = cleanup_state(&this.server_connection_map, cid, None) else {
+        return Ok(());
+    };
+    let tcp_uuid = match &disconnected {
+        DisconnectedConnection::C2S { tcp_uuid, .. } => *tcp_uuid,
+        DisconnectedConnection::P2P { tcp_uuid, .. } => *tcp_uuid,
+    };
+    drop(disconnected);
+    let response = InternalServiceResponse::DisconnectNotification(DisconnectNotification {
+        cid,
+        peer_cid: None,
+        request_id: None,
+    });
+    send_response_to_tcp_client(&this.tx_to_localhost_clients, response, tcp_uuid)
 }

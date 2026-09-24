@@ -1,3 +1,4 @@
+use crate::kernel::requests::peer::turn::{path_report, set_peer_turn};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -25,6 +26,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         udp_mode,
         session_security_settings,
         peer_session_password,
+        turn,
     } = request
     else {
         unreachable!("Should never happen if programmed properly")
@@ -121,6 +123,21 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         Ok(symmetric_identifier_handle_ref) => {
             info!(target: "citadel", "[PeerConnect] find_target succeeded, calling connect_to_peer_custom with 30s timeout...");
 
+            // Before connecting: the peer's own PeerConnect / PeerConnectAccept supplies the
+            // other half.
+            if let Err(err) = set_peer_turn(remote, cid, peer_cid, turn.as_ref()).await {
+                let err_str = err.into_string();
+                error!(target: "citadel", "[PeerConnect] set_peer_turn FAILED: {}", err_str);
+                return Some(HandledRequestResult {
+                    response: InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
+                        cid,
+                        message: err_str,
+                        request_id: Some(request_id),
+                    }),
+                    uuid,
+                });
+            }
+
             // Add timeout to prevent indefinite hanging
             let connect_future = symmetric_identifier_handle_ref.connect_to_peer_custom(
                 session_security_settings,
@@ -138,6 +155,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                         // offered; dropping it here would mean no call with this
                         // peer could ever use a datagram path.
                         let udp_rx = peer_connect_success.udp_channel_rx.take();
+                        let path = path_report(peer_connect_success.channel.p2p_path());
+                        info!(target: "citadel", "[PeerConnect] peer {} connected over {:?}", peer_cid, path);
                         let (sink, mut stream) = peer_connect_success.channel.split();
                         {
                             let mut map = this.server_connection_map.write();
@@ -230,6 +249,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                         InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
                             cid,
                             peer_cid,
+                            path,
                             request_id: Some(request_id),
                         })
                     }

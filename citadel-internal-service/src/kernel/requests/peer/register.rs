@@ -198,6 +198,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                                         session_security_settings,
                                         request_id,
                                         peer_session_password,
+                                        turn: None,
                                     };
 
                                     let result = handle_request(this, uuid, connect_command).await;

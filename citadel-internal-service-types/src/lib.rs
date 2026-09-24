@@ -16,6 +16,9 @@ use uuid::Uuid;
 #[cfg(feature = "typescript")]
 use ts_rs::TS;
 
+mod turn;
+pub use turn::{IceServer, P2pPathReport, PeerTurnConfig, TurnPolicy};
+
 /// The `LocalDBGetKVFailure` message that means "no such key", as opposed to a
 /// real backend error.
 ///
@@ -527,6 +530,8 @@ pub struct PeerConnectSuccess {
     pub cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub peer_cid: u64,
+    /// Which path the connection's traffic takes, read once the path is settled.
+    pub path: P2pPathReport,
     pub request_id: Option<Uuid>,
 }
 
@@ -1582,6 +1587,11 @@ pub enum InternalServiceRequest {
         session_security_settings: SessionSecuritySettings,
         #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
         peer_session_password: Option<PreSharedKey>,
+        /// TURN relay servers for this attempt. Absent means no relay. Both peers must send
+        /// one for the relay to be used.
+        #[serde(default)]
+        #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+        turn: Option<PeerTurnConfig>,
     },
     PeerDisconnect {
         request_id: Uuid,
@@ -1608,6 +1618,11 @@ pub enum InternalServiceRequest {
         session_security_settings: SessionSecuritySettings,
         #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
         peer_session_password: Option<PreSharedKey>,
+        /// The accepting half of the TURN relay config: the initiator's PeerConnect carries the
+        /// other. Absent means no relay. Ignored on a decline.
+        #[serde(default)]
+        #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+        turn: Option<PeerTurnConfig>,
     },
     PeerRegister {
         request_id: Uuid,

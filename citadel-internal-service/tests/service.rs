@@ -623,6 +623,7 @@ mod tests {
             udp_mode: Default::default(),
             session_security_settings: Default::default(),
             peer_session_password: expected_psk,
+            turn: None,
         };
         peer_b_sink.send(peer_connect).unwrap();
 
@@ -639,6 +640,7 @@ mod tests {
             udp_mode: Default::default(),
             session_security_settings: Default::default(),
             peer_session_password: given_psk,
+            turn: None,
         };
         peer_a_sink.send(peer_connect).unwrap();
         info!(target: "citadel", "Peer A Waiting for Connect Response");

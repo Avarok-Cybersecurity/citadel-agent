@@ -60,6 +60,7 @@ export * from './GroupRequestJoinPendingNotification.js';
 export * from './GroupRequestJoinSuccess.js';
 export * from './GroupRespondRequestFailure.js';
 export * from './GroupRespondRequestSuccess.js';
+export * from './IceServer.js';
 export * from './InternalServicePayload.js';
 export * from './InternalServiceRequest.js';
 export * from './InternalServiceResponse.js';
@@ -85,6 +86,7 @@ export * from './MediaSessionOpened.js';
 export * from './MessageNotification.js';
 export * from './MessageSendFailure.js';
 export * from './MessageSendSuccess.js';
+export * from './P2pPathReport.js';
 export * from './PeerConnectAcceptFailure.js';
 export * from './PeerConnectAcceptSuccess.js';
 export * from './PeerConnectFailure.js';
@@ -97,6 +99,7 @@ export * from './PeerRegisterFailure.js';
 export * from './PeerRegisterNotification.js';
 export * from './PeerRegisterSuccess.js';
 export * from './PeerSessionInformation.js';
+export * from './PeerTurnConfig.js';
 export * from './PickFileFailure.js';
 export * from './PickFileSuccess.js';
 export * from './RegisterFailure.js';
@@ -106,6 +109,7 @@ export * from './SendFileRequestSuccess.js';
 export * from './ServiceConnectionAccepted.js';
 export * from './SessionAlreadyActive.js';
 export * from './SessionInformation.js';
+export * from './TurnPolicy.js';
 
 // Re-export protocol types used in InternalServiceRequest fields.
 // From an external package, so not derivable from this directory.

@@ -6,6 +6,7 @@ pub mod list_all;
 pub mod list_registered;
 pub mod register;
 pub mod respond_register;
+pub mod turn;
 
 // Re-export for use by response handlers
 pub use disconnect::{cleanup_state, DisconnectedConnection};

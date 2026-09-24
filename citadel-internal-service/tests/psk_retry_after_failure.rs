@@ -221,6 +221,7 @@ mod tests {
             udp_mode: Default::default(),
             session_security_settings: Default::default(),
             peer_session_password,
+            turn: None,
         }
     }
 

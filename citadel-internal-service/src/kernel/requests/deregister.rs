@@ -1,3 +1,4 @@
+use crate::kernel::reconnect::LinkState;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -60,6 +61,16 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     //
     // The subscription carries the protocol's own answer, including a `success`
     // flag for a deregistration the server refused.
+    // The server ends the session when it deletes the account. Marked first, so the drop
+    // that follows is not taken for one to reconnect; unmarked if the account stays.
+    let ending = move_link(this, cid, LinkState::Up, LinkState::Ending);
+    let failure = |message: String| {
+        if ending {
+            move_link(this, cid, LinkState::Ending, LinkState::Up);
+        }
+        failure(message)
+    };
+
     let mut subscription = match remote.send_callback_subscription(request).await {
         Ok(subscription) => subscription,
         Err(err) => return failure(format!("Failed to deregister: {err:?}")),
@@ -106,5 +117,22 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 "No answer to the deregistration within {DEREGISTER_WAIT:?}; the account may still exist"
             ))
         }
+    }
+}
+
+/// Move the session's link from `from` to `to`; false if it was not at `from`.
+fn move_link<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    cid: u64,
+    from: LinkState,
+    to: LinkState,
+) -> bool {
+    let mut lock = this.server_connection_map.write();
+    match lock.get_mut(&cid) {
+        Some(conn) if conn.link == from => {
+            conn.link = to;
+            true
+        }
+        _ => false,
     }
 }

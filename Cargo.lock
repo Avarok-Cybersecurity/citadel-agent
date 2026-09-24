@@ -636,6 +636,7 @@ dependencies = [
  "citadel-internal-service-connector",
  "citadel-internal-service-test-common",
  "citadel-internal-service-types",
+ "citadel_io",
  "citadel_sdk",
  "futures",
  "libc",

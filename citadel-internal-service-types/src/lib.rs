@@ -16,7 +16,9 @@ use uuid::Uuid;
 #[cfg(feature = "typescript")]
 use ts_rs::TS;
 
+mod server_link;
 mod turn;
+pub use server_link::{ServerConnectionLost, ServerReconnectFailed, ServerReconnected};
 pub use turn::{IceServer, P2pPathReport, PeerTurnConfig, TurnPolicy};
 
 /// The `LocalDBGetKVFailure` message that means "no such key", as opposed to a
@@ -1360,6 +1362,9 @@ pub enum InternalServiceResponse {
     ListRegisteredPeersFailure(ListRegisteredPeersFailure),
     ConnectionManagementSuccess(ConnectionManagementSuccess),
     ConnectionManagementFailure(ConnectionManagementFailure),
+    ServerConnectionLost(ServerConnectionLost),
+    ServerReconnected(ServerReconnected),
+    ServerReconnectFailed(ServerReconnectFailed),
     /// Results from a batched request, in the same order as input commands
     BatchedResponse(BatchedResponseData),
 }

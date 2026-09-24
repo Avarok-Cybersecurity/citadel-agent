@@ -104,13 +104,14 @@ const REFUSALS: [ErrorCode; 6] = [
 /// Whether a failed connect is worth repeating.
 ///
 /// A refusal raised on this side keeps its code. One the SERVER sends arrives as
-/// `RemoteConnectFailed` carrying the server's rendered error, so it is recognised by
-/// the text of the same registry entry (see `renders`).
+/// `RemoteConnectFailed` or `Generic` carrying the server's rendered error (a server
+/// with no such account measured as `Generic`), so it is recognised by the text of the
+/// same registry entry (see `renders`).
 pub fn classify(code: ErrorCode, message: &str) -> FailureKind {
     if REFUSALS.contains(&code) {
         return FailureKind::Refused;
     }
-    if code == ErrorCode::RemoteConnectFailed
+    if matches!(code, ErrorCode::RemoteConnectFailed | ErrorCode::Generic)
         && REFUSALS
             .iter()
             .any(|refusal| renders(refusal.raw_string(), message))

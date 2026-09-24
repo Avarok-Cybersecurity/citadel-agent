@@ -109,14 +109,15 @@ fn a_server_refusal_is_recognised_by_its_rendered_text() {
 /// this, and it was retried for ten minutes.
 #[test]
 fn a_server_without_the_account_is_a_refusal() {
-    let remote = ErrorCode::RemoteConnectFailed;
+    // The code and text exactly as the agent logged them.
     assert_eq!(
         classify(
-            remote,
-            "CID not registered to this node: CID 17448468798230456390 is not registered to this node"
+            ErrorCode::Generic,
+            "CID not registered to this node: CID 6062579214020710934 is not registered to this node"
         ),
         FailureKind::Refused
     );
+    let remote = ErrorCode::RemoteConnectFailed;
     assert_eq!(
         classify(remote, "CID 7 is not registered to this node"),
         FailureKind::Refused

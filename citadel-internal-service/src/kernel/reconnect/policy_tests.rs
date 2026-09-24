@@ -84,6 +84,7 @@ fn account_errors_raised_here_are_refusals() {
         ErrorCode::AccountInvalidUsername,
         ErrorCode::AccountInvalidPassword,
         ErrorCode::AccountDisengaged,
+        ErrorCode::PreconnectCidNotRegistered,
     ] {
         assert_eq!(classify(code, ""), FailureKind::Refused, "{code:?}");
     }
@@ -101,6 +102,40 @@ fn a_server_refusal_is_recognised_by_its_rendered_text() {
     assert_eq!(
         classify(remote, "Account disengaged: 42"),
         FailureKind::Refused
+    );
+}
+
+/// Captured from a server that restarted without its accounts: every attempt failed with
+/// this, and it was retried for ten minutes.
+#[test]
+fn a_server_without_the_account_is_a_refusal() {
+    let remote = ErrorCode::RemoteConnectFailed;
+    assert_eq!(
+        classify(
+            remote,
+            "CID not registered to this node: CID 17448468798230456390 is not registered to this node"
+        ),
+        FailureKind::Refused
+    );
+    assert_eq!(
+        classify(remote, "CID 7 is not registered to this node"),
+        FailureKind::Refused
+    );
+    // The placeholder must hold something, and the form must be the error, not a mention.
+    assert_eq!(
+        classify(remote, "CID  is not registered to this node"),
+        FailureKind::Transient
+    );
+    assert_eq!(
+        classify(
+            remote,
+            "retrying since CID 7 is not registered to this node"
+        ),
+        FailureKind::Transient
+    );
+    assert_eq!(
+        classify(remote, "CID 7 is not registered to this node yet, retry"),
+        FailureKind::Transient
     );
 }
 

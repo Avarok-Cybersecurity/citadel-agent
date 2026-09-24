@@ -108,7 +108,7 @@ async fn run<T: IOInterface + Sync, R: Ratchet>(this: &CitadelWorkspaceService<T
         let code = failure.code();
         let message = failure.into_string();
         let kind = policy::classify(code, &message);
-        warn!(target: "citadel", "[Reconnect] attempt {attempt} for {cid} failed ({kind:?}): {message}");
+        warn!(target: "citadel", "[Reconnect] attempt {attempt} for {cid} failed ({kind:?}, {code:?}): {message}");
         match SERVER_RECONNECT.after_failure(attempt, started.elapsed(), kind) {
             Next::RetryAfter(next) => {
                 attempt = attempt.saturating_add(1);

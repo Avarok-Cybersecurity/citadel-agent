@@ -88,30 +88,70 @@ impl ReconnectPolicy {
 }
 
 /// The account errors a retry cannot fix. From the SDK's registry, not copied strings.
-const REFUSALS: [ErrorCode; 5] = [
+///
+/// `PreconnectCidNotRegistered` is the server saying it has no such account: after a
+/// server that lost its accounts restarts, every attempt got it, and retrying it for
+/// ten minutes kept the user on "Reconnecting" for an account that no longer exists.
+const REFUSALS: [ErrorCode; 6] = [
     ErrorCode::AccountClientNonExists,
     ErrorCode::AccountServerNonExists,
     ErrorCode::AccountInvalidUsername,
     ErrorCode::AccountInvalidPassword,
     ErrorCode::AccountDisengaged,
+    ErrorCode::PreconnectCidNotRegistered,
 ];
 
 /// Whether a failed connect is worth repeating.
 ///
 /// A refusal raised on this side keeps its code. One the SERVER sends arrives as
 /// `RemoteConnectFailed` carrying the server's rendered error, so it is recognised by
-/// the leading text of the same registry entry.
+/// the text of the same registry entry (see `renders`).
 pub fn classify(code: ErrorCode, message: &str) -> FailureKind {
     if REFUSALS.contains(&code) {
         return FailureKind::Refused;
     }
     if code == ErrorCode::RemoteConnectFailed
-        && REFUSALS.iter().any(|refusal| {
-            let lead = refusal.raw_string().split("{}").next().unwrap_or_default();
-            !lead.is_empty() && message.starts_with(lead)
-        })
+        && REFUSALS
+            .iter()
+            .any(|refusal| renders(refusal.raw_string(), message))
     {
         return FailureKind::Refused;
     }
     FailureKind::Transient
+}
+
+/// Whether `message` is the registry form `form` rendered, at its start or right after
+/// a `": "` (the server prefixes some errors with its own reason, e.g. "CID not
+/// registered to this node: CID 7 is not registered to this node").
+///
+/// Every literal part of the form must appear, in order, with something in each
+/// placeholder, and a form ending in literal text must end the message. A form that is
+/// merely mentioned mid-sentence ("timed out after Invalid password") is not a match.
+fn renders(form: &str, message: &str) -> bool {
+    let parts: Vec<&str> = form.split("{}").collect();
+    let (first, placeholders) = match parts.split_first() {
+        Some((first, rest)) if !first.is_empty() => (*first, rest),
+        _ => return false,
+    };
+    let after_separator = message.match_indices(": ").map(|(at, sep)| at + sep.len());
+    std::iter::once(0).chain(after_separator).any(|start| {
+        let Some(mut rest) = message[start..].strip_prefix(first) else {
+            return false;
+        };
+        // Each later part follows a placeholder, which must hold something.
+        for (index, part) in placeholders.iter().enumerate() {
+            if index == placeholders.len() - 1 {
+                return if part.is_empty() {
+                    !rest.is_empty()
+                } else {
+                    rest.len() > part.len() && rest.ends_with(part)
+                };
+            }
+            match rest.get(1..).and_then(|tail| tail.find(part)) {
+                Some(at) => rest = &rest[1 + at + part.len()..],
+                None => return false,
+            }
+        }
+        true
+    })
 }

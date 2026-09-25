@@ -51,31 +51,37 @@ pub(crate) async fn mapped_within<V>(
     }
 }
 
-/// Runs `handle` now if `cid` is mapped; otherwise in a task, once it is. The node-event
-/// loop is not held up while it waits.
-pub(crate) async fn once_session_mapped<T, R, F, Fut>(
+/// Runs `handle(event)` now if `cid` is mapped; otherwise in a task, once it is. The
+/// node-event loop is not held up while it waits. If the session never appears the event
+/// goes to `unmapped`, which decides what letting it go means (for a group channel: not
+/// dropping it while its SDK session lives).
+pub(crate) async fn once_session_mapped<T, R, E, F, Fut, U>(
     this: &CitadelWorkspaceService<T, R>,
     cid: u64,
     what: &'static str,
+    event: E,
     handle: F,
+    unmapped: U,
 ) -> Result<(), NetworkError>
 where
     T: IOInterface + Sync,
     R: Ratchet,
-    F: FnOnce(CitadelWorkspaceService<T, R>) -> Fut + Send + 'static,
+    E: Send + 'static,
+    F: FnOnce(CitadelWorkspaceService<T, R>, E) -> Fut + Send + 'static,
     Fut: Future<Output = Result<(), NetworkError>> + Send + 'static,
+    U: FnOnce(E) + Send + 'static,
 {
     if is_mapped(&this.server_connection_map, cid) {
-        return handle(this.clone()).await;
+        return handle(this.clone(), event).await;
     }
     info!(target: "citadel", "[{what}] session {cid} is not mapped yet; waiting up to {SESSION_MAPPED_WITHIN:?}");
     let this = this.clone();
     drop(tokio::spawn(async move {
         if !mapped_within(&this.server_connection_map, cid, SESSION_MAPPED_WITHIN).await {
             warn!(target: "citadel", "[{what}] session {cid} was not mapped within {SESSION_MAPPED_WITHIN:?}; letting the event go");
-            return;
+            return unmapped(event);
         }
-        if let Err(err) = handle(this).await {
+        if let Err(err) = handle(this, event).await {
             warn!(target: "citadel", "[{what}] for session {cid} failed after it was mapped: {err:?}");
         }
     }));

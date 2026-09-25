@@ -27,85 +27,11 @@ mod tests {
         group_message_arrives, joined_group_on_one_service, recv_until, send_group_message,
         OneServiceGroup,
     };
-    use crate::common::open_localhost_connection;
-    use citadel_internal_service_types::{
-        InternalServiceRequest, InternalServiceResponse, MessageGroupKey,
-    };
+    use crate::common::group_rejoin::{rejoined, sign_in_again, sign_out};
+    use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
     use std::error::Error;
-    use std::net::SocketAddr;
     use std::time::Duration;
-    use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
     use uuid::Uuid;
-
-    type Service = (
-        UnboundedSender<InternalServiceRequest>,
-        UnboundedReceiver<InternalServiceResponse>,
-    );
-
-    /// Ends the member's session, as a user signing out does.
-    async fn sign_out(
-        tx: &UnboundedSender<InternalServiceRequest>,
-        rx: &mut UnboundedReceiver<InternalServiceResponse>,
-        cid: u64,
-    ) -> Result<(), Box<dyn Error>> {
-        tx.send(InternalServiceRequest::Disconnect {
-            request_id: Uuid::new_v4(),
-            cid,
-        })?;
-        let ended = recv_until(rx, "Disconnect answer", |r| {
-            matches!(
-                r,
-                InternalServiceResponse::DisconnectNotification(_)
-                    | InternalServiceResponse::DisconnectFailure(_)
-            )
-        })
-        .await;
-        assert!(
-            matches!(ended, InternalServiceResponse::DisconnectNotification(_)),
-            "the member could not end its session: {ended:?}"
-        );
-        Ok(())
-    }
-
-    /// Signs `{tag}.1` in again on a new localhost connection.
-    async fn sign_in_again(
-        service_addr: SocketAddr,
-        tag: &str,
-        member_cid: u64,
-    ) -> Result<Service, Box<dyn Error>> {
-        let (new_tx, mut new_rx) = open_localhost_connection(service_addr).await?;
-        let connect_id = Uuid::new_v4();
-        new_tx.send(InternalServiceRequest::Connect {
-            username: format!("{tag}.1"),
-            password: b"secret_1".to_vec().into(),
-            connect_mode: Default::default(),
-            udp_mode: Default::default(),
-            keep_alive_timeout: None,
-            session_security_settings: Default::default(),
-            request_id: connect_id,
-            server_password: None,
-        })?;
-        let connected = recv_until(&mut new_rx, "Connect answer", |r| match r {
-            InternalServiceResponse::ConnectSuccess(s) => s.request_id == Some(connect_id),
-            InternalServiceResponse::ConnectFailure(f) => f.request_id == Some(connect_id),
-            InternalServiceResponse::SessionAlreadyActive(a) => a.request_id == Some(connect_id),
-            _ => false,
-        })
-        .await;
-        let InternalServiceResponse::ConnectSuccess(success) = connected else {
-            panic!("the member could not sign in again: {connected:?}");
-        };
-        assert_eq!(success.cid, member_cid, "a CID is permanent per account");
-        Ok((new_tx, new_rx))
-    }
-
-    fn rejoined(r: &InternalServiceResponse, member_cid: u64, group_key: MessageGroupKey) -> bool {
-        matches!(
-            r,
-            InternalServiceResponse::GroupChannelCreateSuccess(s)
-                if s.cid == member_cid && s.group_key == group_key && s.request_id.is_none()
-        )
-    }
 
     #[tokio::test]
     async fn a_member_rejoins_by_itself_after_its_session_is_reestablished(
@@ -124,7 +50,8 @@ mod tests {
             .ok_or("control: no delivery before the reconnect")?;
 
         sign_out(&member_tx, &mut member_rx, member_cid).await?;
-        let (_new_tx, mut new_rx) = sign_in_again(service_addr, tag, member_cid).await?;
+        let (_new_tx, mut new_rx) =
+            sign_in_again(service_addr, &format!("{tag}.1"), b"secret_1", member_cid).await?;
 
         // No re-invite, no accept: the channel must come back unasked.
         let _ = recv_until(&mut new_rx, "unsolicited GroupChannelCreateSuccess", |r| {
@@ -175,7 +102,8 @@ mod tests {
             }
         });
 
-        let (_new_tx, mut new_rx) = sign_in_again(service_addr, tag, member_cid).await?;
+        let (_new_tx, mut new_rx) =
+            sign_in_again(service_addr, &format!("{tag}.1"), b"secret_1", member_cid).await?;
         let dropped = recv_until(&mut new_rx, "GroupMessageDroppedNotification", |r| {
             matches!(
                 r,

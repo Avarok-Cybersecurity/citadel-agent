@@ -2,7 +2,8 @@
 
 use crate::{
     connect_p2p, get_free_port, register_and_connect_to_server_then_peers, register_p2p,
-    two_sessions_on_one_service_at, PeerHandle, PeerServiceHandles,
+    two_sessions_on_one_service_at, two_sessions_on_one_service_reaching, PeerHandle,
+    PeerServiceHandles,
 };
 use citadel_internal_service_types::{
     GroupCreateSuccess, GroupInviteNotification, GroupMessageNotification,
@@ -217,11 +218,28 @@ pub struct OneServiceGroup {
 
 pub async fn joined_group_on_one_service(tag: &str) -> Result<OneServiceGroup, Box<dyn Error>> {
     crate::setup_log();
-    let (
+    let sessions = two_sessions_on_one_service_at(tag).await?;
+    join_the_second_to_the_firsts_group(sessions).await
+}
+
+/// As [`joined_group_on_one_service`], against a server the caller runs; the owner
+/// reaches it at `server_addrs[0]`, the member at `server_addrs[1]`.
+pub async fn joined_group_on_one_service_reaching(
+    tag: &str,
+    server_addrs: [SocketAddr; 2],
+) -> Result<OneServiceGroup, Box<dyn Error>> {
+    crate::setup_log();
+    let sessions = two_sessions_on_one_service_reaching(tag, server_addrs).await?;
+    join_the_second_to_the_firsts_group(sessions).await
+}
+
+async fn join_the_second_to_the_firsts_group(
+    (
         service_addr,
         (mut owner_tx, mut owner_rx, owner_cid),
         (mut member_tx, mut member_rx, member_cid),
-    ) = two_sessions_on_one_service_at(tag).await?;
+    ): (SocketAddr, PeerHandle, PeerHandle),
+) -> Result<OneServiceGroup, Box<dyn Error>> {
     let settings = SessionSecuritySettingsBuilder::default().build()?;
     register_p2p(
         &mut owner_tx,

@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 pub mod coturn;
 pub mod group;
+pub mod group_rejoin;
 pub mod turn_harness;
 
 use citadel_internal_service::kernel::CitadelWorkspaceService;
@@ -1144,7 +1145,16 @@ pub async fn two_sessions_on_one_service_at(
 ) -> Result<(SocketAddr, PeerHandle, PeerHandle), Box<dyn Error>> {
     let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
     tokio::task::spawn(server);
+    two_sessions_on_one_service_reaching(tag, [server_bind_address; 2]).await
+}
 
+/// As [`two_sessions_on_one_service_at`], against a server the caller runs, with session
+/// `i` registering to `server_addrs[i]` -- so one of them can reach it through a proxy
+/// that cuts only that session's link.
+pub async fn two_sessions_on_one_service_reaching(
+    tag: &str,
+    server_addrs: [SocketAddr; 2],
+) -> Result<(SocketAddr, PeerHandle, PeerHandle), Box<dyn Error>> {
     let service_addr: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
     let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
     let internal_service = test_stun_servers()
@@ -1159,7 +1169,7 @@ pub async fn two_sessions_on_one_service_at(
     let to_spawn = (0..2)
         .map(|i| RegisterAndConnectItems {
             internal_service_addr: service_addr,
-            server_addr: server_bind_address,
+            server_addr: server_addrs[i],
             full_name: format!("{tag} {i}"),
             username: format!("{tag}.{i}"),
             password: format!("secret_{i}").into_bytes(),

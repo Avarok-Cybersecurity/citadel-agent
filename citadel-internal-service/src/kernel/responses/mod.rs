@@ -28,9 +28,9 @@ pub async fn handle_node_result<T: IOInterface + Sync, R: Ratchet>(
                 this,
                 cid,
                 "GroupChannelCreated",
-                move |this| async move {
-                    group_channel_created::handle(&this, group_channel_created).await
-                },
+                group_channel_created,
+                |this, created| async move { group_channel_created::handle(&this, created).await },
+                |created| group_channel_created::park(created.channel),
             )
             .await;
         }
@@ -45,7 +45,9 @@ pub async fn handle_node_result<T: IOInterface + Sync, R: Ratchet>(
                 this,
                 cid,
                 "GroupEvent",
-                move |this| async move { group_event::handle(&this, group_event).await },
+                group_event,
+                |this, event| async move { group_event::handle(&this, event).await },
+                drop,
             )
             .await;
         }

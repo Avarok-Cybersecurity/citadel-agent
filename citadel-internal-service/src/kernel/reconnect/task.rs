@@ -47,6 +47,11 @@ pub(crate) fn begin<R: Ratchet>(map: &Arc<RwLock<HashMap<u64, Connection<R>>>>, 
         DropAction::Reconnect => {
             conn.link = LinkState::Reconnecting;
             conn.peers.clear();
+            // Only the send halves live here, and dropping one sends nothing. The recv
+            // half, whose drop sends `LeaveRoom`, is owned by its receiver task and ends
+            // with the dead session, so the server still lists this member and prompts
+            // the new session to rejoin; `responses/group_channel_created.rs` adopts the
+            // channel that rejoin opens, into this same (never removed) entry.
             conn.groups = group_channels::GroupChannels::new();
             conn.c2s_file_transfer_handlers.clear();
             Began::Reconnecting

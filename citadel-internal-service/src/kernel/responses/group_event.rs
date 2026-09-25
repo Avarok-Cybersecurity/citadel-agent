@@ -3,11 +3,30 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     GroupDisconnectNotification, GroupEndNotification, GroupInviteNotification,
     GroupJoinRequestNotification, GroupLeaveNotification, GroupMemberStateChangeNotification,
-    GroupMembershipResponse, GroupMessageNotification, GroupMessageResponse,
-    GroupRequestJoinDeclineResponse, GroupRequestJoinPendingNotification, InternalServiceResponse,
+    GroupMembershipResponse, GroupMessageDroppedNotification, GroupMessageNotification,
+    GroupMessageResponse, GroupRequestJoinDeclineResponse, GroupRequestJoinPendingNotification,
+    InternalServiceResponse,
 };
-use citadel_sdk::prelude::{GroupBroadcast, GroupEvent, NetworkError, Ratchet};
+use citadel_sdk::prelude::{GroupBroadcast, GroupEvent, MessageGroupKey, NetworkError, Ratchet};
 use std::sync::atomic::Ordering;
+
+/// The SDK's `GroupBroadcast::MessageDropped`, for the UI. It reaches the agent by two
+/// paths (the group channel, or a kernel `GroupEvent` when no channel is open), and both
+/// build it here.
+pub(crate) fn message_dropped(
+    cid: u64,
+    group_key: MessageGroupKey,
+    sender: u64,
+    reason: String,
+) -> InternalServiceResponse {
+    InternalServiceResponse::GroupMessageDroppedNotification(GroupMessageDroppedNotification {
+        cid,
+        group_key,
+        sender,
+        reason,
+        request_id: None,
+    })
+}
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
@@ -78,6 +97,14 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         request_id: None,
                     })
                 }),
+
+            // No channel gate: the usual reason this session could not read the message
+            // is that it holds no channel (no key) for the group yet.
+            GroupBroadcast::MessageDropped {
+                key,
+                sender,
+                reason,
+            } => Some(message_dropped(implicated_cid, key, sender, reason)),
 
             GroupBroadcast::MessageResponse {
                 key: group_key,

@@ -411,6 +411,16 @@ pub(crate) fn spawn_group_channel_receiver(
                                     },
                                 ))
                             }
+                            GroupBroadcast::MessageDropped {
+                                key,
+                                sender,
+                                reason,
+                            } => Some(crate::kernel::responses::group_event::message_dropped(
+                                implicated_cid,
+                                key,
+                                sender,
+                                reason,
+                            )),
                             GroupBroadcast::MessageResponse { key, success } => {
                                 Some(InternalServiceResponse::GroupMessageResponse(
                                     GroupMessageResponse {

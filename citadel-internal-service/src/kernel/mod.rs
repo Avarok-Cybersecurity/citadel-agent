@@ -48,6 +48,7 @@ pub(crate) mod revfs_correlation;
 pub(crate) mod server_address;
 pub(crate) mod server_host;
 pub(crate) mod session_route;
+pub(crate) mod session_wait;
 
 pub type RatchetType = StackedRatchet;
 

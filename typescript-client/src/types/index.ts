@@ -49,6 +49,7 @@ export * from './GroupListGroupsResponse.js';
 export * from './GroupListGroupsSuccess.js';
 export * from './GroupMemberStateChangeNotification.js';
 export * from './GroupMembershipResponse.js';
+export * from './GroupMessageDroppedNotification.js';
 export * from './GroupMessageFailure.js';
 export * from './GroupMessageNotification.js';
 export * from './GroupMessageResponse.js';

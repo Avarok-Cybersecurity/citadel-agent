@@ -2,6 +2,7 @@ use citadel_internal_service_test_common as common;
 
 #[cfg(test)]
 mod tests {
+    use crate::common::peer_messaging::{next_ignoring_transfer_noise, send_and_expect_message};
     use crate::common::{
         exhaust_stream_to_file_completion, get_free_port, register_and_connect_to_server,
         register_and_connect_to_server_then_peers, server_info_file_transfer,
@@ -12,7 +13,7 @@ mod tests {
         DeleteVirtualFileSuccess, DownloadFileFailure, DownloadFileSuccess, FileSource,
         FileTransferRequestNotification, FileTransferStatusNotification,
         FileTransferTickNotification, InternalServiceRequest, InternalServiceResponse,
-        MessageNotification, SendFileRequestFailure, SendFileRequestSuccess,
+        SendFileRequestFailure, SendFileRequestSuccess,
     };
     use citadel_sdk::logging::info;
     use citadel_sdk::prelude::*;
@@ -530,91 +531,6 @@ mod tests {
 
         Ok(())
     }
-
-    /// Happy path for `FileSource::ByteContents`: a browser-style upload
-    /// that materialises inline bytes into a temp file before handing the
-    /// path to the SDK.
-    ///
-    /// This exercises the entire ByteContents code path - size guard, name
-    /// sanitisation, `spawn_blocking` write, scheduled cleanup, and the
-    /// SDK's subsequent `File::open` of the temp path - and uses the
-    /// existing `exhaust_stream_to_file_completion` helper to confirm the
-    /// streamed bytes match the original. If the cleanup race that
-    /// previously lived in this handler ever returned, this test would
-    /// flake (the SDK would observe ENOENT on open instead of completing).
-    /// Sends one P2P message and asserts the peer receives exactly it.
-    ///
-    /// `context` names what a failure means, because the two call sites below
-    /// fail for opposite reasons and a shared "message not received" would say
-    /// neither.
-    #[allow(clippy::too_many_arguments)]
-    async fn send_and_expect_message(
-        to_service_a: &tokio::sync::mpsc::UnboundedSender<InternalServiceRequest>,
-        from_service_a: &mut tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
-        from_service_b: &mut tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
-        cid_a: u64,
-        cid_b: u64,
-        body: &[u8],
-        context: &str,
-    ) {
-        let message = Vec::from(body);
-        to_service_a
-            .send(InternalServiceRequest::Message {
-                message: message.clone(),
-                cid: cid_a,
-                peer_cid: Some(cid_b),
-                security_level: Default::default(),
-                request_id: Uuid::new_v4(),
-            })
-            .unwrap();
-
-        let send_response = next_ignoring_transfer_noise(from_service_a, 30).await;
-        assert!(
-            matches!(
-                send_response,
-                Some(InternalServiceResponse::MessageSendSuccess(..))
-            ),
-            "the send itself was refused ({context}): {send_response:?}"
-        );
-
-        // Bounded: the defect this covers presents as silence, and an
-        // unbounded recv() would hang the suite rather than fail it.
-        let notification = next_ignoring_transfer_noise(from_service_b, 30)
-            .await
-            .unwrap_or_else(|| panic!("no message reached the peer within 30s -- {context}"));
-
-        match notification {
-            InternalServiceResponse::MessageNotification(MessageNotification {
-                message: received,
-                ..
-            }) => assert_eq!(&*message, &*received, "the peer received different bytes"),
-            other => panic!("expected a MessageNotification, got {other:?} -- {context}"),
-        }
-    }
-
-    /// The next response that is not file-transfer bookkeeping.
-    ///
-    /// A transfer leaves ticks and status notifications queued on BOTH sides,
-    /// and this test is about messages. Only those two variants are skipped --
-    /// anything else is returned so a real wrong-response failure still shows.
-    async fn next_ignoring_transfer_noise(
-        rx: &mut tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
-        seconds: u64,
-    ) -> Option<InternalServiceResponse> {
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(seconds);
-        loop {
-            match tokio::time::timeout_at(deadline, rx.recv()).await {
-                Err(_) => return None,
-                Ok(None) => return None,
-                Ok(Some(
-                    InternalServiceResponse::FileTransferTickNotification(..)
-                    | InternalServiceResponse::FileTransferStatusNotification(..),
-                )) => continue,
-                Ok(Some(other)) => return Some(other),
-            }
-        }
-    }
-
     /// A peer-to-peer message must still arrive AFTER a file transfer.
     ///
     /// CI run 33347976897 (`test:file-manager`): Alice's REVFS `PlaceFile`
@@ -711,7 +627,10 @@ mod tests {
     /// RANGE of group ids for a file ("reserve group ids", `groups_needed`), so
     /// a fix that steps over one consumed id and not the rest would pass the
     /// small-file test and still strand every message after a real upload.
-    /// A megabyte is comfortably more than one group at the default chunking.
+    ///
+    /// The group size is set outright. The SDK's default is 3 MiB, so this
+    /// megabyte on the default was ONE group and the test never spanned more
+    /// than one id at all; at 256 KiB it is four.
     #[tokio::test]
     async fn a_peer_message_after_a_multi_group_file_transfer_still_arrives(
     ) -> Result<(), Box<dyn Error>> {
@@ -754,7 +673,7 @@ mod tests {
                     security_level: Default::default(),
                 },
                 peer_cid: Some(*cid_b),
-                chunk_size: None,
+                chunk_size: Some(256 * 1024),
             })
             .unwrap();
         let push_response = from_service_a.recv().await.unwrap();
@@ -863,6 +782,17 @@ mod tests {
         Ok(())
     }
 
+    /// Happy path for `FileSource::ByteContents`: a browser-style upload
+    /// that materialises inline bytes into a temp file before handing the
+    /// path to the SDK.
+    ///
+    /// This exercises the entire ByteContents code path - size guard, name
+    /// sanitisation, `spawn_blocking` write, scheduled cleanup, and the
+    /// SDK's subsequent `File::open` of the temp path - and uses the
+    /// existing `exhaust_stream_to_file_completion` helper to confirm the
+    /// streamed bytes match the original. If the cleanup race that
+    /// previously lived in this handler ever returned, this test would
+    /// flake (the SDK would observe ENOENT on open instead of completing).
     #[tokio::test]
     async fn test_internal_service_byte_contents_file_transfer_c2s() -> Result<(), Box<dyn Error>> {
         // Surface panics from the spawned server/service tasks (which otherwise

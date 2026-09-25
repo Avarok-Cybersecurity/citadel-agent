@@ -216,6 +216,65 @@ mod tests {
             leaked.is_err(),
             "A received B's message after disconnecting: {leaked:?}"
         );
+
+        // Resume: A dials B, and it connects promptly, and a message gets through.
+        // Live, after declined redials the resume dial stalled for over a minute
+        // and the messages held for Resume sat in the ILM as "not connected".
+        let resume_id: Uuid = Uuid::new_v4();
+        tx_a.send(InternalServiceRequest::PeerConnect {
+            request_id: resume_id,
+            cid: cid_a,
+            peer_cid: cid_b,
+            udp_mode: Default::default(),
+            session_security_settings: SessionSecuritySettings::default(),
+            peer_session_password: None,
+            turn: None,
+        })?;
+        let resumed: InternalServiceResponse = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                tokio::select! {
+                    Some(r) = rx_b.recv() => {
+                        if let InternalServiceResponse::PeerConnectNotification(n) = &r {
+                            info!(target: "citadel", "[test] resume: B asked, accepting");
+                            tx_b.send(InternalServiceRequest::PeerConnectAccept {
+                                request_id: Uuid::new_v4(),
+                                cid: cid_b,
+                                peer_cid: n.peer_cid,
+                                accept: true,
+                                udp_mode: Default::default(),
+                                session_security_settings: SessionSecuritySettings::default(),
+                                peer_session_password: None,
+                                turn: None,
+                            }).expect("B's service is up");
+                        } else {
+                            info!(target: "citadel", "[test] resume: B got {r:?}");
+                        }
+                    }
+                    Some(r) = rx_a.recv() => match &r {
+                        InternalServiceResponse::PeerConnectFailure(f) if f.request_id == Some(resume_id) => return r,
+                        InternalServiceResponse::PeerConnectSuccess(s) if s.request_id == Some(resume_id) => return r,
+                        other => info!(target: "citadel", "[test] resume: A got {other:?}"),
+                    }
+                }
+            }
+        })
+        .await
+        .expect("A's resume dial was not answered within 30 s");
+        assert!(
+            matches!(resumed, InternalServiceResponse::PeerConnectSuccess(_)),
+            "A's resume dial failed: {resumed:?}"
+        );
+        tx_a.send(InternalServiceRequest::Message {
+            request_id: Uuid::new_v4(),
+            message: b"after resume".to_vec(),
+            cid: cid_a,
+            peer_cid: Some(cid_b),
+            security_level: SecurityLevel::Standard,
+        })?;
+        recv_until(&mut rx_b, "B receives A's message after resume", |r| {
+            matches!(r, InternalServiceResponse::MessageNotification(n) if n.message.as_slice() == b"after resume".as_slice())
+        })
+        .await;
         Ok(())
     }
 }

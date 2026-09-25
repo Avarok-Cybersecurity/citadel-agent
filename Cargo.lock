@@ -259,7 +259,7 @@ dependencies = [
 [[package]]
 name = "async_ip"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#0dad3fe14ff5c52ddb2213b9f70f241b85fba65e"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=integ%2Flive-sdk#77b7a6f4f518913417e382adb9ded6ec2aeeaeab"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -751,7 +751,7 @@ dependencies = [
 [[package]]
 name = "citadel_crypt"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#0dad3fe14ff5c52ddb2213b9f70f241b85fba65e"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=integ%2Flive-sdk#77b7a6f4f518913417e382adb9ded6ec2aeeaeab"
 dependencies = [
  "arrayvec",
  "async-trait",
@@ -784,7 +784,7 @@ dependencies = [
 [[package]]
 name = "citadel_io"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#0dad3fe14ff5c52ddb2213b9f70f241b85fba65e"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=integ%2Flive-sdk#77b7a6f4f518913417e382adb9ded6ec2aeeaeab"
 dependencies = [
  "bytes",
  "citadel_io_macros",
@@ -806,7 +806,7 @@ dependencies = [
 [[package]]
 name = "citadel_io_macros"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#0dad3fe14ff5c52ddb2213b9f70f241b85fba65e"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=integ%2Flive-sdk#77b7a6f4f518913417e382adb9ded6ec2aeeaeab"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -816,7 +816,7 @@ dependencies = [
 [[package]]
 name = "citadel_logging"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#0dad3fe14ff5c52ddb2213b9f70f241b85fba65e"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=integ%2Flive-sdk#77b7a6f4f518913417e382adb9ded6ec2aeeaeab"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -825,7 +825,7 @@ dependencies = [
 [[package]]
 name = "citadel_media"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#0dad3fe14ff5c52ddb2213b9f70f241b85fba65e"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=integ%2Flive-sdk#77b7a6f4f518913417e382adb9ded6ec2aeeaeab"
 dependencies = [
  "bytes",
 ]
@@ -833,7 +833,7 @@ dependencies = [
 [[package]]
 name = "citadel_pqcrypto"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#0dad3fe14ff5c52ddb2213b9f70f241b85fba65e"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=integ%2Flive-sdk#77b7a6f4f518913417e382adb9ded6ec2aeeaeab"
 dependencies = [
  "aes-gcm",
  "ascon-aead",
@@ -861,7 +861,7 @@ dependencies = [
 [[package]]
 name = "citadel_proto"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#0dad3fe14ff5c52ddb2213b9f70f241b85fba65e"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=integ%2Flive-sdk#77b7a6f4f518913417e382adb9ded6ec2aeeaeab"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -904,7 +904,7 @@ dependencies = [
 [[package]]
 name = "citadel_sdk"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#0dad3fe14ff5c52ddb2213b9f70f241b85fba65e"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=integ%2Flive-sdk#77b7a6f4f518913417e382adb9ded6ec2aeeaeab"
 dependencies = [
  "anyhow",
  "bytes",
@@ -941,7 +941,7 @@ dependencies = [
 [[package]]
 name = "citadel_treekem"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#0dad3fe14ff5c52ddb2213b9f70f241b85fba65e"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=integ%2Flive-sdk#77b7a6f4f518913417e382adb9ded6ec2aeeaeab"
 dependencies = [
  "arrayvec",
  "bincode",
@@ -959,7 +959,7 @@ dependencies = [
 [[package]]
 name = "citadel_types"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#0dad3fe14ff5c52ddb2213b9f70f241b85fba65e"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=integ%2Flive-sdk#77b7a6f4f518913417e382adb9ded6ec2aeeaeab"
 dependencies = [
  "bincode",
  "bytes",
@@ -978,7 +978,7 @@ dependencies = [
 [[package]]
 name = "citadel_user"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#0dad3fe14ff5c52ddb2213b9f70f241b85fba65e"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=integ%2Flive-sdk#77b7a6f4f518913417e382adb9ded6ec2aeeaeab"
 dependencies = [
  "async-trait",
  "bincode",
@@ -1004,7 +1004,7 @@ dependencies = [
 [[package]]
 name = "citadel_wire"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#0dad3fe14ff5c52ddb2213b9f70f241b85fba65e"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=integ%2Flive-sdk#77b7a6f4f518913417e382adb9ded6ec2aeeaeab"
 dependencies = [
  "anyhow",
  "async-trait-with-sync",
@@ -2653,7 +2653,7 @@ dependencies = [
 [[package]]
 name = "netbeam"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#0dad3fe14ff5c52ddb2213b9f70f241b85fba65e"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=integ%2Flive-sdk#77b7a6f4f518913417e382adb9ded6ec2aeeaeab"
 dependencies = [
  "anyhow",
  "async-stream",

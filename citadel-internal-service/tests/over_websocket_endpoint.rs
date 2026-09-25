@@ -236,7 +236,14 @@ async fn sever_if(at: &str) -> Result<(), Box<dyn Error>> {
     }
     let sever = std::env::var("CITADEL_WS_PROOF_SEVER")?;
     let mut tcp = tokio::net::TcpStream::connect(&sever).await?;
-    tcp.write_all(format!("GET {} HTTP/1.0\r\n\r\n", std::env::var("CITADEL_WS_PROOF_SEVER_PATH").unwrap_or_else(|_| "/".into())).as_bytes()).await?;
+    tcp.write_all(
+        format!(
+            "GET {} HTTP/1.0\r\n\r\n",
+            std::env::var("CITADEL_WS_PROOF_SEVER_PATH").unwrap_or_else(|_| "/".into())
+        )
+        .as_bytes(),
+    )
+    .await?;
     let mut out = String::new();
     let _ = tcp.read_to_string(&mut out).await;
     println!("SEVERED at {at}: {out:?}");
@@ -267,8 +274,8 @@ async fn drain_until<T>(
 async fn two_agents_round_trip_a_group_through_a_websocket_server() -> Result<(), Box<dyn Error>> {
     use citadel_internal_service_types::{GroupCreateSuccess, GroupMessageNotification};
     common::setup_log();
-    let endpoint = std::env::var(ENDPOINT_VAR)
-        .map_err(|_| format!("{ENDPOINT_VAR} must name the server"))?;
+    let endpoint =
+        std::env::var(ENDPOINT_VAR).map_err(|_| format!("{ENDPOINT_VAR} must name the server"))?;
     let insecure = std::env::var(INSECURE_VAR).as_deref() == Ok("1");
     let agent_a = spawn_agent(insecure).await?;
     let agent_b = if std::env::var("CITADEL_WS_PROOF_ONE_AGENT").as_deref() == Ok("1") {
@@ -305,9 +312,9 @@ async fn two_agents_round_trip_a_group_through_a_websocket_server() -> Result<()
             initial_users_to_invite: Some(vec![cid_b.into()]),
         })?;
         let key = drain_until(from_a, "a", Duration::from_secs(30), |r| match r {
-            InternalServiceResponse::GroupCreateSuccess(GroupCreateSuccess { group_key, .. }) => {
-                Some(*group_key)
-            }
+            InternalServiceResponse::GroupCreateSuccess(GroupCreateSuccess {
+                group_key, ..
+            }) => Some(*group_key),
             _ => None,
         })
         .await?;
@@ -318,7 +325,8 @@ async fn two_agents_round_trip_a_group_through_a_websocket_server() -> Result<()
             matches!(r, InternalServiceResponse::GroupInviteNotification(..)).then_some(())
         })
         .await?;
-        if round == 0 && std::env::var("CITADEL_WS_PROOF_SEVER_AT").as_deref() == Ok("after_create") {
+        if round == 0 && std::env::var("CITADEL_WS_PROOF_SEVER_AT").as_deref() == Ok("after_create")
+        {
             for (rx, who) in [(&mut *from_a, "a"), (&mut *from_b, "b")] {
                 drain_until(rx, who, Duration::from_secs(60), |r| {
                     matches!(r, InternalServiceResponse::ServerReconnected(..)).then_some(())
@@ -367,53 +375,67 @@ async fn two_agents_round_trip_a_group_through_a_websocket_server() -> Result<()
                     break;
                 }
             }
-            assert!(delivered, "round {round}: {receiver} never received {sender}'s group message");
+            assert!(
+                delivered,
+                "round {round}: {receiver} never received {sender}'s group message"
+            );
             println!("GROUP DELIVERED round {round} {sender} -> {receiver}");
         }
         if round == 0 {
-            let severs: u32 = std::env::var("CITADEL_WS_PROOF_SEVERS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+            let severs: u32 = std::env::var("CITADEL_WS_PROOF_SEVERS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1);
             for sever_round in 0..severs {
-            if let (Ok(sever), Ok("after_round")) = (
-                std::env::var("CITADEL_WS_PROOF_SEVER"),
-                std::env::var("CITADEL_WS_PROOF_SEVER_AT").as_deref(),
-            ) {
-                let sever_started = std::time::Instant::now();
-                println!("SEVER ROUND {sever_round}");
-                use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                let mut tcp = tokio::net::TcpStream::connect(&sever).await?;
-                tcp.write_all(format!("GET {} HTTP/1.0\r\n\r\n", std::env::var("CITADEL_WS_PROOF_SEVER_PATH").unwrap_or_else(|_| "/".into())).as_bytes()).await?;
-                let mut out = String::new();
-                let _ = tcp.read_to_string(&mut out).await;
-                println!("SEVERED the server links: {out:?}");
-                for (to, from_rx, sender, receiver, rx_name) in [
-                    (&*to_a, &mut *from_b, cid_a, cid_b, "b"),
-                    (&*to_b, &mut *from_a, cid_b, cid_a, "a"),
-                ] {
-                    let mut delivered = false;
-                    for n in 0..240 {
-                        to.send(InternalServiceRequest::GroupMessage {
-                            cid: sender,
-                            message: format!("after sever {n}").into_bytes(),
-                            group_key: key,
-                            request_id: Uuid::new_v4(),
-                        })?;
-                        if drain_until(from_rx, rx_name, Duration::from_secs(1), |r| match r {
-                            InternalServiceResponse::GroupMessageNotification(
-                                GroupMessageNotification { cid, group_key, .. },
-                            ) if *cid == receiver && *group_key == key => Some(()),
-                            _ => None,
-                        })
-                        .await
-                        .is_ok()
-                        {
-                            delivered = true;
-                            break;
+                if let (Ok(sever), Ok("after_round")) = (
+                    std::env::var("CITADEL_WS_PROOF_SEVER"),
+                    std::env::var("CITADEL_WS_PROOF_SEVER_AT").as_deref(),
+                ) {
+                    let sever_started = std::time::Instant::now();
+                    println!("SEVER ROUND {sever_round}");
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut tcp = tokio::net::TcpStream::connect(&sever).await?;
+                    tcp.write_all(
+                        format!(
+                            "GET {} HTTP/1.0\r\n\r\n",
+                            std::env::var("CITADEL_WS_PROOF_SEVER_PATH")
+                                .unwrap_or_else(|_| "/".into())
+                        )
+                        .as_bytes(),
+                    )
+                    .await?;
+                    let mut out = String::new();
+                    let _ = tcp.read_to_string(&mut out).await;
+                    println!("SEVERED the server links: {out:?}");
+                    for (to, from_rx, sender, receiver, rx_name) in [
+                        (&*to_a, &mut *from_b, cid_a, cid_b, "b"),
+                        (&*to_b, &mut *from_a, cid_b, cid_a, "a"),
+                    ] {
+                        let mut delivered = false;
+                        for n in 0..240 {
+                            to.send(InternalServiceRequest::GroupMessage {
+                                cid: sender,
+                                message: format!("after sever {n}").into_bytes(),
+                                group_key: key,
+                                request_id: Uuid::new_v4(),
+                            })?;
+                            if drain_until(from_rx, rx_name, Duration::from_secs(1), |r| match r {
+                                InternalServiceResponse::GroupMessageNotification(
+                                    GroupMessageNotification { cid, group_key, .. },
+                                ) if *cid == receiver && *group_key == key => Some(()),
+                                _ => None,
+                            })
+                            .await
+                            .is_ok()
+                            {
+                                delivered = true;
+                                break;
+                            }
                         }
+                        assert!(delivered, "after sever {sever_round}: {receiver} never received {sender}'s group message");
+                        println!("GROUP DELIVERED after sever {sever_round} {sender} -> {receiver} at {:?}", sever_started.elapsed());
                     }
-                    assert!(delivered, "after sever {sever_round}: {receiver} never received {sender}'s group message");
-                    println!("GROUP DELIVERED after sever {sever_round} {sender} -> {receiver} at {:?}", sever_started.elapsed());
                 }
-            }
             }
         }
     }
@@ -567,9 +589,21 @@ async fn group_rounds_survive_link_chaos() -> Result<(), Box<dyn Error>> {
     let mut tally = Vec::new();
     for round in 0..rounds {
         let stage = (round % 4) as u8;
-        let path = if round % 3 == 0 { "/sever" } else { "/sever-one" };
-        let outcome =
-            group_round(to_a, from_a, cid_a, to_b, from_b, cid_b, Some((stage, path))).await;
+        let path = if round % 3 == 0 {
+            "/sever"
+        } else {
+            "/sever-one"
+        };
+        let outcome = group_round(
+            to_a,
+            from_a,
+            cid_a,
+            to_b,
+            from_b,
+            cid_b,
+            Some((stage, path)),
+        )
+        .await;
         println!("ROUND {round} sever {path} at stage {stage}: {outcome:?}");
         tally.push(outcome.is_ok());
         tokio::time::sleep(Duration::from_secs(12)).await;
@@ -644,11 +678,16 @@ async fn a_member_restore_racing_the_owner_restore_does_not_kill_the_owner(
             if quiet_until.is_some_and(|q| now >= q) || now >= deadline {
                 break;
             }
-            for (i, (rx, who)) in [(&mut *from_a, "a"), (&mut *from_b, "b")].into_iter().enumerate() {
+            for (i, (rx, who)) in [(&mut *from_a, "a"), (&mut *from_b, "b")]
+                .into_iter()
+                .enumerate()
+            {
                 while let Ok(r) = rx.try_recv() {
                     match &r {
                         InternalServiceResponse::ServerReconnected(..) => back[i] = true,
-                        InternalServiceResponse::ServerConnectionLost(..) if quiet_until.is_some() => {
+                        InternalServiceResponse::ServerConnectionLost(..)
+                            if quiet_until.is_some() =>
+                        {
                             unrequested += 1;
                             println!("UNREQUESTED DROP of {who} in cycle {cycle}");
                         }
@@ -662,12 +701,18 @@ async fn a_member_restore_racing_the_owner_restore_does_not_kill_the_owner(
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        assert!(back == [true, true], "cycle {cycle}: a session never came back: {back:?}");
+        assert!(
+            back == [true, true],
+            "cycle {cycle}: a session never came back: {back:?}"
+        );
     }
     println!("UNREQUESTED DROPS {unrequested} in {cycles} cycles");
     group_round(to_a, from_a, cid_a, to_b, from_b, cid_b, None)
         .await
         .map_err(|e| format!("a new group after the cuts: {e}"))?;
-    assert_eq!(unrequested, 0, "a session dropped after both had reconnected, and nobody cut it");
+    assert_eq!(
+        unrequested, 0,
+        "a session dropped after both had reconnected, and nobody cut it"
+    );
     Ok(())
 }

@@ -259,7 +259,7 @@ dependencies = [
 [[package]]
 name = "async_ip"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#64809523ef57a75d709f6e95c607d305f8d8c33d"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#b7e7f313e5079fc9d6c3e73e47bace8e92260612"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -751,7 +751,7 @@ dependencies = [
 [[package]]
 name = "citadel_crypt"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#64809523ef57a75d709f6e95c607d305f8d8c33d"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#b7e7f313e5079fc9d6c3e73e47bace8e92260612"
 dependencies = [
  "arrayvec",
  "async-trait",
@@ -784,7 +784,7 @@ dependencies = [
 [[package]]
 name = "citadel_io"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#64809523ef57a75d709f6e95c607d305f8d8c33d"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#b7e7f313e5079fc9d6c3e73e47bace8e92260612"
 dependencies = [
  "bytes",
  "citadel_io_macros",
@@ -806,7 +806,7 @@ dependencies = [
 [[package]]
 name = "citadel_io_macros"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#64809523ef57a75d709f6e95c607d305f8d8c33d"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#b7e7f313e5079fc9d6c3e73e47bace8e92260612"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -816,7 +816,7 @@ dependencies = [
 [[package]]
 name = "citadel_logging"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#64809523ef57a75d709f6e95c607d305f8d8c33d"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#b7e7f313e5079fc9d6c3e73e47bace8e92260612"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -825,7 +825,7 @@ dependencies = [
 [[package]]
 name = "citadel_media"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#64809523ef57a75d709f6e95c607d305f8d8c33d"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#b7e7f313e5079fc9d6c3e73e47bace8e92260612"
 dependencies = [
  "bytes",
 ]
@@ -833,7 +833,7 @@ dependencies = [
 [[package]]
 name = "citadel_pqcrypto"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#64809523ef57a75d709f6e95c607d305f8d8c33d"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#b7e7f313e5079fc9d6c3e73e47bace8e92260612"
 dependencies = [
  "aes-gcm",
  "ascon-aead",
@@ -861,7 +861,7 @@ dependencies = [
 [[package]]
 name = "citadel_proto"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#64809523ef57a75d709f6e95c607d305f8d8c33d"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#b7e7f313e5079fc9d6c3e73e47bace8e92260612"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -904,7 +904,7 @@ dependencies = [
 [[package]]
 name = "citadel_sdk"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#64809523ef57a75d709f6e95c607d305f8d8c33d"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#b7e7f313e5079fc9d6c3e73e47bace8e92260612"
 dependencies = [
  "anyhow",
  "bytes",
@@ -941,7 +941,7 @@ dependencies = [
 [[package]]
 name = "citadel_treekem"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#64809523ef57a75d709f6e95c607d305f8d8c33d"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#b7e7f313e5079fc9d6c3e73e47bace8e92260612"
 dependencies = [
  "arrayvec",
  "bincode",
@@ -959,7 +959,7 @@ dependencies = [
 [[package]]
 name = "citadel_types"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#64809523ef57a75d709f6e95c607d305f8d8c33d"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#b7e7f313e5079fc9d6c3e73e47bace8e92260612"
 dependencies = [
  "bincode",
  "bytes",
@@ -978,7 +978,7 @@ dependencies = [
 [[package]]
 name = "citadel_user"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#64809523ef57a75d709f6e95c607d305f8d8c33d"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#b7e7f313e5079fc9d6c3e73e47bace8e92260612"
 dependencies = [
  "async-trait",
  "bincode",
@@ -1004,7 +1004,7 @@ dependencies = [
 [[package]]
 name = "citadel_wire"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#64809523ef57a75d709f6e95c607d305f8d8c33d"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#b7e7f313e5079fc9d6c3e73e47bace8e92260612"
 dependencies = [
  "anyhow",
  "async-trait-with-sync",
@@ -2653,7 +2653,7 @@ dependencies = [
 [[package]]
 name = "netbeam"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#64809523ef57a75d709f6e95c607d305f8d8c33d"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fgroup-membership-survives-reconnect#b7e7f313e5079fc9d6c3e73e47bace8e92260612"
 dependencies = [
  "anyhow",
  "async-stream",

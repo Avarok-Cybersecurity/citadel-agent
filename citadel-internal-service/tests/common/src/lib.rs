@@ -1,10 +1,15 @@
 #![allow(dead_code)]
 pub mod coturn;
+pub mod group;
+pub mod group_rejoin;
 pub mod turn_harness;
 
 use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service::StunServers;
-use citadel_internal_service_connector::connector::{InternalServiceConnector, WrappedSink};
+use citadel_internal_service_connector::connector::{
+    InternalServiceConnector, WrappedSink, WrappedStream,
+};
+use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     FileTransferTickNotification, InternalServiceRequest, InternalServiceResponse, P2pPathReport,
@@ -232,37 +237,7 @@ pub async fn register_and_connect_to_server<
                     target = "citadel",
                     "ConnectSuccess Received, Creating Service Channels"
                 );
-                let (to_service, from_service) = tokio::sync::mpsc::unbounded_channel();
-                let service_to_test = async move {
-                    // take messages from the service and send them to from_service
-                    while let Some(msg) = stream.next().await {
-                        info!(target = "citadel", "Service to test {msg:?}");
-                        // The test dropped its receiver: it is over, and traffic still in
-                        // flight (media frames, late notifications) has nowhere to go.
-                        if to_service.send(msg).is_err() {
-                            break;
-                        }
-                    }
-                };
-
-                let (to_service_sender, mut from_test) = tokio::sync::mpsc::unbounded_channel();
-                let test_to_service = async move {
-                    while let Some(msg) = from_test.recv().await {
-                        info!(target = "citadel", "Test to service {:?}", msg);
-                        send(&mut sink, msg).await.unwrap();
-                    }
-                };
-
-                let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
-                internal_services.push(Box::pin(async move {
-                    test_to_service.await;
-                    Ok(())
-                }));
-                internal_services.push(Box::pin(async move {
-                    service_to_test.await;
-                    Ok(())
-                }));
-                spawn_services(internal_services);
+                let (to_service_sender, from_service) = bridge_to_test(sink, stream);
                 return_results.push((to_service_sender, from_service, cid));
             } else {
                 panic!("Connection to server was not a success");
@@ -642,6 +617,67 @@ pub fn spawn_services(futures_to_spawn: Vec<InternalServicesFutures>) {
         }
     };
     tokio::task::spawn(services_to_spawn);
+}
+
+/// Channels a test drives a localhost connection through, in place of the
+/// connector's sink and stream.
+pub fn bridge_to_test(
+    mut sink: WrappedSink<TcpIOInterface>,
+    mut stream: WrappedStream<TcpIOInterface>,
+) -> (
+    UnboundedSender<InternalServiceRequest>,
+    UnboundedReceiver<InternalServiceResponse>,
+) {
+    let (to_service, from_service) = tokio::sync::mpsc::unbounded_channel();
+    let service_to_test = async move {
+        // take messages from the service and send them to from_service
+        while let Some(msg) = stream.next().await {
+            info!(target = "citadel", "Service to test {msg:?}");
+            // The test dropped its receiver: it is over, and traffic still in
+            // flight (media frames, late notifications) has nowhere to go.
+            if to_service.send(msg).is_err() {
+                break;
+            }
+        }
+    };
+
+    let (to_service_sender, mut from_test) = tokio::sync::mpsc::unbounded_channel();
+    let test_to_service = async move {
+        while let Some(msg) = from_test.recv().await {
+            info!(target = "citadel", "Test to service {:?}", msg);
+            send(&mut sink, msg).await.unwrap();
+        }
+    };
+
+    let internal_services: Vec<InternalServicesFutures> = vec![
+        Box::pin(async move {
+            test_to_service.await;
+            Ok(())
+        }),
+        Box::pin(async move {
+            service_to_test.await;
+            Ok(())
+        }),
+    ];
+    spawn_services(internal_services);
+    (to_service_sender, from_service)
+}
+
+/// A further localhost connection to a running service, with no session on it:
+/// what a second browser window opening the agent's socket is.
+pub async fn open_localhost_connection(
+    internal_service_addr: SocketAddr,
+) -> Result<
+    (
+        UnboundedSender<InternalServiceRequest>,
+        UnboundedReceiver<InternalServiceResponse>,
+    ),
+    Box<dyn Error>,
+> {
+    let (sink, stream) = InternalServiceConnector::connect(internal_service_addr)
+        .await?
+        .split();
+    Ok(bridge_to_test(sink, stream))
 }
 
 pub async fn send<T: IOInterface>(
@@ -1097,9 +1133,28 @@ pub async fn open_media_and_measure(
 pub async fn two_sessions_on_one_service(
     tag: &str,
 ) -> Result<(PeerHandle, PeerHandle), Box<dyn Error>> {
+    let (_, first, second) = two_sessions_on_one_service_at(tag).await?;
+    Ok((first, second))
+}
+
+/// `two_sessions_on_one_service`, also naming the service's address so a test
+/// can open further localhost connections to it. Session `i` is
+/// `{tag}.{i}` / `secret_{i}`.
+pub async fn two_sessions_on_one_service_at(
+    tag: &str,
+) -> Result<(SocketAddr, PeerHandle, PeerHandle), Box<dyn Error>> {
     let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
     tokio::task::spawn(server);
+    two_sessions_on_one_service_reaching(tag, [server_bind_address; 2]).await
+}
 
+/// As [`two_sessions_on_one_service_at`], against a server the caller runs, with session
+/// `i` registering to `server_addrs[i]` -- so one of them can reach it through a proxy
+/// that cuts only that session's link.
+pub async fn two_sessions_on_one_service_reaching(
+    tag: &str,
+    server_addrs: [SocketAddr; 2],
+) -> Result<(SocketAddr, PeerHandle, PeerHandle), Box<dyn Error>> {
     let service_addr: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
     let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
     let internal_service = test_stun_servers()
@@ -1114,7 +1169,7 @@ pub async fn two_sessions_on_one_service(
     let to_spawn = (0..2)
         .map(|i| RegisterAndConnectItems {
             internal_service_addr: service_addr,
-            server_addr: server_bind_address,
+            server_addr: server_addrs[i],
             full_name: format!("{tag} {i}"),
             username: format!("{tag}.{i}"),
             password: format!("secret_{i}").into_bytes(),
@@ -1125,7 +1180,7 @@ pub async fn two_sessions_on_one_service(
     let mut info = register_and_connect_to_server(to_spawn).await.unwrap();
     let second = info.remove(1);
     let first = info.remove(0);
-    Ok((first, second))
+    Ok((service_addr, first, second))
 }
 
 #[cfg(test)]

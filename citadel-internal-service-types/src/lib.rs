@@ -16,8 +16,10 @@ use uuid::Uuid;
 #[cfg(feature = "typescript")]
 use ts_rs::TS;
 
+mod group_drop;
 mod server_link;
 mod turn;
+pub use group_drop::GroupMessageDroppedNotification;
 pub use server_link::{ServerConnectionLost, ServerReconnectFailed, ServerReconnected};
 pub use turn::{IceServer, P2pPathReport, PeerTurnConfig, TurnPolicy};
 
@@ -1322,6 +1324,7 @@ pub enum InternalServiceResponse {
     GroupEndFailure(GroupEndFailure),
     GroupEndNotification(GroupEndNotification),
     GroupMessageNotification(GroupMessageNotification),
+    GroupMessageDroppedNotification(GroupMessageDroppedNotification),
     GroupMessageResponse(GroupMessageResponse),
     GroupMessageSuccess(GroupMessageSuccess),
     GroupMessageFailure(GroupMessageFailure),

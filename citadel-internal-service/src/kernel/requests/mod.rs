@@ -31,6 +31,7 @@ mod register;
 mod connection_management;
 pub(crate) mod connection_management_auth;
 mod connection_management_claim;
+mod connection_management_claim_sdk;
 pub(crate) mod file;
 mod group;
 mod local_db;
@@ -411,6 +412,16 @@ pub(crate) fn spawn_group_channel_receiver(
                                     },
                                 ))
                             }
+                            GroupBroadcast::MessageDropped {
+                                key,
+                                sender,
+                                reason,
+                            } => Some(crate::kernel::responses::group_event::message_dropped(
+                                implicated_cid,
+                                key,
+                                sender,
+                                reason,
+                            )),
                             GroupBroadcast::MessageResponse { key, success } => {
                                 Some(InternalServiceResponse::GroupMessageResponse(
                                     GroupMessageResponse {
@@ -443,8 +454,23 @@ pub(crate) fn spawn_group_channel_receiver(
 
                     // Forward Group Broadcast to TCP Client if it was one of the handled broadcasts
                     if let Some(message) = message {
-                        if route.send(message).is_none() {
-                            info!(target:"citadel","No localhost connection owns CID {implicated_cid} - group broadcast dropped");
+                        // Logged at info, as the P2P path's "[P2P-RECV] Delivered"
+                        // is: the per-broadcast trace above is off in a live
+                        // agent, and without this line a group message the SDK
+                        // never handed over and one the agent forwarded to the
+                        // owning connection leave the same (empty) log.
+                        let is_message = matches!(
+                            message,
+                            InternalServiceResponse::GroupMessageNotification(_)
+                        );
+                        match route.send(message) {
+                            Some(target) if is_message => {
+                                info!(target:"citadel","[GROUP-RECV] Delivered a group message for CID {implicated_cid} to {target}");
+                            }
+                            Some(_) => {}
+                            None => {
+                                info!(target:"citadel","No localhost connection owns CID {implicated_cid} - group broadcast dropped");
+                            }
                         }
                     }
                 }

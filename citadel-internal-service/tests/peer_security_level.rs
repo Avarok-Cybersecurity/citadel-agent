@@ -142,7 +142,6 @@ mod tests {
     }
 
     /// A opens at High, B accepts; both send at High and both messages arrive.
-    #[ignore = "SDK a49af50: a P2P level above the C2S login's ends the C2S session (Only have max 0 security levels)"]
     #[tokio::test(flavor = "multi_thread")]
     async fn a_channel_opened_at_high_carries_high_messages_both_ways() -> Result<(), Box<dyn Error>>
     {
@@ -169,7 +168,7 @@ mod tests {
 
     /// Over a Standard channel, a message asking for High is not delivered at a lower level,
     /// and the agent is still serving afterwards: a Standard message still crosses.
-    #[ignore = "SDK a49af50: a High message over a Standard channel is sent and delivered"]
+    #[ignore = "a High message over a Standard channel is still sent and delivered (the per-message level is not bounded by the channel); the UI opens the channel at the chat level, so it never asks for more"]
     #[tokio::test(flavor = "multi_thread")]
     async fn a_message_above_the_channel_level_is_not_downgraded() -> Result<(), Box<dyn Error>> {
         setup_log();
@@ -204,7 +203,6 @@ mod tests {
     /// The UI's convergence: B requires High and declines A's Standard offer; A's connect fails
     /// (it is answered, not left hanging); B then opens at High and A accepts. Both then send
     /// at their own levels and both arrive.
-    #[ignore = "SDK a49af50: B's High PeerConnect over a Standard login ends B's C2S session"]
     #[tokio::test(flavor = "multi_thread")]
     async fn a_declined_low_offer_is_replaced_by_the_higher_one() -> Result<(), Box<dyn Error>> {
         setup_log();

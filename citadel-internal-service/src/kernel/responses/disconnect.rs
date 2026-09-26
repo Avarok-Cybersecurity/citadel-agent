@@ -34,8 +34,19 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     let rejected_connection_messages =
         ["Session Already Connected", "Preconnect signalled to halt"];
 
-    for reject_msg in &rejected_connection_messages {
-        if disconnect.message.contains(reject_msg) {
+    if let Some(reject_msg) = rejected_connection_messages
+        .iter()
+        .find(|m| disconnect.message.contains(**m))
+    {
+        // The same text ends a LIVE session: after the SDK shut one down (a missing
+        // ratchet, measured live), the server refused its reconnect with HALT, and this
+        // kept the dead session as though it were the original -- never reconnected,
+        // the page never told, every action silently going nowhere.
+        let sdk_holds = match disconnect_cid(&disconnect) {
+            Some(cid) => this.client_or_peer_in_protocol(cid, None).await,
+            None => Ok(true),
+        };
+        if refusal_leaves_session_standing(&sdk_holds) {
             citadel_sdk::logging::info!(
                 target: "citadel",
                 "Disconnect due to '{}' - preserving existing session in server_connection_map",
@@ -43,6 +54,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             );
             return Ok(());
         }
+        citadel_sdk::logging::warn!(target: "citadel", "Disconnect due to '{reject_msg}', and the SDK no longer holds the session: treating it as dropped");
     }
 
     // In SDK v0.13.1+, NodeResult::Disconnect only carries C2S connection types.
@@ -78,6 +90,19 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     Ok(())
 }
 
+fn disconnect_cid(disconnect: &Disconnect) -> Option<u64> {
+    match disconnect.conn_type? {
+        ClientConnectionType::Server { session_cid } => Some(session_cid),
+        ClientConnectionType::Extended { session_cid, .. } => Some(session_cid),
+    }
+}
+
+/// A refused connection attempt leaves the tracked session standing only while the
+/// SDK still holds it. A failed query is not evidence it is gone, so it preserves.
+pub(crate) fn refusal_leaves_session_standing(sdk_holds: &Result<bool, NetworkError>) -> bool {
+    !matches!(sdk_holds, Ok(false))
+}
+
 /// The session was being ended by its user: mirror the SDK, as this always did.
 fn remove<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
@@ -99,4 +124,26 @@ fn remove<T: IOInterface + Sync, R: Ratchet>(
         request_id: None,
     });
     send_response_to_tcp_client(&this.tx_to_localhost_clients, response, tcp_uuid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::refusal_leaves_session_standing;
+    use citadel_sdk::prelude::NetworkError;
+
+    #[test]
+    fn a_refusal_keeps_the_session_only_while_the_sdk_holds_it() {
+        assert!(
+            refusal_leaves_session_standing(&Ok(true)),
+            "a rejected duplicate leaves the original"
+        );
+        assert!(
+            !refusal_leaves_session_standing(&Ok(false)),
+            "a session the SDK has ended is dropped, not preserved"
+        );
+        assert!(
+            refusal_leaves_session_standing(&Err(NetworkError::msg("query failed"))),
+            "a failed query is not evidence the session is gone"
+        );
+    }
 }

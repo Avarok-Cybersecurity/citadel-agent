@@ -4,6 +4,7 @@ pub mod group_list_groups;
 pub mod invite;
 pub mod kick;
 pub mod leave;
+pub mod list_joined;
 pub mod message;
 pub mod request_join;
 mod request_join_wait;

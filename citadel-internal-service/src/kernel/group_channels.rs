@@ -140,6 +140,19 @@ impl GroupChannels {
         );
     }
 
+    /// Every group this session is still in, in a stable order. Departed
+    /// entries are left out, as `get` leaves them out.
+    pub(crate) fn keys(&self) -> Vec<MessageGroupKey> {
+        let mut keys: Vec<MessageGroupKey> = self
+            .inner
+            .iter()
+            .filter(|(_, entry)| !entry.tx.departed())
+            .map(|(key, _)| *key)
+            .collect();
+        keys.sort_by_key(|key| (key.cid, key.mgid));
+        keys
+    }
+
     pub(crate) fn get(&self, key: &MessageGroupKey) -> Option<&ActiveGroupChannel> {
         self.inner.get(key).filter(|entry| !entry.tx.departed())
     }

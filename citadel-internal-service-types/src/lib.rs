@@ -962,6 +962,32 @@ pub struct GroupListGroupsFailure {
     pub request_id: Option<Uuid>,
 }
 
+/// The groups this session is in -- owned or joined -- as the agent holds them.
+///
+/// `GroupListGroupsFor` answers only for groups an owner created, so a member's
+/// new browser had no way to learn the groups it was already in. The session's
+/// live group channels are exactly that set.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct GroupListJoinedSuccess {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey[]"))]
+    pub groups: Vec<MessageGroupKey>,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct GroupListJoinedFailure {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
@@ -1341,6 +1367,8 @@ pub enum InternalServiceResponse {
     GroupListGroupsSuccess(GroupListGroupsSuccess),
     GroupListGroupsFailure(GroupListGroupsFailure),
     GroupListGroupsResponse(GroupListGroupsResponse),
+    GroupListJoinedSuccess(GroupListJoinedSuccess),
+    GroupListJoinedFailure(GroupListJoinedFailure),
     GroupJoinRequestNotification(GroupJoinRequestNotification),
     GroupRequestJoinAcceptResponse(GroupRequestJoinAcceptResponse),
     GroupRequestJoinDeclineResponse(GroupRequestJoinDeclineResponse),
@@ -1775,6 +1803,12 @@ pub enum InternalServiceRequest {
         peer_cid: Option<u64>,
         request_id: Uuid,
     },
+    /// See [`GroupListJoinedSuccess`].
+    GroupListJoined {
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        request_id: Uuid,
+    },
     GroupRequestJoin {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
@@ -1983,6 +2017,7 @@ impl InternalServiceRequest {
             Self::GroupRespondRequest { cid, .. } => Some(*cid),
             Self::GroupKick { cid, .. } => Some(*cid),
             Self::GroupListGroupsFor { cid, .. } => Some(*cid),
+            Self::GroupListJoined { cid, .. } => Some(*cid),
             Self::GroupRequestJoin { cid, .. } => Some(*cid),
             // Exhaustive on purpose: no `_` arm.
             //

@@ -257,6 +257,9 @@ where
         InternalServiceRequest::GroupListGroupsFor { .. } => {
             group::group_list_groups::handle(this, uuid, command).await
         }
+        InternalServiceRequest::GroupListJoined { .. } => {
+            group::list_joined::handle(this, uuid, command).await
+        }
 
         InternalServiceRequest::GroupRespondRequest { .. } => {
             group::respond_request::handle(this, uuid, command).await
@@ -852,6 +855,13 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
             message: REFUSED.to_string(),
             request_id: Some(*request_id),
         }),
+        InternalServiceRequest::GroupListJoined { request_id, cid } => {
+            InternalServiceResponse::GroupListJoinedFailure(GroupListJoinedFailure {
+                cid: *cid,
+                message: REFUSED.to_string(),
+                request_id: Some(*request_id),
+            })
+        }
         // Everything else stays silent, and each is a deliberate decision.
         //
         // GroupListGroupsFor returns DATA and has no failure variant, so a

@@ -65,6 +65,16 @@ pub fn on_unrequested_drop(link: LinkState) -> DropAction {
     }
 }
 
+/// Whether a claim must find the session in the SDK before handing it over.
+///
+/// Not while the agent is reconnecting it: the SDK holds no session for it until the
+/// reconnect lands, by design (connect.rs already knows this). The claim read that
+/// absence as death, removed the session and so stopped its reconnect -- a page
+/// reloaded during a server drop signed its user out.
+pub fn claim_requires_sdk_session(link: LinkState) -> bool {
+    link != LinkState::Reconnecting
+}
+
 impl ReconnectPolicy {
     /// The wait before attempt `attempt` (0 is the first).
     pub fn delay_before(&self, attempt: u32) -> Duration {

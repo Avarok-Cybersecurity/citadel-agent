@@ -171,3 +171,14 @@ fn only_an_up_session_is_reconnected() {
     );
     assert_eq!(on_unrequested_drop(LinkState::Ending), DropAction::Remove);
 }
+
+/// Reloading a page while the agent reconnected its session used to end the session:
+/// the claim found no SDK session (there is none until the reconnect lands), removed it
+/// and stopped the reconnect. Seen live: "Session … is not claimable: SDK session is
+/// disconnected", then the sign-in page, with the server still up.
+#[test]
+fn a_session_being_reconnected_is_claimed_without_an_sdk_session() {
+    assert!(!claim_requires_sdk_session(LinkState::Reconnecting));
+    assert!(claim_requires_sdk_session(LinkState::Up));
+    assert!(claim_requires_sdk_session(LinkState::Ending));
+}

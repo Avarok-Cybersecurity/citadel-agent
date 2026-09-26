@@ -6,13 +6,17 @@
 //! shared with the other two session-mutating commands so the three cannot
 //! drift apart.
 
+use crate::kernel::reconnect::{policy, LinkState};
 use crate::kernel::requests::connection_management::{owner_of, refusal};
 use crate::kernel::requests::connection_management_auth::{may_claim, Authorization, SessionOwner};
+use crate::kernel::requests::connection_management_claim_sdk::{
+    refuse_unless_sdk_holds, tell_the_claimer_it_is_reconnecting,
+};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::*;
-use citadel_sdk::logging::{info, warn};
+use citadel_sdk::logging::info;
 use citadel_sdk::prelude::*;
 use std::sync::atomic::Ordering;
 use uuid::Uuid;
@@ -50,6 +54,16 @@ fn decide_claim(
     }
 }
 
+fn link_of<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    cid: u64,
+) -> Option<LinkState> {
+    this.server_connection_map
+        .read()
+        .get(&cid)
+        .map(|conn| conn.link)
+}
+
 pub(super) async fn claim_session<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     conn_id: Uuid,
@@ -76,70 +90,15 @@ pub(super) async fn claim_session<T: IOInterface, R: Ratchet>(
         return Some(refusal(session_cid, request_id, conn_id, error));
     }
 
-    // Step 3: Verify session is active in SDK before allowing claim
-    let remote = this.remote();
-    let sdk_active_cids: Vec<u64> = match remote.sessions().await {
-        Ok(conns) => conns.sessions.into_iter().map(|s| s.cid).collect(),
-        Err(e) => {
-            // An empty list here is not "the SDK has no sessions", it is "we
-            // could not ask". Step 4 treats absence as proof the session is
-            // dead and REMOVES it from the map before denying the claim, so a
-            // transient stream error destroyed a live, claimable session and
-            // told the user it was not claimable.
-            warn!(
-                target: "citadel",
-                "ClaimSession: Failed to query SDK sessions: {:?}; refusing rather than \
-                 treating the session as dead",
-                e
-            );
-            return Some(HandledRequestResult {
-                response: InternalServiceResponse::ConnectionManagementFailure(
-                    ConnectionManagementFailure {
-                        cid: session_cid,
-                        request_id: Some(request_id),
-                        error: format!(
-                            "Could not determine whether session {} is still active: {:?}. \
-                             Nothing was changed; try again.",
-                            session_cid, e
-                        ),
-                    },
-                ),
-                uuid: conn_id,
-            });
-        }
-    };
-
-    info!(target: "citadel", "ClaimSession: SDK reports {} active sessions: {:?}", sdk_active_cids.len(), sdk_active_cids);
-
-    // Step 4: Check if session is active in SDK
-    if !sdk_active_cids.contains(&session_cid) {
-        // Session exists in internal service but not in SDK - clean up and deny
+    // Steps 3-4: a session the agent is reconnecting has no SDK session yet, and is
+    // held, not dead; any other must be live in the SDK (connection_management_claim_sdk.rs).
+    let reconnecting =
+        link_of(this, session_cid).is_some_and(|link| !policy::claim_requires_sdk_session(link));
+    if !reconnecting {
+        if let Some(refused) = refuse_unless_sdk_holds(this, conn_id, request_id, session_cid).await
         {
-            let mut server_connection_map = this.server_connection_map.write();
-            server_connection_map.remove(&session_cid);
+            return Some(refused);
         }
-        // The CID-keyed kernel maps outlive the entry otherwise — see
-        // prune_cid_scoped_state. Every other teardown site prunes; this one and
-        // the two in DisconnectOrphan did not, and the gate could not see them
-        // because they bind the write guard to a local before removing.
-        //
-        // Outside the guard: prune takes its own locks, and every other caller
-        // releases the map first.
-        this.prune_cid_scoped_state(session_cid, None);
-        info!(target: "citadel", "ClaimSession: Session {} removed - not active in SDK", session_cid);
-        return Some(HandledRequestResult {
-            response: InternalServiceResponse::ConnectionManagementFailure(
-                ConnectionManagementFailure {
-                    cid: session_cid,
-                    request_id: Some(request_id),
-                    error: format!(
-                        "Session {} is not claimable: SDK session is disconnected",
-                        session_cid
-                    ),
-                },
-            ),
-            uuid: conn_id,
-        });
     }
 
     // Step 5: Session is valid in both internal service and SDK - decide and
@@ -228,6 +187,13 @@ pub(super) async fn claim_session<T: IOInterface, R: Ratchet>(
 
     // Add this connection to orphan mode to preserve it when the new connection drops
     this.orphan_sessions.write().insert(conn_id, true);
+    drop(server_connection_map);
+
+    // The reconnect's own notices went to the connection that is gone; the claimer
+    // hears the link is down here, and "reconnected" or "failed" follows to it.
+    if reconnecting {
+        tell_the_claimer_it_is_reconnecting(this, session_cid, conn_id);
+    }
 
     Some(HandledRequestResult {
         response: InternalServiceResponse::ConnectionManagementSuccess(
@@ -245,56 +211,5 @@ pub(super) async fn claim_session<T: IOInterface, R: Ratchet>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn caller() -> Uuid {
-        Uuid::from_u128(10)
-    }
-
-    fn rival() -> Uuid {
-        Uuid::from_u128(20)
-    }
-
-    /// M1's losing side. This connection saw the session orphaned before its
-    /// SDK await; by the time it holds the write lock, the rival's claim has
-    /// landed. Fresh state must refuse, with the message the UI already
-    /// handles as "another tab has it" — the same answer a serialized
-    /// ordering would have given.
-    #[test]
-    fn a_claim_that_lost_the_race_is_refused_on_fresh_state() {
-        let decision = decide_claim(SessionOwner::Live(rival()), true, caller(), 7);
-        assert_eq!(decision, Err("Session 7 is not orphaned".to_string()));
-    }
-
-    /// Same race under `only_if_orphaned: false`: the flag authorizes
-    /// nothing, and the message is the one session_takeover.rs pins.
-    #[test]
-    fn a_forced_claim_that_lost_the_race_is_refused() {
-        let decision = decide_claim(SessionOwner::Live(rival()), false, caller(), 7);
-        assert_eq!(
-            decision,
-            Err("Session 7 is in use by another connection".to_string())
-        );
-    }
-
-    /// The winner re-checks too; a session still orphaned at the write lock
-    /// must pass, or no claim would ever succeed.
-    #[test]
-    fn a_still_orphaned_session_passes_the_recheck() {
-        assert_eq!(
-            decide_claim(SessionOwner::Orphaned, true, caller(), 7),
-            Ok(())
-        );
-    }
-
-    /// A connection reasserting a session it already holds (the
-    /// peer-registration-store flow) must survive the recheck as well.
-    #[test]
-    fn reasserting_an_owned_session_passes() {
-        assert_eq!(
-            decide_claim(SessionOwner::Live(caller()), false, caller(), 7),
-            Ok(())
-        );
-    }
-}
+#[path = "connection_management_claim_tests.rs"]
+mod tests;

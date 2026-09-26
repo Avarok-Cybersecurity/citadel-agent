@@ -768,6 +768,103 @@ mod tests {
         Ok(())
     }
 
+    /// A transfer whose P2P link drops mid-way ends, on both sides, with a reason.
+    ///
+    /// Live (2026-09-26): Lara paused her link to Max seconds after he accepted a
+    /// 15 MB file. Both bubbles sat at "0%" for minutes, stayed there after
+    /// Resume, and every later offer to Max was never announced -- the dead
+    /// transfer held the peer's object-transfer slot. A drop must end it.
+    #[tokio::test]
+    async fn a_transfer_whose_link_drops_fails_on_both_sides() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        let bind_a: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+        let bind_b: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+        let mut peers = register_and_connect_to_server_then_peers::<StackedRatchet>(vec![bind_a, bind_b], None, None).await?;
+        let (peer_one, peer_two) = peers.as_mut_slice().split_at_mut(1_usize);
+        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
+        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0_usize).unwrap();
+
+        to_service_a.send(InternalServiceRequest::SendFile {
+            request_id: Uuid::new_v4(),
+            source: FileSource::ByteContents { file_name: "dropped.bin".to_string(), data: vec![9u8; 15 * 1024 * 1024] },
+            cid: *cid_a,
+            transfer_type: TransferType::FileTransfer,
+            peer_cid: Some(*cid_b),
+            chunk_size: None,
+        }).unwrap();
+        let object_id = loop {
+            match next_ignoring_transfer_noise(from_service_b, 30).await {
+                Some(InternalServiceResponse::FileTransferRequestNotification(n)) => break n.metadata.object_id,
+                Some(_) => continue,
+                None => panic!("B was never offered the file"),
+            }
+        };
+        to_service_b.send(InternalServiceRequest::RespondFileTransfer {
+            cid: *cid_b, peer_cid: *cid_a, object_id: object_id as _, accept: true, download_location: None, request_id: Uuid::new_v4(),
+        }).unwrap();
+
+        // Drop the link as the bytes start to move.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        to_service_a.send(InternalServiceRequest::PeerDisconnect { request_id: Uuid::new_v4(), cid: *cid_a, peer_cid: *cid_b }).unwrap();
+
+        async fn ends(rx: &mut tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>, who: &str) -> String {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(45);
+            loop {
+                match tokio::time::timeout_at(deadline, rx.recv()).await {
+                    Err(_) | Ok(None) => panic!("{who}'s transfer neither failed nor finished within 45 s of the link dropping"),
+                    Ok(Some(InternalServiceResponse::FileTransferTickNotification(FileTransferTickNotification { status, .. }))) => match status {
+                        ObjectTransferStatus::Fail(reason) => return format!("failed: {reason}"),
+                        ObjectTransferStatus::TransferComplete | ObjectTransferStatus::ReceptionComplete => return "complete".to_string(),
+                        _ => continue,
+                    },
+                    Ok(Some(_)) => continue,
+                }
+            }
+        }
+        let b_end: String = ends(from_service_b, "B").await;
+        let a_end: String = ends(from_service_a, "A").await;
+        assert!(b_end.starts_with("failed"), "B: {b_end}");
+        assert!(a_end.starts_with("failed"), "A: {a_end}");
+
+        // And the peer is not left blocked: after reconnecting, a new offer is announced.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let dial = Uuid::new_v4();
+        to_service_a.send(InternalServiceRequest::PeerConnect {
+            request_id: dial, cid: *cid_a, peer_cid: *cid_b, udp_mode: Default::default(),
+            session_security_settings: SessionSecuritySettings::default(), peer_session_password: None, turn: None,
+        }).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(40), async {
+            loop {
+                tokio::select! {
+                    Some(r) = from_service_b.recv() => if let InternalServiceResponse::PeerConnectNotification(n) = r {
+                        to_service_b.send(InternalServiceRequest::PeerConnectAccept {
+                            request_id: Uuid::new_v4(), cid: *cid_b, peer_cid: n.peer_cid, accept: true, udp_mode: Default::default(),
+                            session_security_settings: SessionSecuritySettings::default(), peer_session_password: None, turn: None,
+                        }).unwrap();
+                    },
+                    Some(r) = from_service_a.recv() => match r {
+                        InternalServiceResponse::PeerConnectSuccess(s) if s.request_id == Some(dial) => return,
+                        InternalServiceResponse::PeerConnectFailure(f) if f.request_id == Some(dial) => panic!("reconnect failed: {}", f.message),
+                        _ => {}
+                    },
+                }
+            }
+        }).await.expect("the reconnect after the dropped transfer was not answered");
+        to_service_a.send(InternalServiceRequest::SendFile {
+            request_id: Uuid::new_v4(),
+            source: FileSource::ByteContents { file_name: "after.bin".to_string(), data: vec![1u8; 4096] },
+            cid: *cid_a, transfer_type: TransferType::FileTransfer, peer_cid: Some(*cid_b), chunk_size: None,
+        }).unwrap();
+        loop {
+            match next_ignoring_transfer_noise(from_service_b, 30).await {
+                Some(InternalServiceResponse::FileTransferRequestNotification(n)) if n.metadata.name == "after.bin" => break,
+                Some(_) => continue,
+                None => panic!("the next offer to B was never announced after the dropped transfer"),
+            }
+        }
+        Ok(())
+    }
+
     /// The same, for a file large enough to span MANY group ids.
     ///
     /// The single-group case is not the whole question. `session.rs` reserves a

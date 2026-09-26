@@ -705,6 +705,69 @@ mod tests {
         Ok(())
     }
 
+    /// A message sent while a file OFFER is still unanswered arrives.
+    ///
+    /// Live (2026-09-25, two sessions on one agent): an offer sat on "Waiting
+    /// for acceptance", and every later message from the sender -- including
+    /// the in-band cancel for that very offer -- never reached the recipient,
+    /// who went on showing Accept/Decline. Fixed in Citadel-Protocol #313,
+    /// which had reached SDK master but not the branch this agent locks.
+    #[tokio::test]
+    async fn a_peer_message_while_an_offer_is_unanswered_still_arrives() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        let bind_a: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+        let bind_b: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+
+        let mut peers = register_and_connect_to_server_then_peers::<StackedRatchet>(
+            vec![bind_a, bind_b],
+            None,
+            None,
+        )
+        .await?;
+        let (peer_one, peer_two) = peers.as_mut_slice().split_at_mut(1_usize);
+        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
+        let (_to_service_b, from_service_b, cid_b) = peer_two.get_mut(0_usize).unwrap();
+
+        to_service_a
+            .send(InternalServiceRequest::SendFile {
+                request_id: Uuid::new_v4(),
+                source: FileSource::ByteContents {
+                    file_name: "unanswered.bin".to_string(),
+                    data: vec![5u8; 200 * 1024],
+                },
+                cid: *cid_a,
+                transfer_type: TransferType::FileTransfer,
+                peer_cid: Some(*cid_b),
+                chunk_size: None,
+            })
+            .unwrap();
+        let ack = next_ignoring_transfer_noise(from_service_a, 30).await;
+        assert!(
+            matches!(ack, Some(InternalServiceResponse::SendFileRequestSuccess(..))),
+            "the offer itself was refused: {ack:?}"
+        );
+
+        // B is offered the file and says nothing.
+        let offered = next_ignoring_transfer_noise(from_service_b, 30).await;
+        assert!(
+            matches!(offered, Some(InternalServiceResponse::FileTransferRequestNotification(..))),
+            "B was never offered the file: {offered:?}"
+        );
+
+        send_and_expect_message(
+            to_service_a,
+            from_service_a,
+            from_service_b,
+            *cid_a,
+            *cid_b,
+            b"sent while the offer waits",
+            "a message sent while an offer was unanswered never arrived",
+        )
+        .await;
+
+        Ok(())
+    }
+
     /// The same, for a file large enough to span MANY group ids.
     ///
     /// The single-group case is not the whole question. `session.rs` reserves a

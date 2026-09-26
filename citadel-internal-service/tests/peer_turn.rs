@@ -99,21 +99,45 @@ mod tests {
         Ok(())
     }
 
-    /// 4. An expired config is no config. Relay-only through a dead relay would leave the pair
-    ///    server-relayed; expired, it is ignored and the pair connects directly.
+    /// 4. An expired Fallback config is no config: the pair connects directly.
     #[tokio::test(flavor = "multi_thread")]
-    async fn an_expired_config_is_treated_as_none() -> Result<(), Box<dyn Error>> {
+    async fn an_expired_fallback_config_is_treated_as_none() -> Result<(), Box<dyn Error>> {
         setup_log();
-        let expired = config(
-            TurnPolicy::RelayOnly,
-            vec![dead_turn_url()],
-            "u",
-            "p",
-            unix_now() - 1,
-        );
+        let expired = config(TurnPolicy::Fallback, vec![dead_turn_url()], "u", "p", unix_now() - 1);
         let mut agents = two_registered_agents().await?;
         let paths = connect(&mut agents, [Some(expired.clone()), Some(expired)]).await?;
         assert_eq!(paths, [P2pPathReport::Direct, P2pPathReport::Direct]);
+        Ok(())
+    }
+
+    /// 4b. An expired RELAY-ONLY config never connects directly: relay-only promises the peers
+    ///     never learn each other's addresses, so with no usable relay the pair stays relayed
+    ///     through the server. (It used to be treated as no config -- a direct connection.)
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_expired_relay_only_config_stays_server_relayed() -> Result<(), Box<dyn Error>> {
+        setup_log();
+        let expired = config(TurnPolicy::RelayOnly, vec![dead_turn_url()], "u", "p", unix_now() - 1);
+        let mut agents = two_registered_agents().await?;
+        let paths = connect(&mut agents, [Some(expired.clone()), Some(expired)]).await?;
+        assert_eq!(paths, [P2pPathReport::ServerRelay, P2pPathReport::ServerRelay]);
+        message_each_way(&mut agents).await;
+        Ok(())
+    }
+
+    /// 4c. Relay-only on ONE side (the other sends none) should still never connect directly,
+    ///     and should connect. Today it does neither: the other side's direct attempt waits for
+    ///     a hole punch that never comes and PeerConnect times out after 30 s. This is why the
+    ///     UI offers no per-chat relay choice: a policy one person sets must reach the other
+    ///     side (it is not carried in the offer), or the chat breaks.
+    #[ignore = "one-sided relay-only times out: the policy is not carried in the offer"]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn relay_only_on_one_side_never_connects_directly() -> Result<(), Box<dyn Error>> {
+        setup_log();
+        let expired = config(TurnPolicy::RelayOnly, vec![dead_turn_url()], "u", "p", unix_now() - 1);
+        let mut agents = two_registered_agents().await?;
+        let paths = connect(&mut agents, [Some(expired), None]).await?;
+        assert!(!paths.contains(&P2pPathReport::Direct), "a relay-only side connected directly: {paths:?}");
+        message_each_way(&mut agents).await;
         Ok(())
     }
 

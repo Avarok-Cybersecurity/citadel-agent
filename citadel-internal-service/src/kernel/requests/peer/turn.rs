@@ -11,17 +11,28 @@ use citadel_sdk::prelude::{
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// The relay configuration for one attempt, or `None` when the config is absent, expired, or
-/// names no usable TURN server — each of which means "no relay".
+/// names no usable TURN server — each of which means "no relay" for a Fallback config.
+///
+/// A RelayOnly config never becomes "no relay": that would let the pair connect DIRECTLY,
+/// which is the one thing relay-only promises not to do (the peers never learn each other's
+/// addresses). With no usable server it stays relay-only with none, so the SDK skips the
+/// direct attempt and the pair stays relayed through the workspace server.
 ///
 /// Only `turn:` / `turns:` URLs are used (`stun:` is the hole puncher's business, not the
 /// relay's). Servers are ordered UDP first, then TCP, then TLS, so `turns:…:443` — the one most
 /// likely to cross a restrictive firewall and the slowest — is the last resort.
 pub fn relay_config(turn: Option<&PeerTurnConfig>, now: SystemTime) -> Option<TurnRelayConfig> {
     let turn = turn?;
+    let relay_only_without_servers = || -> Option<TurnRelayConfig> {
+        match turn.policy {
+            WirePolicy::RelayOnly => Some(TurnRelayConfig::new(Vec::new(), TurnPolicy::RelayOnly)),
+            WirePolicy::Fallback => None,
+        }
+    };
     let expires_at = UNIX_EPOCH + Duration::from_secs(turn.expires_at);
     if expires_at <= now {
-        warn!(target: "citadel", "[PeerConnect] TURN config expired; connecting without a relay");
-        return None;
+        warn!(target: "citadel", "[PeerConnect] TURN config expired; no TURN server this attempt");
+        return relay_only_without_servers();
     }
 
     let mut servers: Vec<TurnServerCredential> = turn
@@ -41,8 +52,8 @@ pub fn relay_config(turn: Option<&PeerTurnConfig>, now: SystemTime) -> Option<Tu
         .collect();
 
     if servers.is_empty() {
-        warn!(target: "citadel", "[PeerConnect] TURN config names no usable TURN server; connecting without a relay");
-        return None;
+        warn!(target: "citadel", "[PeerConnect] TURN config names no usable TURN server");
+        return relay_only_without_servers();
     }
     servers.sort_by_key(|s| transport_rank(s.url.transport));
 
@@ -147,16 +158,27 @@ mod tests {
     }
 
     #[test]
-    fn absent_expired_or_empty_means_no_relay() {
+    fn absent_expired_or_empty_means_no_relay_for_fallback() {
+        let fallback = |mut c: PeerTurnConfig| { c.policy = WirePolicy::Fallback; c };
         assert!(relay_config(None, now()).is_none());
-        assert!(relay_config(Some(&cloudflare_shaped(NOW_SECS)), now()).is_none());
-        assert!(relay_config(Some(&cloudflare_shaped(NOW_SECS - 1)), now()).is_none());
-        let mut stun_only = cloudflare_shaped(NOW_SECS + 300);
-        stun_only.ice_servers.truncate(1);
+        assert!(relay_config(Some(&fallback(cloudflare_shaped(NOW_SECS))), now()).is_none());
+        assert!(relay_config(Some(&fallback(cloudflare_shaped(NOW_SECS - 1))), now()).is_none());
+        let mut stun_only = fallback(cloudflare_shaped(NOW_SECS + 60));
+        stun_only.ice_servers.retain(|s| s.urls.iter().all(|u| u.starts_with("stun:")));
         assert!(relay_config(Some(&stun_only), now()).is_none());
-        let mut no_credential = cloudflare_shaped(NOW_SECS + 300);
-        no_credential.ice_servers[1].credential = None;
-        assert!(relay_config(Some(&no_credential), now()).is_none());
+    }
+
+    #[test]
+    fn relay_only_is_never_downgraded_to_direct() {
+        for cfg in [cloudflare_shaped(NOW_SECS), cloudflare_shaped(NOW_SECS - 1)] {
+            let relay = relay_config(Some(&cfg), now()).expect("relay-only must not become no relay");
+            assert_eq!(relay.policy, TurnPolicy::RelayOnly);
+            assert!(relay.servers.is_empty());
+        }
+        let mut no_credential = cloudflare_shaped(NOW_SECS + 60);
+        for ice in no_credential.ice_servers.iter_mut() { ice.credential = None; }
+        let relay = relay_config(Some(&no_credential), now()).expect("relay-only must not become no relay");
+        assert!(relay.servers.is_empty());
     }
 
     #[test]

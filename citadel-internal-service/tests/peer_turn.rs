@@ -103,7 +103,13 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn an_expired_fallback_config_is_treated_as_none() -> Result<(), Box<dyn Error>> {
         setup_log();
-        let expired = config(TurnPolicy::Fallback, vec![dead_turn_url()], "u", "p", unix_now() - 1);
+        let expired = config(
+            TurnPolicy::Fallback,
+            vec![dead_turn_url()],
+            "u",
+            "p",
+            unix_now() - 1,
+        );
         let mut agents = two_registered_agents().await?;
         let paths = connect(&mut agents, [Some(expired.clone()), Some(expired)]).await?;
         assert_eq!(paths, [P2pPathReport::Direct, P2pPathReport::Direct]);
@@ -116,10 +122,19 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn an_expired_relay_only_config_stays_server_relayed() -> Result<(), Box<dyn Error>> {
         setup_log();
-        let expired = config(TurnPolicy::RelayOnly, vec![dead_turn_url()], "u", "p", unix_now() - 1);
+        let expired = config(
+            TurnPolicy::RelayOnly,
+            vec![dead_turn_url()],
+            "u",
+            "p",
+            unix_now() - 1,
+        );
         let mut agents = two_registered_agents().await?;
         let paths = connect(&mut agents, [Some(expired.clone()), Some(expired)]).await?;
-        assert_eq!(paths, [P2pPathReport::ServerRelay, P2pPathReport::ServerRelay]);
+        assert_eq!(
+            paths,
+            [P2pPathReport::ServerRelay, P2pPathReport::ServerRelay]
+        );
         message_each_way(&mut agents).await;
         Ok(())
     }
@@ -133,10 +148,19 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn relay_only_on_one_side_never_connects_directly() -> Result<(), Box<dyn Error>> {
         setup_log();
-        let expired = config(TurnPolicy::RelayOnly, vec![dead_turn_url()], "u", "p", unix_now() - 1);
+        let expired = config(
+            TurnPolicy::RelayOnly,
+            vec![dead_turn_url()],
+            "u",
+            "p",
+            unix_now() - 1,
+        );
         let mut agents = two_registered_agents().await?;
         let paths = connect(&mut agents, [Some(expired), None]).await?;
-        assert!(!paths.contains(&P2pPathReport::Direct), "a relay-only side connected directly: {paths:?}");
+        assert!(
+            !paths.contains(&P2pPathReport::Direct),
+            "a relay-only side connected directly: {paths:?}"
+        );
         message_each_way(&mut agents).await;
         Ok(())
     }

@@ -713,7 +713,8 @@ mod tests {
     /// who went on showing Accept/Decline. Fixed in Citadel-Protocol #313,
     /// which had reached SDK master but not the branch this agent locks.
     #[tokio::test]
-    async fn a_peer_message_while_an_offer_is_unanswered_still_arrives() -> Result<(), Box<dyn Error>> {
+    async fn a_peer_message_while_an_offer_is_unanswered_still_arrives(
+    ) -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         let bind_a: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         let bind_b: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
@@ -743,14 +744,20 @@ mod tests {
             .unwrap();
         let ack = next_ignoring_transfer_noise(from_service_a, 30).await;
         assert!(
-            matches!(ack, Some(InternalServiceResponse::SendFileRequestSuccess(..))),
+            matches!(
+                ack,
+                Some(InternalServiceResponse::SendFileRequestSuccess(..))
+            ),
             "the offer itself was refused: {ack:?}"
         );
 
         // B is offered the file and says nothing.
         let offered = next_ignoring_transfer_noise(from_service_b, 30).await;
         assert!(
-            matches!(offered, Some(InternalServiceResponse::FileTransferRequestNotification(..))),
+            matches!(
+                offered,
+                Some(InternalServiceResponse::FileTransferRequestNotification(..))
+            ),
             "B was never offered the file: {offered:?}"
         );
 
@@ -779,35 +786,63 @@ mod tests {
         crate::common::setup_log();
         let bind_a: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         let bind_b: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
-        let mut peers = register_and_connect_to_server_then_peers::<StackedRatchet>(vec![bind_a, bind_b], None, None).await?;
+        let mut peers = register_and_connect_to_server_then_peers::<StackedRatchet>(
+            vec![bind_a, bind_b],
+            None,
+            None,
+        )
+        .await?;
         let (peer_one, peer_two) = peers.as_mut_slice().split_at_mut(1_usize);
         let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
         let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0_usize).unwrap();
 
-        to_service_a.send(InternalServiceRequest::SendFile {
-            request_id: Uuid::new_v4(),
-            source: FileSource::ByteContents { file_name: "dropped.bin".to_string(), data: vec![9u8; 15 * 1024 * 1024] },
-            cid: *cid_a,
-            transfer_type: TransferType::FileTransfer,
-            peer_cid: Some(*cid_b),
-            chunk_size: None,
-        }).unwrap();
+        to_service_a
+            .send(InternalServiceRequest::SendFile {
+                request_id: Uuid::new_v4(),
+                source: FileSource::ByteContents {
+                    file_name: "dropped.bin".to_string(),
+                    data: vec![9u8; 15 * 1024 * 1024],
+                },
+                cid: *cid_a,
+                transfer_type: TransferType::FileTransfer,
+                peer_cid: Some(*cid_b),
+                chunk_size: None,
+            })
+            .unwrap();
         let object_id = loop {
             match next_ignoring_transfer_noise(from_service_b, 30).await {
-                Some(InternalServiceResponse::FileTransferRequestNotification(n)) => break n.metadata.object_id,
+                Some(InternalServiceResponse::FileTransferRequestNotification(n)) => {
+                    break n.metadata.object_id
+                }
                 Some(_) => continue,
                 None => panic!("B was never offered the file"),
             }
         };
-        to_service_b.send(InternalServiceRequest::RespondFileTransfer {
-            cid: *cid_b, peer_cid: *cid_a, object_id: object_id as _, accept: true, download_location: None, request_id: Uuid::new_v4(),
-        }).unwrap();
+        to_service_b
+            .send(InternalServiceRequest::RespondFileTransfer {
+                cid: *cid_b,
+                peer_cid: *cid_a,
+                object_id: object_id as _,
+                accept: true,
+                download_location: None,
+                request_id: Uuid::new_v4(),
+            })
+            .unwrap();
 
         // Drop the link as the bytes start to move.
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        to_service_a.send(InternalServiceRequest::PeerDisconnect { request_id: Uuid::new_v4(), cid: *cid_a, peer_cid: *cid_b }).unwrap();
+        to_service_a
+            .send(InternalServiceRequest::PeerDisconnect {
+                request_id: Uuid::new_v4(),
+                cid: *cid_a,
+                peer_cid: *cid_b,
+            })
+            .unwrap();
 
-        async fn ends(rx: &mut tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>, who: &str) -> String {
+        async fn ends(
+            rx: &mut tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
+            who: &str,
+        ) -> String {
             let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(45);
             loop {
                 match tokio::time::timeout_at(deadline, rx.recv()).await {
@@ -829,10 +864,17 @@ mod tests {
         // And the peer is not left blocked: after reconnecting, a new offer is announced.
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         let dial = Uuid::new_v4();
-        to_service_a.send(InternalServiceRequest::PeerConnect {
-            request_id: dial, cid: *cid_a, peer_cid: *cid_b, udp_mode: Default::default(),
-            session_security_settings: SessionSecuritySettings::default(), peer_session_password: None, turn: None,
-        }).unwrap();
+        to_service_a
+            .send(InternalServiceRequest::PeerConnect {
+                request_id: dial,
+                cid: *cid_a,
+                peer_cid: *cid_b,
+                udp_mode: Default::default(),
+                session_security_settings: SessionSecuritySettings::default(),
+                peer_session_password: None,
+                turn: None,
+            })
+            .unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(40), async {
             loop {
                 tokio::select! {
@@ -850,16 +892,30 @@ mod tests {
                 }
             }
         }).await.expect("the reconnect after the dropped transfer was not answered");
-        to_service_a.send(InternalServiceRequest::SendFile {
-            request_id: Uuid::new_v4(),
-            source: FileSource::ByteContents { file_name: "after.bin".to_string(), data: vec![1u8; 4096] },
-            cid: *cid_a, transfer_type: TransferType::FileTransfer, peer_cid: Some(*cid_b), chunk_size: None,
-        }).unwrap();
+        to_service_a
+            .send(InternalServiceRequest::SendFile {
+                request_id: Uuid::new_v4(),
+                source: FileSource::ByteContents {
+                    file_name: "after.bin".to_string(),
+                    data: vec![1u8; 4096],
+                },
+                cid: *cid_a,
+                transfer_type: TransferType::FileTransfer,
+                peer_cid: Some(*cid_b),
+                chunk_size: None,
+            })
+            .unwrap();
         loop {
             match next_ignoring_transfer_noise(from_service_b, 30).await {
-                Some(InternalServiceResponse::FileTransferRequestNotification(n)) if n.metadata.name == "after.bin" => break,
+                Some(InternalServiceResponse::FileTransferRequestNotification(n))
+                    if n.metadata.name == "after.bin" =>
+                {
+                    break
+                }
                 Some(_) => continue,
-                None => panic!("the next offer to B was never announced after the dropped transfer"),
+                None => {
+                    panic!("the next offer to B was never announced after the dropped transfer")
+                }
             }
         }
         Ok(())

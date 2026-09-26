@@ -159,25 +159,34 @@ mod tests {
 
     #[test]
     fn absent_expired_or_empty_means_no_relay_for_fallback() {
-        let fallback = |mut c: PeerTurnConfig| { c.policy = WirePolicy::Fallback; c };
+        let fallback = |mut c: PeerTurnConfig| {
+            c.policy = WirePolicy::Fallback;
+            c
+        };
         assert!(relay_config(None, now()).is_none());
         assert!(relay_config(Some(&fallback(cloudflare_shaped(NOW_SECS))), now()).is_none());
         assert!(relay_config(Some(&fallback(cloudflare_shaped(NOW_SECS - 1))), now()).is_none());
         let mut stun_only = fallback(cloudflare_shaped(NOW_SECS + 60));
-        stun_only.ice_servers.retain(|s| s.urls.iter().all(|u| u.starts_with("stun:")));
+        stun_only
+            .ice_servers
+            .retain(|s| s.urls.iter().all(|u| u.starts_with("stun:")));
         assert!(relay_config(Some(&stun_only), now()).is_none());
     }
 
     #[test]
     fn relay_only_is_never_downgraded_to_direct() {
         for cfg in [cloudflare_shaped(NOW_SECS), cloudflare_shaped(NOW_SECS - 1)] {
-            let relay = relay_config(Some(&cfg), now()).expect("relay-only must not become no relay");
+            let relay =
+                relay_config(Some(&cfg), now()).expect("relay-only must not become no relay");
             assert_eq!(relay.policy, TurnPolicy::RelayOnly);
             assert!(relay.servers.is_empty());
         }
         let mut no_credential = cloudflare_shaped(NOW_SECS + 60);
-        for ice in no_credential.ice_servers.iter_mut() { ice.credential = None; }
-        let relay = relay_config(Some(&no_credential), now()).expect("relay-only must not become no relay");
+        for ice in no_credential.ice_servers.iter_mut() {
+            ice.credential = None;
+        }
+        let relay =
+            relay_config(Some(&no_credential), now()).expect("relay-only must not become no relay");
         assert!(relay.servers.is_empty());
     }
 

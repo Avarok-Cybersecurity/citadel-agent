@@ -47,6 +47,8 @@ export * from './GroupLeaveSuccess.js';
 export * from './GroupListGroupsFailure.js';
 export * from './GroupListGroupsResponse.js';
 export * from './GroupListGroupsSuccess.js';
+export * from './GroupListJoinedFailure.js';
+export * from './GroupListJoinedSuccess.js';
 export * from './GroupMemberStateChangeNotification.js';
 export * from './GroupMembershipResponse.js';
 export * from './GroupMessageDroppedNotification.js';

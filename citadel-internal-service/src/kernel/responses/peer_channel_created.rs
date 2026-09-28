@@ -71,6 +71,12 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         // right now" -- and the only one of the three that was correct. The
         // other two froze the uuid at spawn. One implementation now, so a
         // fourth caller cannot get it wrong: kernel/session_route.rs.
+        //
+        // These are raw ILM frames, which the browser's ILM acknowledges and
+        // records. SessionRoute sends to every subscriber of the session, so a
+        // session must never gain a reader while ILM still runs in the browser:
+        // two ILMs would process the same frames. Readers are only added once ILM
+        // moves into the agent (docs/plans/multi-browser-cid.md, phases 2 and 3).
         let route = SessionRoute::new(
             connection.associated_localhost_connection.clone(),
             this.tx_to_localhost_clients.clone(),

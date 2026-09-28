@@ -4,6 +4,7 @@ use crate::kernel::media::{
 };
 use crate::kernel::requests::{handle_request, HandledRequestResult};
 use crate::kernel::session_route::SessionRoute;
+use crate::kernel::session_subscribers::SessionSubscribers;
 use citadel_internal_service_connector::connector::{
     InternalServiceConnector, WrappedSink, WrappedStream,
 };
@@ -48,6 +49,7 @@ pub(crate) mod revfs_correlation;
 pub(crate) mod server_address;
 pub(crate) mod server_host;
 pub(crate) mod session_route;
+pub(crate) mod session_subscribers;
 pub(crate) mod session_wait;
 
 pub type RatchetType = StackedRatchet;
@@ -221,7 +223,7 @@ pub struct Connection<R: Ratchet> {
     pub sink_to_server: AsyncSink<R>,
     pub client_server_remote: ClientServerRemote<R>,
     pub peers: HashMap<u64, PeerConnection<R>>,
-    pub(crate) associated_localhost_connection: Arc<AtomicUuid>,
+    pub(crate) associated_localhost_connection: Arc<SessionSubscribers>,
     pub c2s_file_transfer_handlers: HashMap<ObjectId, Option<ObjectTransferHandler>>,
     /// Group channels this session is a member of. Not a plain HashMap: the
     /// map was insert-only, so entries outlived the membership they described
@@ -263,7 +265,7 @@ pub struct PeerConnection<R: Ratchet> {
     /// May be None for acceptor-side connections where we only have the channel.
     remote: Option<PeerRemote<R>>,
     handler_map: HashMap<ObjectId, Option<ObjectTransferHandler>>,
-    associated_localhost_connection: Arc<AtomicUuid>,
+    associated_localhost_connection: Arc<SessionSubscribers>,
     /// Where this peer's UDP transport currently lives. The SDK delivers the
     /// channel at most once per peer connection, so media sessions borrow the
     /// halves through this state machine and return them on close — consuming
@@ -305,7 +307,7 @@ impl<R: Ratchet> Connection<R> {
     fn new(
         sink: PeerChannelSendHalf<R>,
         client_server_remote: ClientServerRemote<R>,
-        associated_tcp_connection: Arc<AtomicUuid>,
+        associated_tcp_connection: Arc<SessionSubscribers>,
         username: String,
         server_address: String,
         server_host: Option<String>,

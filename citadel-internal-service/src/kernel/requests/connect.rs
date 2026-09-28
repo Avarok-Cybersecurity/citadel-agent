@@ -21,10 +21,11 @@
 //! - `connect.rs` (this file) → `remote.connect()` → Connects to EXISTING account, SAME CID
 
 use crate::kernel::requests::HandledRequestResult;
+use crate::kernel::session_subscribers::SessionSubscribers;
 use crate::kernel::{create_client_server_remote, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    AtomicUuid, ConnectFailure, InternalServiceRequest, InternalServiceResponse,
+    ConnectFailure, InternalServiceRequest, InternalServiceResponse,
 };
 use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt, Ratchet};
 use std::sync::Arc;
@@ -378,7 +379,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             let connection_struct = Connection::new(
                 sink,
                 client_server_remote,
-                Arc::new(AtomicUuid::new(uuid)),
+                Arc::new(SessionSubscribers::new(uuid)),
                 username,
                 server_address,
                 server_host,

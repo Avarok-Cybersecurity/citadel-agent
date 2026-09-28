@@ -107,6 +107,12 @@ pub trait IOInterfaceExt: IOInterface {
 
             tcp_connection_map.write().remove(&conn_id);
             retire_media_lane(&media_lanes, &conn_id);
+            // It leaves every session it subscribed to; an owner with readers
+            // hands the session to one of them (kernel/session_subscribers.rs).
+            for conn in server_connection_map.read().values() {
+                conn.associated_localhost_connection
+                    .connection_closed(conn_id);
+            }
 
             // ALWAYS preserve sessions when TCP drops.
             //

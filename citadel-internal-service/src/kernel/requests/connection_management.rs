@@ -232,7 +232,7 @@ async fn disconnect_orphan<T: IOInterface, R: Ratchet>(
                     // one C2S teardown path that never pruned them. Lock order
                     // is connection map then CID-scoped maps, which is the order
                     // every other site takes and the only order any site takes.
-                    this.prune_cid_scoped_state(session_cid, None);
+                    this.session_removed(session_cid);
                     let tcp_uuid = connection
                         .associated_localhost_connection
                         .load(Ordering::Relaxed);
@@ -274,7 +274,7 @@ async fn disconnect_orphan<T: IOInterface, R: Ratchet>(
             for cid in orphaned_sessions {
                 if let Some(connection) = server_connection_map.remove(&cid) {
                     // Beside the removal — see the single-session branch above.
-                    this.prune_cid_scoped_state(cid, None);
+                    this.session_removed(cid);
                     let tcp_uuid = connection
                         .associated_localhost_connection
                         .load(Ordering::Relaxed);

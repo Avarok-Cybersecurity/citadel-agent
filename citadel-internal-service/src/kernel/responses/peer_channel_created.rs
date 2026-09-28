@@ -1,3 +1,4 @@
+use crate::kernel::ilm::inbound::dispatch_inbound;
 use crate::kernel::requests::peer::turn::path_report;
 use crate::kernel::session_route::SessionRoute;
 use crate::kernel::CitadelWorkspaceService;
@@ -86,6 +87,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
         // Spawn a task to read incoming messages from the peer
         let stream_route = route.clone();
+        let agent_ilm = this.agent_ilm.clone();
         tokio::spawn(async move {
             let route = stream_route;
             info!(target: "citadel", "[P2P-RECV-CHANNEL] *** Starting P2P read stream for LOCAL_CID={} from PEER={} ***", session_cid, peer_cid);
@@ -94,23 +96,28 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             while let Some(message) = stream.next().await {
                 info!(target: "citadel", "[PeerChannelCreated] Received P2P message! session={}, peer_cid={}, msg_len={}", session_cid, peer_cid, message.len());
 
-                let notification =
-                    InternalServiceResponse::MessageNotification(MessageNotification {
-                        message: message.into_buffer().into(),
-                        cid: session_cid,
-                        peer_cid,
-                        request_id: None,
-                    });
+                let notification = MessageNotification {
+                    message: message.into_buffer().into(),
+                    cid: session_cid,
+                    peer_cid,
+                    request_id: None,
+                };
 
-                // Send only to the one client that owns this session. An
-                // earlier version broadcast to every live TCP entry as a
-                // workaround for stale-uuid delivery, and that leaked P2P
-                // message content to any other session multiplexed through the
-                // same internal-service process. If nobody owns it, ILM is the
-                // layer that retries.
-                if route.send(notification).is_none() {
-                    info!(target: "citadel", "[PeerChannelCreated] No localhost connection owns CID {session_cid}; relying on ILM redelivery");
-                }
+                // An opted-in session's ILM frames go to the agent's ILM, which
+                // delivers the unwrapped message through the same route; any
+                // other message takes the raw path below, unchanged.
+                dispatch_inbound(&agent_ilm, notification, |notification| {
+                    // Send only to the one client that owns this session. An
+                    // earlier version broadcast to every live TCP entry as a
+                    // workaround for stale-uuid delivery, and that leaked P2P
+                    // message content to any other session multiplexed through the
+                    // same internal-service process. If nobody owns it, ILM is the
+                    // layer that retries.
+                    let notification = InternalServiceResponse::MessageNotification(notification);
+                    if route.send(notification).is_none() {
+                        info!(target: "citadel", "[PeerChannelCreated] No localhost connection owns CID {session_cid}; relying on ILM redelivery");
+                    }
+                });
             }
 
             info!(target: "citadel", "[PeerChannelCreated] P2P read stream ended for session={} from peer={}", session_cid, peer_cid);

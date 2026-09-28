@@ -93,7 +93,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             // so a REFUSED deregistration left a live SDK session with no entry
             // representing it: gone from the UI, still connected, unreachable.
             this.server_connection_map.write().remove(&cid);
-            this.prune_cid_scoped_state(cid, None);
+            this.session_removed(cid);
             info!(target: "citadel", "Deregister successful for CID {cid}");
             Some(HandledRequestResult {
                 response: InternalServiceResponse::DeregisterSuccess(DeregisterSuccess {

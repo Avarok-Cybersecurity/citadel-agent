@@ -19,6 +19,7 @@ pub(crate) struct HandledRequestResult {
     pub uuid: Uuid,
 }
 
+pub(crate) mod agent_ilm;
 mod connect;
 mod deregister;
 mod disconnect;
@@ -159,6 +160,12 @@ where
         InternalServiceRequest::Connect { .. } => connect::handle(this, uuid, command).await,
         InternalServiceRequest::Register { .. } => register::handle(this, uuid, command).await,
         InternalServiceRequest::Message { .. } => message::handle(this, uuid, command).await,
+        InternalServiceRequest::EnableAgentIlm { .. } => {
+            agent_ilm::handle_enable(this, uuid, command).await
+        }
+        InternalServiceRequest::SendReliable { .. } => {
+            agent_ilm::handle_send_reliable(this, uuid, command).await
+        }
 
         InternalServiceRequest::MediaOpen { .. } => media::handle_open(this, uuid, command).await,
         InternalServiceRequest::MediaSend { .. } => media::handle_send(this, uuid, command).await,
@@ -862,6 +869,24 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
                 request_id: Some(*request_id),
             })
         }
+        InternalServiceRequest::EnableAgentIlm { request_id, cid } => {
+            InternalServiceResponse::EnableAgentIlmFailure(EnableAgentIlmFailure {
+                cid: *cid,
+                message: REFUSED.to_string(),
+                request_id: Some(*request_id),
+            })
+        }
+        InternalServiceRequest::SendReliable {
+            request_id,
+            cid,
+            peer_cid,
+            ..
+        } => InternalServiceResponse::SendReliableFailure(SendReliableFailure {
+            cid: *cid,
+            peer_cid: *peer_cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
         // Everything else stays silent, and each is a deliberate decision.
         //
         // GroupListGroupsFor returns DATA and has no failure variant, so a
@@ -919,6 +944,10 @@ pub(crate) fn requires_owned_session(command: &InternalServiceRequest) -> bool {
             // somebody else, never against one held by nobody.
             | InternalServiceRequest::LocalDBGetKV { .. }
             | InternalServiceRequest::Deregister { .. }
+            // Opting in starts an ILM over the account's stored queues, and a
+            // reliable send speaks as the account: neither without an owner.
+            | InternalServiceRequest::EnableAgentIlm { .. }
+            | InternalServiceRequest::SendReliable { .. }
     )
 }
 

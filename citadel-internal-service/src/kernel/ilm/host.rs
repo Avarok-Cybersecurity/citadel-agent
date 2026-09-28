@@ -1,6 +1,6 @@
 //! One ILM per account, inside the agent.
 //!
-//! Nothing constructs these yet: phase 2b opts sessions in. What is here is the
+//! Started by a session opting in (kernel/ilm/service.rs). What is here is the
 //! assembly -- the shared `CitadelWorkspaceBackend` over the agent's LocalDB,
 //! the peer-sink transport, and the messenger's own `LocalDeliveryTx` -- and a
 //! registry that refuses a second ILM for a CID. Two ILMs over one account's
@@ -12,7 +12,7 @@ use citadel_internal_service_connector::messenger::backend::CitadelWorkspaceBack
 use citadel_internal_service_connector::messenger::ilm::{BackendError, ILM};
 use citadel_internal_service_connector::messenger::wire::{decode_inbound, InboundFrame};
 use citadel_internal_service_connector::messenger::{
-    InternalMessage, LocalDeliveryTx, WrappedMessage,
+    DeliveryTarget, InternalMessage, LocalDeliveryTx, WrappedMessage,
 };
 use citadel_internal_service_types::{InternalServiceResponse, MessageNotification};
 use std::collections::HashMap;
@@ -21,23 +21,28 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 
 pub type AgentBackend<D> = CitadelWorkspaceBackend<AgentKvStore<D>>;
-pub type AgentIlm<D, L> =
-    ILM<WrappedMessage, AgentBackend<D>, LocalDeliveryTx, AgentIlmTransport<L>>;
+pub type AgentIlm<D, L, T> =
+    ILM<WrappedMessage, AgentBackend<D>, LocalDeliveryTx<T>, AgentIlmTransport<L>>;
 
-pub struct AgentIlmHost<D: LocalDbAccess, L: IlmPeerLinks> {
+/// Where delivered messages go when nothing else is named: a plain channel.
+/// Production passes the session's route (kernel/ilm/delivery.rs).
+pub type Delivered = UnboundedSender<InternalServiceResponse>;
+
+pub struct AgentIlmHost<D: LocalDbAccess, L: IlmPeerLinks, T: DeliveryTarget = Delivered> {
     cid: u64,
-    ilm: AgentIlm<D, L>,
+    ilm: AgentIlm<D, L, T>,
     inbound: UnboundedSender<InternalMessage>,
 }
 
-impl<D: LocalDbAccess, L: IlmPeerLinks> AgentIlmHost<D, L> {
+impl<D: LocalDbAccess, L: IlmPeerLinks, T: DeliveryTarget> AgentIlmHost<D, L, T> {
     /// Loads the account's persisted ILM state and starts its loops.
-    /// `delivered` receives each message once ILM delivers it, in order.
+    /// `delivered` receives each message once ILM delivers it, in order; a
+    /// target that reports nobody listening makes ILM keep and retry it.
     pub async fn start(
         cid: u64,
         db: D,
         links: L,
-        delivered: UnboundedSender<InternalServiceResponse>,
+        delivered: T,
     ) -> Result<Self, BackendError<WrappedMessage>> {
         let backend = CitadelWorkspaceBackend::with_store(cid, AgentKvStore::new(cid, db));
         let (transport, inbound) = AgentIlmTransport::new(cid, links);
@@ -49,7 +54,7 @@ impl<D: LocalDbAccess, L: IlmPeerLinks> AgentIlmHost<D, L> {
         self.cid
     }
 
-    pub fn ilm(&self) -> &AgentIlm<D, L> {
+    pub fn ilm(&self) -> &AgentIlm<D, L, T> {
         &self.ilm
     }
 
@@ -72,10 +77,10 @@ pub enum FeedError {
     Stopped,
 }
 
-enum Slot<D: LocalDbAccess, L: IlmPeerLinks> {
+enum Slot<D: LocalDbAccess, L: IlmPeerLinks, T: DeliveryTarget> {
     /// Reserved by the start holding this ticket.
     Starting(u64),
-    Running(Arc<AgentIlmHost<D, L>>),
+    Running(Arc<AgentIlmHost<D, L, T>>),
 }
 
 #[derive(Debug)]
@@ -88,14 +93,14 @@ pub enum RegistryError {
     Backend(Box<BackendError<WrappedMessage>>),
 }
 
-pub struct AgentIlmRegistry<D: LocalDbAccess, L: IlmPeerLinks> {
-    hosts: parking_lot::Mutex<HashMap<u64, Slot<D, L>>>,
+pub struct AgentIlmRegistry<D: LocalDbAccess, L: IlmPeerLinks, T: DeliveryTarget = Delivered> {
+    hosts: parking_lot::Mutex<HashMap<u64, Slot<D, L, T>>>,
     /// Distinguishes a start's reservation from a later one for the same CID
     /// (stop, then start again, while the first is still loading).
     tickets: AtomicU64,
 }
 
-impl<D: LocalDbAccess, L: IlmPeerLinks> Default for AgentIlmRegistry<D, L> {
+impl<D: LocalDbAccess, L: IlmPeerLinks, T: DeliveryTarget> Default for AgentIlmRegistry<D, L, T> {
     fn default() -> Self {
         Self {
             hosts: parking_lot::Mutex::new(HashMap::new()),
@@ -104,7 +109,7 @@ impl<D: LocalDbAccess, L: IlmPeerLinks> Default for AgentIlmRegistry<D, L> {
     }
 }
 
-impl<D: LocalDbAccess, L: IlmPeerLinks> AgentIlmRegistry<D, L> {
+impl<D: LocalDbAccess, L: IlmPeerLinks, T: DeliveryTarget> AgentIlmRegistry<D, L, T> {
     /// Starts the ILM for `cid`. The slot is reserved before the (async) load,
     /// so two concurrent starts for one CID cannot both succeed.
     pub async fn start(
@@ -112,8 +117,8 @@ impl<D: LocalDbAccess, L: IlmPeerLinks> AgentIlmRegistry<D, L> {
         cid: u64,
         db: D,
         links: L,
-        delivered: UnboundedSender<InternalServiceResponse>,
-    ) -> Result<Arc<AgentIlmHost<D, L>>, RegistryError> {
+        delivered: T,
+    ) -> Result<Arc<AgentIlmHost<D, L, T>>, RegistryError> {
         let ticket = self.tickets.fetch_add(1, Ordering::Relaxed);
         {
             let mut hosts = self.hosts.lock();
@@ -144,7 +149,7 @@ impl<D: LocalDbAccess, L: IlmPeerLinks> AgentIlmRegistry<D, L> {
         }
     }
 
-    pub fn get(&self, cid: u64) -> Option<Arc<AgentIlmHost<D, L>>> {
+    pub fn get(&self, cid: u64) -> Option<Arc<AgentIlmHost<D, L, T>>> {
         match self.hosts.lock().get(&cid) {
             Some(Slot::Running(host)) => Some(host.clone()),
             _ => None,
@@ -154,10 +159,24 @@ impl<D: LocalDbAccess, L: IlmPeerLinks> AgentIlmRegistry<D, L> {
     /// Removes the CID's ILM; it stops once the last handle to it is dropped.
     /// A start still loading is cancelled: it finds its reservation gone and
     /// discards what it built.
-    pub fn stop(&self, cid: u64) -> Option<Arc<AgentIlmHost<D, L>>> {
+    pub fn stop(&self, cid: u64) -> Option<Arc<AgentIlmHost<D, L, T>>> {
         match self.hosts.lock().remove(&cid) {
             Some(Slot::Running(host)) => Some(host),
             _ => None,
         }
+    }
+
+    /// The CIDs with a running ILM, ascending. A start still loading is not
+    /// listed: until it finishes, nothing is hosted.
+    pub fn hosted(&self) -> Vec<u64> {
+        let mut cids: Vec<u64> = self
+            .hosts
+            .lock()
+            .iter()
+            .filter(|(_, slot)| matches!(slot, Slot::Running(_)))
+            .map(|(cid, _)| *cid)
+            .collect();
+        cids.sort_unstable();
+        cids
     }
 }

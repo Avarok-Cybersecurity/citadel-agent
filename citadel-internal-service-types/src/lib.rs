@@ -16,9 +16,14 @@ use uuid::Uuid;
 #[cfg(feature = "typescript")]
 use ts_rs::TS;
 
+mod agent_ilm;
 mod group_drop;
 mod server_link;
 mod turn;
+pub use agent_ilm::{
+    AgentIlmOffer, EnableAgentIlmFailure, EnableAgentIlmSuccess, SendReliableFailure,
+    SendReliableSuccess,
+};
 pub use group_drop::GroupMessageDroppedNotification;
 pub use server_link::{ServerConnectionLost, ServerReconnectFailed, ServerReconnected};
 pub use turn::{IceServer, P2pPathReport, PeerTurnConfig, TurnPolicy};
@@ -1253,6 +1258,11 @@ pub struct GetSessionsResponse {
     pub cid: u64,
     pub sessions: Vec<SessionInformation>,
     pub request_id: Option<Uuid>,
+    /// `Some` only from an agent that offers agent-hosted ILM (see agent_ilm.rs).
+    /// Last, and defaulted, so a response from an older agent still parses.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub agent_ilm: Option<AgentIlmOffer>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1398,6 +1408,11 @@ pub enum InternalServiceResponse {
     ServerReconnectFailed(ServerReconnectFailed),
     /// Results from a batched request, in the same order as input commands
     BatchedResponse(BatchedResponseData),
+    // Appended: variants are never reordered (bincode frames carry the index).
+    EnableAgentIlmSuccess(EnableAgentIlmSuccess),
+    EnableAgentIlmFailure(EnableAgentIlmFailure),
+    SendReliableSuccess(SendReliableSuccess),
+    SendReliableFailure(SendReliableFailure),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, RequestId)]
@@ -1827,6 +1842,29 @@ pub enum InternalServiceRequest {
         /// The list of commands to execute in parallel
         commands: Vec<InternalServiceRequest>,
     },
+    // Appended: variants are never reordered (bincode frames carry the index).
+    /// Hand this account's ILM to the agent (see agent_ilm.rs). The browser must
+    /// have stopped its own ILM for `cid` first. Refused unless the agent offers
+    /// it and this connection owns the session; idempotent otherwise.
+    EnableAgentIlm {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+    },
+    /// Send to a peer through the agent-hosted ILM of `cid`. Refused for a
+    /// session that has not opted in: there is no fallback to the raw path.
+    SendReliable {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[debug(with = plaintext_debug_fmt)]
+        message: Vec<u8>,
+        #[cfg_attr(feature = "typescript", ts(type = "SecurityLevel"))]
+        security_level: SecurityLevel,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -2019,6 +2057,8 @@ impl InternalServiceRequest {
             Self::GroupListGroupsFor { cid, .. } => Some(*cid),
             Self::GroupListJoined { cid, .. } => Some(*cid),
             Self::GroupRequestJoin { cid, .. } => Some(*cid),
+            Self::EnableAgentIlm { cid, .. } => Some(*cid),
+            Self::SendReliable { cid, .. } => Some(*cid),
             // Exhaustive on purpose: no `_` arm.
             //
             // The catch-all made this gate fail OPEN by omission — a variant

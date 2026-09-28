@@ -1,5 +1,6 @@
 mod data_format;
 
+use citadel_internal_service::kernel::ilm::service::MultiSubscriber;
 use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service::stun::{StunServers, STUN_SERVERS_ENV};
 use citadel_internal_service::sweep_stale_browser_transfers;
@@ -37,7 +38,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         opts.stun_servers.as_deref(),
     )?;
 
-    let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(opts.bind).await?;
+    let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(opts.bind)
+        .await?
+        .with_multi_subscriber(multi_subscriber(opts.multi_subscriber));
 
     // Resolve the SDK backend from CLI + env (env takes precedence so docker
     // operators can flip backends without rebuilding). `filesystem` is required
@@ -350,6 +353,20 @@ struct Options {
     /// Required; `INTERNAL_SERVICE_STUN_SERVERS` env var overrides this.
     #[structopt(long)]
     stun_servers: Option<String>,
+    /// Offer agent-hosted ILM, so a session can opt in to having this agent run
+    /// its reliable-messaging layer instead of the browser. Off unless given.
+    #[structopt(long)]
+    multi_subscriber: bool,
+}
+
+/// The flag, as the setting the kernel takes.
+fn multi_subscriber(flag: bool) -> MultiSubscriber {
+    if flag {
+        citadel_sdk::logging::info!(target: "citadel", "multi_subscriber is ON: agent-hosted ILM is offered to sessions that opt in");
+        MultiSubscriber::On
+    } else {
+        MultiSubscriber::Off
+    }
 }
 
 #[cfg(feature = "deadlock-detection")]

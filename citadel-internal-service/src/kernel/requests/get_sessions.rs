@@ -109,6 +109,7 @@ fn build_response_from_internal_state<T: IOInterface, R: Ratchet>(
         cid: 0,
         sessions,
         request_id: Some(request_id),
+        agent_ilm: this.agent_ilm.offer(),
     });
 
     HandledRequestResult { response, uuid }

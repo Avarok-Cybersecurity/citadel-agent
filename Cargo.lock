@@ -709,6 +709,7 @@ dependencies = [
 name = "citadel-internal-service-types"
 version = "0.1.0"
 dependencies = [
+ "bincode2",
  "bytes",
  "citadel-internal-service-macros",
  "citadel_types",

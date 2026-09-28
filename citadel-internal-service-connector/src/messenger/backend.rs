@@ -89,9 +89,33 @@ pub(crate) fn read_outcome(
 }
 
 impl CitadelWorkspaceBackend {
-    async fn wait_for_response(&self, request_id: Uuid) -> Option<InternalServiceResponse> {
+    /// Send `request` and wait for the reply carrying `request_id`.
+    ///
+    /// The reply slot is registered BEFORE the request leaves. It used to be
+    /// registered after, and the agent is local: a reply inspected in between
+    /// matched nothing, was passed on as uncaught, and its waiter timed out five
+    /// seconds later on an answer that had already arrived (see the
+    /// `a_reply_that_beats_its_waiter` test).
+    async fn request(
+        &self,
+        request: InternalServiceRequest,
+        request_id: Uuid,
+    ) -> Result<Option<InternalServiceResponse>, BackendError<WrappedMessage>> {
         let (tx, rx) = citadel_io::tokio::sync::oneshot::channel();
         self.expected_requests.insert(request_id, tx);
+        if let Err(err) = self.send_to_network(request).await {
+            // Nothing will ever answer a request that never left.
+            self.expected_requests.remove(&request_id);
+            return Err(err);
+        }
+        Ok(self.wait_for_response(request_id, rx).await)
+    }
+
+    async fn wait_for_response(
+        &self,
+        request_id: Uuid,
+        rx: citadel_io::tokio::sync::oneshot::Receiver<InternalServiceResponse>,
+    ) -> Option<InternalServiceResponse> {
         citadel_logging::info!(target: "citadel", "[BACKEND-WAIT] Waiting for response to request_id: {} (CID: {})", request_id, self.cid);
 
         // Add a timeout to prevent infinite waiting (using platform-agnostic timeout)
@@ -146,9 +170,7 @@ impl CitadelWorkspaceBackend {
             key,
         };
 
-        self.send_to_network(request).await?;
-
-        if let Some(response) = self.wait_for_response(request_id).await {
+        if let Some(response) = self.request(request, request_id).await? {
             match response {
                 InternalServiceResponse::LocalDBGetKVSuccess(success_response) => {
                     citadel_logging::debug!(target: "citadel", "[GET_MAP] Got {} map successfully", prefix);
@@ -210,14 +232,11 @@ impl CitadelWorkspaceBackend {
             value,
         };
 
-        self.send_to_network(request).await?;
+        let response = self.request(request, request_id).await?;
 
         // Was correct on its own terms and worded differently from the other two;
         // now literally the same decision, so they cannot drift apart again.
-        write_outcome(
-            self.wait_for_response(request_id).await,
-            &format!("the initial {prefix} map"),
-        )?;
+        write_outcome(response, &format!("the initial {prefix} map"))?;
         citadel_logging::debug!(target: "citadel", "[INITIALIZE_MAP] Initialized {} map successfully", prefix);
         Ok(new_state)
     }
@@ -243,10 +262,10 @@ impl CitadelWorkspaceBackend {
             value,
         };
 
-        self.send_to_network(request).await?;
+        let response = self.request(request, request_id).await?;
 
         write_outcome(
-            self.wait_for_response(request_id).await,
+            response,
             &format!("the {prefix} map"),
         )
         .inspect(|_| {
@@ -298,9 +317,7 @@ impl CitadelWorkspaceBackend {
             commands: requests,
         };
 
-        self.send_to_network(batched_request).await?;
-
-        if let Some(response) = self.wait_for_response(batch_request_id).await {
+        if let Some(response) = self.request(batched_request, batch_request_id).await? {
             match response {
                 InternalServiceResponse::BatchedResponse(BatchedResponseData {
                     results, ..
@@ -598,10 +615,10 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
             value: value.to_vec(),
         };
 
-        self.send_to_network(request).await?;
+        let response = self.request(request, request_id).await?;
 
         write_outcome(
-            self.wait_for_response(request_id).await,
+            response,
             &format!("the value for key={key}"),
         )
         .inspect(|_| {
@@ -620,7 +637,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
             key: unique_key,
         };
 
-        self.send_to_network(request).await?;
+        let response = self.request(request, request_id).await?;
 
         // The singular twin of `load_values_batched`, and it had the same defect
         // twice: `_ => Ok(None)` turned a backend error into an absent key, and a
@@ -631,7 +648,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         // This is how the delivery frontier and the next-id counter are read. A
         // read that failed, reported as "nothing stored", restarts the counter and
         // re-delivers messages the peer has already seen.
-        match self.wait_for_response(request_id).await {
+        match response {
             Some(response) => {
                 let value = read_outcome(response, key)?;
                 citadel_logging::debug!(target: "citadel", "[LOAD_VALUE] Loaded value for key={}", key);
@@ -751,6 +768,9 @@ impl CitadelBackendExt for CitadelWorkspaceBackend {
         Ok(Some(response))
     }
 }
+
+#[cfg(test)]
+mod a_reply_that_beats_its_waiter;
 
 #[cfg(test)]
 mod response_classification {

@@ -6,6 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
+# ILM content codecs, forwarded. Off by default; see intersession-layer-messaging.
+compression-brotli = ["intersession-layer-messaging/compression-brotli"]
+compression-deflate = ["intersession-layer-messaging/compression-deflate"]
 websockets = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:futures-util", "dep:tokio-rustls", "dep:rustls-pemfile"]
 js = ["uuid/js"]
 vendored = ["citadel_sdk/vendored"]
@@ -72,6 +75,9 @@ rcgen = "0.14"
 rand = "0.8.5"
 tokio = { workspace = true, features = ["full"] }
 env_logger = "0.10"
+# Builds a decompression bomb for the wire tests; the production path only
+# ever reaches brotli through intersession-layer-messaging.
+brotli = { version = "8", default-features = false, features = ["std"] }
 
 [[example]]
 name = "websocket_json_demo"

@@ -9,7 +9,8 @@ export type {
     WasmModule,
     ConnectOptions as WasmConnectOptions,
     RegisterOptions as WasmRegisterOptions,
-    MessageOptions as WasmMessageOptions
+    MessageOptions as WasmMessageOptions,
+    CompressionHint
 } from './InternalServiceWasmClient.js';
 
 // Export all types

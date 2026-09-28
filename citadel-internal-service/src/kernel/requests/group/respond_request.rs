@@ -104,7 +104,15 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                                 }
                             }
                             InvitationOutcome::MembershipAnswered(success) => success,
-                            InvitationOutcome::Ended => false,
+                            InvitationOutcome::Ended => {
+                                // The group is gone; there is nothing left to answer.
+                                if let Some(connection) =
+                                    this.server_connection_map.write().get_mut(&cid)
+                                {
+                                    connection.pending_group_invites.settle(&group_key);
+                                }
+                                false
+                            }
                             InvitationOutcome::TimedOut => {
                                 warn!(target: "citadel", "Group respond for CID {cid} received no answer within {GROUP_RESPOND_WAIT:?}; the group owner may be offline");
                                 false
@@ -115,6 +123,12 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         true
                     };
 
+                    if result && invitation {
+                        // Answered: accepted and joined, or declined and acknowledged.
+                        if let Some(connection) = this.server_connection_map.write().get_mut(&cid) {
+                            connection.pending_group_invites.settle(&group_key);
+                        }
+                    }
                     match result {
                         true => InternalServiceResponse::GroupRespondRequestSuccess(
                             GroupRespondRequestSuccess {

@@ -16,7 +16,7 @@ use citadel_internal_service_types::{
     PeerConnectNotification, PeerConnectSuccess, PeerRegisterNotification, PeerRegisterSuccess,
     PeerTurnConfig,
 };
-use citadel_sdk::logging::info;
+use citadel_sdk::logging::{info, warn};
 use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
 use citadel_sdk::prefabs::server::empty::EmptyKernel;
 use citadel_sdk::prelude::*;
@@ -645,7 +645,19 @@ pub fn bridge_to_test(
     let test_to_service = async move {
         while let Some(msg) = from_test.recv().await {
             info!(target = "citadel", "Test to service {:?}", msg);
-            send(&mut sink, msg).await.unwrap();
+            // The service hung up: the test has finished and is tearing the
+            // stack down, and a messenger's background tasks (an ILM tracker
+            // sync, a flushed ACK) still had requests in flight. That is the
+            // mirror of the "test dropped its receiver" case above, and it
+            // used to `unwrap()` -- a BrokenPipe panic, which the panic hook
+            // turns into exit(1) and so a failure of a test that had passed.
+            if let Err(err) = send(&mut sink, msg).await {
+                warn!(
+                    target = "citadel",
+                    "Service closed while the test was still sending: {err:?}"
+                );
+                break;
+            }
         }
     };
 

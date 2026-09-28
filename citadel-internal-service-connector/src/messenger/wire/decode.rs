@@ -17,7 +17,8 @@ pub enum Decoded {
         piggybacked_ack: Option<u64>,
     },
     Control {
-        signal: InternalMessage,
+        /// Boxed as it arrives off the wire; a `Payload` dwarfs a data frame.
+        signal: Box<InternalMessage>,
         evidence: CapabilityEvidence,
     },
 }
@@ -71,10 +72,7 @@ pub fn decode_notification(bytes: &[u8]) -> Result<Decoded, DecodeError> {
                 // nothing about what the peer accepts.
                 InternalMessage::Message(_) => CapabilityEvidence::Silent,
             };
-            Ok(Decoded::Control {
-                signal: *signal,
-                evidence,
-            })
+            Ok(Decoded::Control { signal, evidence })
         }
         WireWrapper::MessageV2 {
             source,

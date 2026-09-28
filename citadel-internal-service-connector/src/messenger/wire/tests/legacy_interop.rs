@@ -71,7 +71,7 @@ fn an_advertisement_is_read_back_and_its_absence_means_legacy() {
         CapabilityEvidence::Advertised(PeerCapabilities::LEGACY)
     );
     assert!(matches!(
-        signal,
+        *signal,
         InternalMessage::Ack { message_id: ID, .. }
     ));
 }

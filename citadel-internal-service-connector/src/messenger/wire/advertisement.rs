@@ -1,4 +1,8 @@
-//! The capability advertisement: a few bytes after an Ack or Poll frame.
+//! The capability advertisement: eight bytes after an Ack or Poll frame.
+//!
+//! Layout: magic (2) | version (1) | feature flags (1) | codec-id set (u32 LE).
+//! The codec set has one bit per `Codec` wire id, so a peer advertises every
+//! codec it can decode -- a new codec needs no layout change, only a bit.
 //!
 //! It goes AFTER the bincode frame because that is the one place a legacy
 //! peer is guaranteed not to look. `bincode2::deserialize` stops at the end of
@@ -18,7 +22,8 @@ const VERSION: u8 = 1;
 pub(super) fn append(frame: &mut Vec<u8>, capabilities: PeerCapabilities) {
     frame.extend_from_slice(&MAGIC);
     frame.push(VERSION);
-    frame.push(capabilities.to_wire());
+    frame.push(capabilities.flags_to_wire());
+    frame.extend_from_slice(&capabilities.codecs().to_wire().to_le_bytes());
 }
 
 /// What the bytes after a control frame say about its sender.
@@ -30,13 +35,52 @@ pub(super) fn append(frame: &mut Vec<u8>, capabilities: PeerCapabilities) {
 /// anything this build can use.
 pub(super) fn read(trailer: &[u8]) -> PeerCapabilities {
     match trailer {
-        [m0, m1, version, caps, ..] if [*m0, *m1] == MAGIC && *version >= VERSION => {
-            PeerCapabilities::from_wire(*caps)
+        // Later versions may append; what version 1 defines is read as is.
+        [m0, m1, version, flags, c0, c1, c2, c3, ..]
+            if [*m0, *m1] == MAGIC && *version >= VERSION =>
+        {
+            PeerCapabilities::from_wire(*flags, u32::from_le_bytes([*c0, *c1, *c2, *c3]))
         }
         [] => PeerCapabilities::LEGACY,
         other => {
             log::warn!(target: "ism", "[WIRE] {} unrecognised bytes after a control frame; treating the sender as legacy", other.len());
             PeerCapabilities::LEGACY
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use intersession_layer_messaging::compression::{Codec, CodecSet};
+
+    #[test]
+    fn the_codec_set_round_trips_including_reserved_ids() {
+        let advertised = PeerCapabilities::new(true, CodecSet::of(&[Codec::Rill, Codec::Deflate]));
+        let mut trailer = Vec::new();
+        append(&mut trailer, advertised);
+        assert_eq!(trailer.len(), 8);
+        assert_eq!(read(&trailer), advertised);
+    }
+
+    #[test]
+    fn a_later_version_is_read_for_the_fields_it_shares() {
+        let advertised = PeerCapabilities::new(false, CodecSet::of(&[Codec::Brotli]));
+        let mut trailer = Vec::new();
+        append(&mut trailer, advertised);
+        trailer[2] = VERSION + 1;
+        trailer.extend_from_slice(&[0xaa, 0xbb]);
+        assert_eq!(read(&trailer), advertised);
+    }
+
+    #[test]
+    fn a_truncated_or_foreign_trailer_means_legacy() {
+        let mut trailer = Vec::new();
+        append(
+            &mut trailer,
+            PeerCapabilities::new(true, CodecSet::of(&[Codec::Brotli])),
+        );
+        assert_eq!(read(&trailer[..7]), PeerCapabilities::LEGACY);
+        assert_eq!(read(&[0u8; 8]), PeerCapabilities::LEGACY);
     }
 }

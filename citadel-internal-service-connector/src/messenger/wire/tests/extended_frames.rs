@@ -1,6 +1,15 @@
 //! Frames only a negotiated peer is ever sent.
 
 use super::*;
+use intersession_layer_messaging::compression::CodecSet;
+use intersession_layer_messaging::{CompressionHint, CompressionPlan};
+
+fn plan(hint: CompressionHint, codecs: &[Codec]) -> CompressionPlan {
+    CompressionPlan {
+        hint,
+        codecs: CodecSet::of(codecs),
+    }
+}
 
 #[test]
 fn a_piggybacked_ack_rides_uncompressed_and_comes_back_out() {
@@ -8,7 +17,7 @@ fn a_piggybacked_ack_rides_uncompressed_and_comes_back_out() {
         payload: Payload::Message(data(b"short reply".to_vec())),
         extensions: FrameExtensions::Negotiated {
             piggybacked_ack: Some(ID - 3),
-            codec: Codec::None,
+            compression: None,
         },
     });
     assert!(
@@ -29,7 +38,10 @@ fn compression_that_does_not_pay_falls_back_to_the_legacy_frame() {
         payload: Payload::Message(data(contents.clone())),
         extensions: FrameExtensions::Negotiated {
             piggybacked_ack: None,
-            codec: Codec::Brotli,
+            compression: Some(plan(
+                CompressionHint::Json,
+                &[Codec::Brotli, Codec::Deflate],
+            )),
         },
     });
     let legacy = bincode2::serialize(&Legacy::Message {
@@ -77,7 +89,7 @@ fn misplaced_extensions_are_refused() {
         payload: ack(),
         extensions: FrameExtensions::Negotiated {
             piggybacked_ack: None,
-            codec: Codec::None
+            compression: None
         },
     })
     .is_err());
@@ -98,7 +110,7 @@ mod compressed {
                 payload: Payload::Message(data(contents.clone())),
                 extensions: FrameExtensions::Negotiated {
                     piggybacked_ack: Some(7),
-                    codec,
+                    compression: Some(plan(CompressionHint::Json, &[codec])),
                 },
             });
             assert!(

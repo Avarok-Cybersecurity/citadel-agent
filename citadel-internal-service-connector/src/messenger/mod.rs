@@ -450,7 +450,7 @@ where
                             Ok(decoded) => {
                                 let ism_frame = match decoded {
                                     wire::Decoded::Control { signal, evidence } => InboundFrame {
-                                        payload: signal,
+                                        payload: *signal,
                                         evidence,
                                         piggybacked_ack: None,
                                     },

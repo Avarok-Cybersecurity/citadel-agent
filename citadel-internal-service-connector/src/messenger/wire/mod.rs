@@ -122,10 +122,18 @@ fn data_request(
         },
         FrameExtensions::Negotiated {
             piggybacked_ack,
-            codec,
+            compression,
         } => {
-            let encoded = compression::encode(codec, raw).map_err(EncodeError::Compression)?;
-            if encoded.codec == Codec::None && piggybacked_ack.is_none() {
+            // The one policy table decides, on the real size of the bytes.
+            let encoded = match compression {
+                Some(plan) => compression::encode(Some(plan.hint), plan.codecs, raw)
+                    .map_err(EncodeError::Compression)?,
+                None => compression::Encoded {
+                    codec: Codec::Identity,
+                    bytes: raw,
+                },
+            };
+            if encoded.codec == Codec::Identity && piggybacked_ack.is_none() {
                 // Compression did not pay and nothing else rides along: the
                 // legacy frame is smaller and says exactly the same thing.
                 WireWrapper::Message {

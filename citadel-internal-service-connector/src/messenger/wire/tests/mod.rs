@@ -27,7 +27,7 @@ pub(super) const BOB: u64 = 0x1234_5678_9abc_def0;
 pub(super) const ID: u64 = 1_759_071_000_000_000;
 
 pub(super) fn everything() -> PeerCapabilities {
-    PeerCapabilities::from_wire(0xff)
+    PeerCapabilities::from_wire(0xff, u32::MAX)
 }
 
 pub(super) fn data(contents: Vec<u8>) -> WrappedMessage {

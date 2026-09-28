@@ -15,6 +15,9 @@
 //! A CID can appear on either side of the key — as the local session for
 //! requests addressed to it, and as the peer for requests it sent to others —
 //! and both are dead once the session is gone, so both are pruned.
+//!
+//! The account's agent-hosted ILM is CID-keyed kernel state too, but it lives
+//! as long as the SESSION, not the link: see `session_removed`.
 
 use crate::kernel::CitadelWorkspaceService;
 use citadel_sdk::prelude::Ratchet;
@@ -25,11 +28,13 @@ pub struct PrunedCidState {
     pub pending_connects: usize,
     pub pending_registrations: usize,
     pub cached_usernames: usize,
+    /// 1 when `session_removed` stopped the account's agent-hosted ILM.
+    pub agent_ilm: usize,
 }
 
 impl PrunedCidState {
     pub fn total(&self) -> usize {
-        self.pending_connects + self.pending_registrations + self.cached_usernames
+        self.pending_connects + self.pending_registrations + self.cached_usernames + self.agent_ilm
     }
 }
 
@@ -65,6 +70,21 @@ impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
             let before = m.len();
             m.retain(|k, _| !touches(k));
             pruned.cached_usernames = before - m.len();
+        }
+        pruned
+    }
+
+    /// The session for `cid` has left the connection map for good: prune as a
+    /// session teardown, and stop the account's agent-hosted ILM.
+    ///
+    /// Not every `prune_cid_scoped_state(cid, None)` is a removal: a server
+    /// drop the agent is reconnecting prunes too, and keeps the session -- so
+    /// its ILM keeps running, as it does across a localhost connection drop.
+    /// Every path that REMOVES a session calls this instead.
+    pub fn session_removed(&self, cid: u64) -> PrunedCidState {
+        let mut pruned = self.prune_cid_scoped_state(cid, None);
+        if self.agent_ilm.stop(cid) {
+            pruned.agent_ilm = 1;
         }
         pruned
     }

@@ -16,6 +16,7 @@ use citadel_internal_service_connector::messenger::kv_store::{IlmKvStore, KvResu
 use citadel_internal_service_connector::messenger::WrappedMessage;
 use citadel_sdk::backend_kv_store::BackendHandler;
 use citadel_sdk::prelude::{async_trait, NodeRemote, Ratchet};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// The agent's per-account key/value storage, as the LocalDB handlers use it.
@@ -26,6 +27,22 @@ use uuid::Uuid;
 pub trait LocalDbAccess: Send + Sync + 'static {
     async fn get(&self, cid: u64, key: &str) -> Result<Option<Vec<u8>>, String>;
     async fn set(&self, cid: u64, key: &str, value: Vec<u8>) -> Result<(), String>;
+}
+
+/// The store the kernel's registry holds: one concrete type for every account,
+/// whatever backs it. Production passes the node's remote; the in-crate tests
+/// pass an in-memory map, because a `NodeRemote` needs a running node.
+pub type SharedDb = Arc<dyn LocalDbAccess>;
+
+#[async_trait]
+impl LocalDbAccess for SharedDb {
+    async fn get(&self, cid: u64, key: &str) -> Result<Option<Vec<u8>>, String> {
+        self.as_ref().get(cid, key).await
+    }
+
+    async fn set(&self, cid: u64, key: &str, value: Vec<u8>) -> Result<(), String> {
+        self.as_ref().set(cid, key, value).await
+    }
 }
 
 /// The browser's requests carry `peer_cid: None`; so does every call here.

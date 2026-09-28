@@ -8,7 +8,9 @@
 //! encoder/decoder, the agent transport, and the real ILM.
 use crate::kernel::ilm::host::{AgentIlmHost, FeedError};
 use crate::kernel::ilm::kv::LocalDbAccess;
+use crate::kernel::ilm::service::{AgentIlmService, Inbound};
 use crate::kernel::ilm::transport::IlmPeerLinks;
+use citadel_internal_service_connector::messenger::DeliveryTarget;
 use citadel_internal_service_types::{MessageNotification, SecurityLevel};
 use citadel_sdk::prelude::async_trait;
 use std::collections::{BTreeMap, HashMap};
@@ -80,6 +82,26 @@ impl Loopback {
                     Ok(()) => {}
                     Err(FeedError::Stopped) => return,
                     Err(FeedError::NotAFrame(n)) => panic!("not an ILM frame: {:?}", n.message),
+                }
+            }
+        }));
+    }
+
+    /// The same, through the production inbound decision
+    /// (`AgentIlmService::route_inbound`) rather than straight into a host.
+    pub fn attach_service<T: DeliveryTarget>(
+        &self,
+        cid: u64,
+        service: Arc<AgentIlmService<MemoryDb, Loopback, T>>,
+    ) {
+        let (tx, mut rx) = unbounded_channel::<MessageNotification>();
+        self.routes.lock().unwrap().insert(cid, tx);
+        drop(tokio::spawn(async move {
+            while let Some(notification) = rx.recv().await {
+                match service.route_inbound(notification) {
+                    Inbound::Hosted => {}
+                    Inbound::Lost => return,
+                    Inbound::Raw(n) => panic!("an ILM frame took the raw path: {:?}", n.message),
                 }
             }
         }));

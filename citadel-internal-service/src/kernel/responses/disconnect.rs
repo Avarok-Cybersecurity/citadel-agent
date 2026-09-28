@@ -109,7 +109,7 @@ fn remove<T: IOInterface + Sync, R: Ratchet>(
     cid: u64,
 ) -> Result<(), NetworkError> {
     // NOTE: SDK has already disconnected, so we don't call disconnect_removed.
-    this.prune_cid_scoped_state(cid, None);
+    this.session_removed(cid);
     let Some(disconnected) = cleanup_state(&this.server_connection_map, cid, None) else {
         return Ok(());
     };

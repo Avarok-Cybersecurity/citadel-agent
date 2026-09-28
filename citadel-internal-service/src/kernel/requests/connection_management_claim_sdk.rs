@@ -67,7 +67,7 @@ pub(super) async fn refuse_unless_sdk_holds<T: IOInterface, R: Ratchet>(
         //
         // Outside the guard: prune takes its own locks, and every other caller
         // releases the map first.
-        this.prune_cid_scoped_state(session_cid, None);
+        this.session_removed(session_cid);
         info!(target: "citadel", "ClaimSession: Session {} removed - not active in SDK", session_cid);
         return Some(HandledRequestResult {
             response: InternalServiceResponse::ConnectionManagementFailure(

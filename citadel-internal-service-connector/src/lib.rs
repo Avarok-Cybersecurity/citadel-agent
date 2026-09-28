@@ -53,6 +53,7 @@ mod wasm_tests {
                     cid: 1,
                     sessions: vec![],
                     request_id: None,
+                    agent_ilm: None,
                 },
             );
             other_interface

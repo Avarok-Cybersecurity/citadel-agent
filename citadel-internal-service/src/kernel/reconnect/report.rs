@@ -28,7 +28,7 @@ pub(super) fn fail<T: IOInterface + Sync, R: Ratchet>(
     let Some(removed) = removed else {
         return;
     };
-    this.prune_cid_scoped_state(cid, None);
+    this.session_removed(cid);
     let tcp_uuid = removed
         .associated_localhost_connection
         .load(Ordering::Relaxed);

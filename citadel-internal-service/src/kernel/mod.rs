@@ -1,4 +1,6 @@
 use crate::kernel::ext::IOInterfaceExt;
+use crate::kernel::ilm::service::{AgentIlmService, MultiSubscriber};
+use crate::kernel::ilm::KernelAgentIlm;
 use crate::kernel::media::{
     media_lane, MediaLaneTx, PeerMediaSession, UdpState, MEDIA_LANE_CAPACITY,
 };
@@ -90,6 +92,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     /// Tracks usernames currently being connected to prevent duplicate concurrent connection attempts.
     /// This prevents TOCTOU race conditions where two Connect requests arrive simultaneously.
     pub connecting_usernames: Arc<Mutex<HashSet<String>>>,
+    /// Agent-hosted ILM, offered only under `multi_subscriber` (kernel/ilm/service.rs).
+    pub(crate) agent_ilm: Arc<KernelAgentIlm<R>>,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -105,6 +109,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             pending_peer_registrations: self.pending_peer_registrations.clone(),
             peer_username_cache: self.peer_username_cache.clone(),
             connecting_usernames: self.connecting_usernames.clone(),
+            agent_ilm: self.agent_ilm.clone(),
             io: self.io.clone(),
         }
     }
@@ -122,6 +127,8 @@ impl<T: IOInterface, R: Ratchet> From<T> for CitadelWorkspaceService<T, R> {
             pending_peer_registrations: Arc::new(RwLock::new(Default::default())),
             peer_username_cache: Arc::new(RwLock::new(Default::default())),
             connecting_usernames: Arc::new(Mutex::new(HashSet::new())),
+            // Off unless the operator asks: see `with_multi_subscriber`.
+            agent_ilm: Arc::new(AgentIlmService::new(MultiSubscriber::Off)),
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -134,6 +141,13 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
 
     pub fn remote(&self) -> &NodeRemote<R> {
         self.remote.as_ref().expect("Kernel not loaded")
+    }
+
+    /// The `multi_subscriber` setting. Call before the node is built: it
+    /// replaces the (empty) agent-ILM registry.
+    pub fn with_multi_subscriber(mut self, setting: MultiSubscriber) -> Self {
+        self.agent_ilm = Arc::new(AgentIlmService::new(setting));
+        self
     }
 }
 

@@ -19,6 +19,7 @@ use ws_stream_wasm::{WsMessage, WsMeta};
 use once_cell::sync::{Lazy, OnceCell};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod agent_hosted;
 mod connection_lifecycle;
 use connection_lifecycle::{refuse_init, should_report_death, teardown_before_connect};
 use std::sync::RwLock as StdRwLock;
@@ -224,6 +225,8 @@ struct WorkspaceState {
     connections: Arc<DashMap<u64, Arc<MessengerTx<CitadelWorkspaceBackend>>>>,
     // Track CIDs that are currently being opened to prevent duplicate multiplex calls
     pending_opens: Arc<DashSet<u64>>,
+    // Accounts whose ILM the agent runs: never multiplexed here. See agent_hosted.rs.
+    agent_hosted: Arc<DashSet<u64>>,
     // On drop, this will kill the background task automatically (RAII pattern)
     #[allow(dead_code)]
     shutdown_tx: citadel_io::tokio::sync::oneshot::Sender<()>,
@@ -448,6 +451,7 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
         pending: std::collections::VecDeque::new(),
         connections,
         pending_opens,
+        agent_hosted: Arc::new(DashSet::new()),
         shutdown_tx,
     };
 
@@ -477,6 +481,11 @@ pub async fn open_messenger_for(cid_str: String) -> Result<(), JsValue> {
         let guard = workspace_state.read().await;
 
         if let Some(state) = guard.as_ref() {
+            // The agent runs this account's ILM; one here would be a second. See agent_hosted.rs.
+            if state.agent_hosted.contains(&cid) {
+                console_log!("CID {} is agent-hosted; no browser ILM is opened", cid);
+                return Ok(());
+            }
             // Check if messenger handle already exists for this CID
             if state.connections.contains_key(&cid) {
                 (true, false, None, None, None)
@@ -567,6 +576,11 @@ pub async fn ensure_messenger_open(cid_str: String) -> Result<bool, JsValue> {
         let guard = workspace_state.read().await;
 
         if let Some(state) = guard.as_ref() {
+            // The agent runs this account's ILM; one here would be a second. See agent_hosted.rs.
+            if state.agent_hosted.contains(&cid) {
+                console_log!("CID {} is agent-hosted; no browser ILM is opened", cid);
+                return Ok(false);
+            }
             // Check if messenger handle already exists for this CID
             if state.connections.contains_key(&cid) {
                 // Already open, no action needed
@@ -863,6 +877,11 @@ pub async fn send_p2p_message_reliable(
         let guard = workspace_state.read().await;
 
         if let Some(state) = guard.as_ref() {
+            if state.agent_hosted.contains(&local_cid) {
+                return Err(JsValue::from_str(&format!(
+                    "CID {local_cid} is agent-hosted: send SendReliable instead of the browser ILM"
+                )));
+            }
             state.connections.get(&local_cid).map(|r| r.value().clone())
         } else {
             return Err(JsValue::from_str("Workspace not initialized"));

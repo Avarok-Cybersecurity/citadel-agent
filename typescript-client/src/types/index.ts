@@ -103,6 +103,7 @@ export * from './PeerRegisterNotification.js';
 export * from './PeerRegisterSuccess.js';
 export * from './PeerSessionInformation.js';
 export * from './PeerTurnConfig.js';
+export * from './PendingGroupInvite.js';
 export * from './PickFileFailure.js';
 export * from './PickFileSuccess.js';
 export * from './RegisterFailure.js';

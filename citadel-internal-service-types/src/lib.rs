@@ -976,6 +976,23 @@ pub struct GroupListJoinedSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey[]"))]
     pub groups: Vec<MessageGroupKey>,
     pub request_id: Option<Uuid>,
+    /// Invitations this session has not answered, kept by the agent so one sent while no tab
+    /// was open is still shown. `None` from an older agent, which does not keep them; last and
+    /// defaulted, so that agent's response still parses.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional))]
+    pub pending_invites: Option<Vec<PendingGroupInvite>>,
+}
+
+/// An invitation to a group, still unanswered: who asked, and which group.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct PendingGroupInvite {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub peer_cid: u64,
+    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
+    pub group_key: MessageGroupKey,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -2044,6 +2061,10 @@ impl InternalServiceRequest {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "pending_invites_tests.rs"]
+mod pending_invites_tests;
 
 #[cfg(test)]
 mod tests {

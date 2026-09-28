@@ -40,6 +40,7 @@ pub(crate) mod credential_fingerprint;
 pub(crate) mod ext;
 pub(crate) mod group_channels;
 pub(crate) mod media;
+pub(crate) mod pending_group_invites;
 pub(crate) mod picked_files;
 pub(crate) mod reconnect;
 pub(crate) mod requests;
@@ -229,6 +230,9 @@ pub struct Connection<R: Ratchet> {
     /// sender and reported success. See kernel/group_channels.rs for how
     /// entries expire when this session leaves or ends a group.
     pub groups: group_channels::GroupChannels,
+    /// Invitations not yet answered; kept with the session so a closed tab does not lose them.
+    /// See kernel/pending_group_invites.rs.
+    pub(crate) pending_group_invites: pending_group_invites::PendingGroupInvites,
     pub username: String,
     pub server_address: String,
     /// The `host[:port]` the account registered to, as typed; `None` for an
@@ -320,6 +324,7 @@ impl<R: Ratchet> Connection<R> {
             c2s_file_transfer_handlers: HashMap::new(),
             username,
             groups: group_channels::GroupChannels::new(),
+            pending_group_invites: Default::default(),
             server_address,
             server_host,
             picked_files: HashMap::new(),

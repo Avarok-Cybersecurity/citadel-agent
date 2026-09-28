@@ -43,14 +43,18 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             GroupBroadcast::Invitation {
                 sender: peer_cid,
                 key: group_key,
-            } => Some(InternalServiceResponse::GroupInviteNotification(
-                GroupInviteNotification {
-                    cid: implicated_cid,
-                    peer_cid,
-                    group_key,
-                    request_id: None,
-                },
-            )),
+            } => {
+                // Kept whether or not a tab is here to see it: see kernel/pending_group_invites.rs.
+                connection.pending_group_invites.record(group_key, peer_cid);
+                Some(InternalServiceResponse::GroupInviteNotification(
+                    GroupInviteNotification {
+                        cid: implicated_cid,
+                        peer_cid,
+                        group_key,
+                        request_id: None,
+                    },
+                ))
+            }
 
             GroupBroadcast::RequestJoin {
                 sender: peer_cid,
@@ -157,6 +161,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 // it was answered with success.
                 if success {
                     let _ = connection.groups.mark_departed(&group_key);
+                    connection.pending_group_invites.settle(&group_key);
                 }
                 Some(InternalServiceResponse::GroupEndNotification(
                     GroupEndNotification {
@@ -210,7 +215,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
             GroupBroadcast::CreateResponse { key: _group_key } => None,
 
-            GroupBroadcast::GroupNonExists { key: _group_key } => None,
+            GroupBroadcast::GroupNonExists { key: group_key } => {
+                connection.pending_group_invites.settle(&group_key);
+                None
+            }
 
             GroupBroadcast::RequestJoinPending { result, key } => Some(
                 InternalServiceResponse::GroupRequestJoinPendingNotification(

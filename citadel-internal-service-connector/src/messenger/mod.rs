@@ -50,7 +50,16 @@ use uuid::Uuid;
 use wasm_bindgen_futures;
 
 pub mod backend;
+mod backend_ilm;
 pub mod backend_map;
+mod backend_outcome;
+pub mod backend_ws;
+pub mod kv_store;
+pub mod wire;
+
+/// ILM itself, for hosts that run one over this module's backend and frames
+/// (the agent) without taking a second, separately-versioned dependency on it.
+pub use intersession_layer_messaging as ilm;
 
 /// Platform-agnostic async sleep function
 /// - Native: Uses tokio::time::sleep
@@ -205,6 +214,15 @@ pub struct LocalDeliveryTx {
     final_tx: UnboundedSender<InternalServiceResponse>,
 }
 
+impl LocalDeliveryTx {
+    /// Delivered messages go to `final_tx` as the `InternalServiceResponse`
+    /// they carry. Shared by the browser's messenger and the agent's ILM host,
+    /// so both apply the same rule to what counts as deliverable.
+    pub fn new(final_tx: UnboundedSender<InternalServiceResponse>) -> Self {
+        Self { final_tx }
+    }
+}
+
 #[async_trait]
 impl intersession_layer_messaging::local_delivery::LocalDelivery<WrappedMessage>
     for LocalDeliveryTx
@@ -330,9 +348,7 @@ where
         log::info!(target: "ism", "[MULTIPLEX] Creating ILM handle for CID {} with stream_key={:?}", cid, stream_key);
 
         let (ism_handle, background_handle) = create_ipc_handles(self.clone(), stream_key);
-        let local_delivery_wrapper = LocalDeliveryTx {
-            final_tx: self.final_tx.clone(),
-        };
+        let local_delivery_wrapper = LocalDeliveryTx::new(self.final_tx.clone());
 
         let BackgroundHandle {
             mut background_from_ism_outbound,
@@ -441,26 +457,18 @@ where
                 log::trace!(target: "citadel", "Received message from network layer: {network_message:?}");
                 match network_message {
                     // TODO: Add support for group messaging
-                    InternalServiceResponse::MessageNotification(mut message) => {
+                    InternalServiceResponse::MessageNotification(message) => {
                         // DEBUG: Log ALL MessageNotification arrivals to trace P2P message flow
                         ::log::info!(target: "ism", "[P2P-DEBUG] MessageNotification arrived: cid={}, peer_cid={}, msg_len={}",
                             message.cid, message.peer_cid, message.message.len());
                         // deserialize and relay to ISM
-                        match bincode2::deserialize::<WireWrapper>(&message.message) {
+                        match wire::decode_inbound(message) {
                             Ok(ism_message) => {
                                 // ISM message processing
 
                                 let ism_message = match ism_message {
-                                    WireWrapper::ISMAux { signal } => *signal,
-                                    WireWrapper::Message {
-                                        contents,
-                                        source,
-                                        destination,
-                                        message_id,
-                                    } => {
-                                        // Replace message bytes with unwrapped content
-                                        let _ = std::mem::replace(&mut message.message, contents);
-
+                                    wire::InboundFrame::Signal(signal) => signal,
+                                    wire::InboundFrame::Message { payload, unwrapped } => {
                                         // CRITICAL FIX: Forward UNWRAPPED MessageNotification to JavaScript.
                                         // This ensures the frontend receives messages immediately with:
                                         // 1. Correct peer_cid (from original MessageNotification)
@@ -469,29 +477,23 @@ where
                                         // Previously, ISM messages were ONLY routed to ISM, which caused
                                         // the leader tab to never receive P2P messages because ISM
                                         // delivery wasn't working correctly in multi-tab scenarios.
+                                        let (forward_cid, forward_peer_cid, forward_len) = (
+                                            unwrapped.cid,
+                                            unwrapped.peer_cid,
+                                            unwrapped.message.len(),
+                                        );
                                         let forward_message =
-                                            InternalServiceResponse::MessageNotification(
-                                                message.clone(),
-                                            );
+                                            InternalServiceResponse::MessageNotification(unwrapped);
                                         if let Err(err) =
                                             tx_to_local_user_clone.send(forward_message)
                                         {
                                             log::error!(target: "citadel", "Error forwarding ISM MessageNotification to JS: {err:?}");
                                         } else {
                                             ::log::info!(target: "ism", "[P2P-DEBUG] FORWARDED ISM MessageNotification to JS: cid={}, peer_cid={}, unwrapped_len={}",
-                                                message.cid, message.peer_cid, message.message.len());
+                                                forward_cid, forward_peer_cid, forward_len);
                                         }
 
-                                        InternalMessage::Message(WrappedMessage {
-                                            source_id: source,
-                                            destination_id: destination,
-                                            message_id,
-                                            contents: InternalServicePayload::Response(
-                                                InternalServiceResponse::MessageNotification(
-                                                    message,
-                                                ),
-                                            ),
-                                        })
+                                        payload
                                     }
                                 };
 
@@ -538,7 +540,7 @@ where
                                         .push(ism_message);
                                 }
                             }
-                            Err(err) => {
+                            Err((err, message)) => {
                                 // `debug!`, and it says what it means.
                                 //
                                 // This read "Error while deserializing ISM (?)
@@ -692,63 +694,26 @@ where
                         }
                     }
 
-                    Payload::Message(mut ism_message) if stream_key != bypass_key => {
-                        let InternalServicePayload::Request(InternalServiceRequest::Message {
-                            request_id,
-                            message,
-                            cid,
-                            peer_cid,
-                            security_level,
-                        }) = &mut ism_message.contents
-                        else {
-                            log::warn!(target: "citadel", "Received an outgoing request for another node that was not a message: {stream_key:?}");
-                            continue;
-                        };
-
-                        // Create a new request where the payload is the serialized WireWrapper
-                        // The contents of the wirewrapper take the original message and the source and destination for preservation
-                        let wire_message = WireWrapper::Message {
-                            contents: std::mem::take(message),
-                            source: ism_message.source_id,
-                            destination: ism_message.destination_id,
-                            message_id: ism_message.message_id,
-                        };
-
-                        let request = InternalServiceRequest::Message {
-                            request_id: *request_id,
-                            message: bincode2::serialize(&wire_message)
-                                .expect("Should be able to serialize message"),
-                            cid: *cid,
-                            peer_cid: *peer_cid,
-                            security_level: *security_level,
-                        };
-
-                        if let Err(err) = sink.send(request).await {
-                            log::error!(target: "citadel", "Error while sending ISM message to outbound network: {err:?}");
-                            return;
+                    ism_payload if stream_key != bypass_key => {
+                        // Either an ILM message for another node (its request
+                        // body gets wrapped), or an ACK/POLL which is wrapped
+                        // whole. `wire::encode_outbound` is the one framing
+                        // both this messenger and the agent's ILM host use.
+                        if !matches!(ism_payload, Payload::Message(_)) {
+                            log::info!(target: "citadel", "[NO-BYPASS] Received a message for another node: {stream_key:?}");
                         }
-                    }
-
-                    ism_proto if stream_key != bypass_key => {
-                        // This is an ACK/POLL message which needs to be manually wrapped into a message
-                        log::info!(target: "citadel", "[NO-BYPASS] Received a message for another node: {stream_key:?}");
-                        let cid = ism_proto.source_id();
-                        let peer_cid = ism_proto.destination_id();
-                        let wire_message = WireWrapper::ISMAux {
-                            signal: Box::new(ism_proto),
-                        };
-                        let serialized_message = bincode2::serialize(&wire_message)
-                            .expect("Should be able to serialize message");
-                        // TODO: Add support for group messaging
-                        let message_request = InternalServiceRequest::Message {
-                            request_id: Uuid::new_v4(),
-                            message: serialized_message,
-                            cid,
-                            peer_cid: Some(peer_cid),
-                            security_level: Default::default(),
+                        let frame = match wire::encode_outbound(ism_payload) {
+                            Ok(frame) => frame,
+                            Err(wire::FrameError::NotAMessageRequest(_)) => {
+                                log::warn!(target: "citadel", "Received an outgoing request for another node that was not a message: {stream_key:?}");
+                                continue;
+                            }
+                            Err(wire::FrameError::Serialize(err)) => {
+                                panic!("Should be able to serialize message: {err:?}")
+                            }
                         };
 
-                        if let Err(err) = sink.send(message_request).await {
+                        if let Err(err) = sink.send(frame.into_request()).await {
                             log::error!(target: "citadel", "Error while sending ISM message to outbound network: {err:?}");
                             return;
                         }

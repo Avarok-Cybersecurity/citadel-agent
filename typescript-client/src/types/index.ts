@@ -7,6 +7,7 @@
 
 export * from './AccountInformation.js';
 export * from './Accounts.js';
+export * from './AgentIlmOffer.js';
 export * from './BatchedResponseData.js';
 export * from './ConfigCommand.js';
 export * from './ConnectFailure.js';
@@ -21,6 +22,8 @@ export * from './DisconnectFailure.js';
 export * from './DisconnectNotification.js';
 export * from './DownloadFileFailure.js';
 export * from './DownloadFileSuccess.js';
+export * from './EnableAgentIlmFailure.js';
+export * from './EnableAgentIlmSuccess.js';
 export * from './FileSource.js';
 export * from './FileTransferRequestNotification.js';
 export * from './FileTransferStatusNotification.js';
@@ -109,6 +112,8 @@ export * from './RegisterFailure.js';
 export * from './RegisterSuccess.js';
 export * from './SendFileRequestFailure.js';
 export * from './SendFileRequestSuccess.js';
+export * from './SendReliableFailure.js';
+export * from './SendReliableSuccess.js';
 export * from './ServerConnectionLost.js';
 export * from './ServerReconnectFailed.js';
 export * from './ServerReconnected.js';

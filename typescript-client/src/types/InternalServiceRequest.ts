@@ -88,4 +88,4 @@ turn?: PeerTurnConfig | null, } } | { "PeerRegister": { request_id: string, cid:
 /**
  * The list of commands to execute in parallel
  */
-commands: Array<InternalServiceRequest>, } };
+commands: Array<InternalServiceRequest>, } } | { "EnableAgentIlm": { request_id: string, cid: bigint, } } | { "SendReliable": { request_id: string, cid: bigint, peer_cid: bigint, message: number[], security_level: SecurityLevel, } };

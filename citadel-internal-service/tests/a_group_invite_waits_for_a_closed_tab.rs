@@ -175,7 +175,7 @@ mod tests {
 
         let listed = list_joined(&tx, &mut rx, member_cid).await;
         assert_eq!(
-            listed.pending_invites,
+            listed.pending_invites.unwrap_or_default(),
             vec![PendingGroupInvite {
                 peer_cid: owner_cid,
                 group_key
@@ -191,7 +191,7 @@ mod tests {
         let listed = list_joined(&tx, &mut rx, member_cid).await;
         assert_eq!(listed.groups, vec![group_key]);
         assert!(
-            listed.pending_invites.is_empty(),
+            listed.pending_invites.unwrap_or_default().is_empty(),
             "still offered after accepting"
         );
         Ok(())
@@ -205,6 +205,7 @@ mod tests {
             list_joined(&tx, &mut rx, member_cid)
                 .await
                 .pending_invites
+                .unwrap_or_default()
                 .len(),
             1,
             "control: waiting"
@@ -213,7 +214,7 @@ mod tests {
         respond(&tx, &mut rx, member_cid, owner_cid, group_key, false).await;
         let listed = list_joined(&tx, &mut rx, member_cid).await;
         assert!(
-            listed.pending_invites.is_empty(),
+            listed.pending_invites.unwrap_or_default().is_empty(),
             "still offered after declining"
         );
         assert!(listed.groups.is_empty());

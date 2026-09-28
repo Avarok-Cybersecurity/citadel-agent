@@ -39,7 +39,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 cid,
                 groups,
                 request_id: Some(request_id),
-                pending_invites,
+                pending_invites: Some(pending_invites),
             })
         }
         None => InternalServiceResponse::GroupListJoinedFailure(GroupListJoinedFailure {

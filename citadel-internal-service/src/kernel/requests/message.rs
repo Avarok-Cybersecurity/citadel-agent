@@ -24,6 +24,39 @@ use uuid::Uuid;
 /// promptness, it is that the wait ENDS.
 const PEER_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Why a bounded send to a peer did not complete.
+pub(crate) enum PeerSendError {
+    TimedOut,
+    /// The sink's own error, `{:?}`-formatted as the failure response has
+    /// always reported it.
+    Failed(String),
+}
+
+/// Send one P2P message body on a peer's sink, bounded by [`PEER_SEND_TIMEOUT`].
+///
+/// Bounded, both halves: the lock is shared by every message to this peer and
+/// the send can block on a wedged link; see PEER_SEND_TIMEOUT for why an
+/// unbounded wait accumulates tasks instead of failing. Shared with the
+/// agent's ILM transport (`kernel/ilm/transport.rs`) so both send identically.
+pub(crate) async fn send_bounded<R: Ratchet>(
+    sink: &AsyncSink<R>,
+    security_level: SecurityLevel,
+    message: Vec<u8>,
+) -> Result<(), PeerSendError> {
+    let send_result = tokio::time::timeout(PEER_SEND_TIMEOUT, async {
+        let mut sink_guard = sink.lock().await;
+        sink_guard.set_security_level(security_level);
+        sink_guard.send(message).await
+    })
+    .await;
+
+    match send_result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) => Err(PeerSendError::Failed(format!("{err:?}"))),
+        Err(_elapsed) => Err(PeerSendError::TimedOut),
+    }
+}
+
 pub async fn handle<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
@@ -72,20 +105,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
     match sink_result {
         Ok((sink, security_level)) => {
-            // Bounded, both halves. The lock is shared by every message to this
-            // peer and the send can block on a wedged link; see PEER_SEND_TIMEOUT
-            // for why an unbounded wait accumulates tasks instead of failing.
-            let send_result = tokio::time::timeout(PEER_SEND_TIMEOUT, async {
-                let mut sink_guard = sink.lock().await;
-                sink_guard.set_security_level(security_level);
-                info!(target: "citadel", "[P2P-MSG] About to call sink.send() for message from {} to {:?}", cid, peer_cid);
-                sink_guard.send(message).await
-            })
-            .await;
-
-            let send_result = match send_result {
-                Ok(result) => result,
-                Err(_elapsed) => {
+            info!(target: "citadel", "[P2P-MSG] About to call sink.send() for message from {} to {:?}", cid, peer_cid);
+            match send_bounded(&sink, security_level, message).await {
+                Err(PeerSendError::TimedOut) => {
                     citadel_sdk::logging::warn!(target: "citadel", "[P2P-MSG] Timed out after {PEER_SEND_TIMEOUT:?} sending from {cid} to {peer_cid:?}; the peer's sink is not draining");
                     let response =
                         InternalServiceResponse::MessageSendFailure(MessageSendFailure {
@@ -95,25 +117,27 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                             ),
                             request_id: Some(request_id),
                         });
-                    return Some(HandledRequestResult { response, uuid });
+                    Some(HandledRequestResult { response, uuid })
                 }
-            };
-
-            if let Err(err) = send_result {
-                let response = InternalServiceResponse::MessageSendFailure(MessageSendFailure {
-                    cid,
-                    message: format!("Error sending message: {err:?}"),
-                    request_id: Some(request_id),
-                });
-                Some(HandledRequestResult { response, uuid })
-            } else {
-                info!(target: "citadel", "[P2P-MSG] sink.send() SUCCEEDED for message from {} to {:?}", cid, peer_cid);
-                let response = InternalServiceResponse::MessageSendSuccess(MessageSendSuccess {
-                    cid,
-                    peer_cid,
-                    request_id: Some(request_id),
-                });
-                Some(HandledRequestResult { response, uuid })
+                Err(PeerSendError::Failed(err)) => {
+                    let response =
+                        InternalServiceResponse::MessageSendFailure(MessageSendFailure {
+                            cid,
+                            message: format!("Error sending message: {err}"),
+                            request_id: Some(request_id),
+                        });
+                    Some(HandledRequestResult { response, uuid })
+                }
+                Ok(()) => {
+                    info!(target: "citadel", "[P2P-MSG] sink.send() SUCCEEDED for message from {} to {:?}", cid, peer_cid);
+                    let response =
+                        InternalServiceResponse::MessageSendSuccess(MessageSendSuccess {
+                            cid,
+                            peer_cid,
+                            request_id: Some(request_id),
+                        });
+                    Some(HandledRequestResult { response, uuid })
+                }
             }
         }
         Err(error_msg) => {

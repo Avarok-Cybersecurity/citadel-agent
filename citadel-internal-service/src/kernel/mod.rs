@@ -40,6 +40,7 @@ pub(crate) mod c2s_reader;
 pub(crate) mod credential_fingerprint;
 pub(crate) mod ext;
 pub(crate) mod group_channels;
+pub mod ilm;
 pub(crate) mod media;
 pub(crate) mod picked_files;
 pub(crate) mod reconnect;

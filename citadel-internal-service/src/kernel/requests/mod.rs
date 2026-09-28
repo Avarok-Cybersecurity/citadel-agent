@@ -25,7 +25,7 @@ mod disconnect;
 mod get_account_information;
 mod get_sessions;
 mod media;
-mod message;
+pub(crate) mod message;
 mod register;
 
 mod connection_management;
@@ -34,7 +34,7 @@ mod connection_management_claim;
 mod connection_management_claim_sdk;
 pub(crate) mod file;
 mod group;
-mod local_db;
+pub(crate) mod local_db;
 pub(crate) mod peer;
 
 #[async_recursion]

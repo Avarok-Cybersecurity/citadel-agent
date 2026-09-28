@@ -23,7 +23,11 @@ citadel_io = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt", "macros"] }
 bincode2 = { workspace = true }
 citadel-internal-service-types = { workspace = true }
-citadel-internal-service-connector = { workspace = true }
+# Every ILM codec natively, brotli included: a native messenger has no module
+# size to protect, and peers use only the codecs both sides advertise. This is
+# also what compiles the connector's codec-gated tests in a workspace build,
+# now that the WASM client no longer turns brotli on.
+citadel-internal-service-connector = { workspace = true, features = ["compression-brotli", "compression-deflate", "compression-zstd"] }
 futures = { workspace = true }
 uuid = { workspace = true, features = [
     "v4",                # Lets you generate random UUIDs

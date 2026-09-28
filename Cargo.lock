@@ -2337,6 +2337,7 @@ dependencies = [
  "tokio 1.50.0",
  "wasm-bindgen-futures",
  "wasmtimer 0.2.1",
+ "zstd-rs",
 ]
 
 [[package]]
@@ -5752,6 +5753,12 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+
+[[package]]
+name = "zstd-rs"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41514ccc30389f95bb9e6ab6d5634f17121c7b4fead6722a5fceec1c7891d78f"
 
 [[package]]
 name = "zvariant"

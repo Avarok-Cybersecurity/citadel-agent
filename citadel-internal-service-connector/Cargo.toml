@@ -9,6 +9,7 @@ edition = "2021"
 # ILM content codecs, forwarded. Off by default; see intersession-layer-messaging.
 compression-brotli = ["intersession-layer-messaging/compression-brotli"]
 compression-deflate = ["intersession-layer-messaging/compression-deflate"]
+compression-zstd = ["intersession-layer-messaging/compression-zstd"]
 websockets = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:futures-util", "dep:tokio-rustls", "dep:rustls-pemfile"]
 js = ["uuid/js"]
 vendored = ["citadel_sdk/vendored"]

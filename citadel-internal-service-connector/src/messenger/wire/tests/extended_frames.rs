@@ -105,7 +105,12 @@ mod compressed {
         let plain = frame_bytes(OutboundFrame::legacy(Payload::Message(data(
             contents.clone(),
         ))));
-        for codec in [Codec::Brotli, Codec::Deflate] {
+        for codec in [
+            Codec::Brotli,
+            Codec::Deflate,
+            #[cfg(feature = "compression-zstd")]
+            Codec::Zstd,
+        ] {
             let bytes = frame_bytes(OutboundFrame {
                 payload: Payload::Message(data(contents.clone())),
                 extensions: FrameExtensions::Negotiated {

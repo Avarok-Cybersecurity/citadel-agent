@@ -7,9 +7,14 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-# Both ILM codecs: the browser is the path to the cloud relay, and it turns on
-# piggybacked ACKs and compression for its ILM (see src/traffic.rs).
-citadel-internal-service-connector = { workspace = true, features = ["js", "compression-brotli", "compression-deflate"]}
+# zstd and deflate, NOT brotli: the browser is the path to the cloud relay and
+# turns on piggybacked ACKs and compression for its ILM (see src/traffic.rs),
+# but brotli's encoder took this module from 3.60 MB to 4.63 MB, past the UI's
+# 4 MiB PWA precache limit (citadel-workspaces/vite.config.ts), which fails the
+# UI build. zstd-rs costs ~64 KB gzipped and comes within 1-4% of brotli's
+# ratio on large frames at about 3x the speed. A native peer that also has brotli negotiates the
+# intersection, so it sends a browser zstd or deflate, never brotli.
+citadel-internal-service-connector = { workspace = true, features = ["js", "compression-zstd", "compression-deflate"]}
 citadel-internal-service-types = { workspace = true }
 citadel_io = { workspace = true, default-features = false }
 # v4 needs a randomness source; on wasm32 that is the JS crypto API, which the

@@ -32,7 +32,8 @@ use dashmap::DashMap;
 use futures::future::Either;
 use futures::{SinkExt, StreamExt};
 use intersession_layer_messaging::{
-    DeliveryError, MessageMetadata, NetworkError, Payload, UnderlyingSessionTransport, ILM,
+    DeliveryError, InboundFrame, MessageMetadata, NetworkError, OutboundFrame, Payload,
+    UnderlyingSessionTransport, ILM,
 };
 use itertools::Itertools;
 use log;
@@ -51,6 +52,10 @@ use wasm_bindgen_futures;
 
 pub mod backend;
 pub mod backend_map;
+pub mod wire;
+
+pub use intersession_layer_messaging::{CompressionHint, DynamicCompression, IlmOptions};
+pub use wire::WireWrapper;
 
 /// Platform-agnostic async sleep function
 /// - Native: Uses tokio::time::sleep
@@ -112,8 +117,8 @@ where
     B: CitadelBackendExt,
 {
     // Local subscriptions where the key is the CID
-    txs_to_inbound: Arc<DashMap<StreamKey, UnboundedSender<InternalMessage>>>,
-    bypass_ism_tx_to_outbound: UnboundedSender<(StreamKey, InternalMessage)>,
+    txs_to_inbound: Arc<DashMap<StreamKey, UnboundedSender<InboundFrame<WrappedMessage>>>>,
+    bypass_ism_tx_to_outbound: UnboundedSender<(StreamKey, OutboundFrame<WrappedMessage>)>,
     /// Periodically refreshed by the Messenger
     connected_peers: Arc<RwLock<HashMap<u64, SessionInformation>>>,
     // Contains a list of requests that were invoked by the background task and not to be delivered
@@ -124,7 +129,10 @@ where
     final_tx: UnboundedSender<InternalServiceResponse>,
     /// Pending inbound messages for CIDs that don't have ILM handles yet.
     /// This fixes the race condition where messages arrive before multiplex() is called.
-    pending_inbound_messages: Arc<DashMap<u64, Vec<InternalMessage>>>,
+    pending_inbound_messages: Arc<DashMap<u64, Vec<InboundFrame<WrappedMessage>>>>,
+    /// Handed to every ILM this messenger multiplexes, so all of one
+    /// messenger's sessions speak the same protocol.
+    options: IlmOptions,
 }
 
 impl<B> Clone for CitadelWorkspaceMessenger<B>
@@ -141,6 +149,7 @@ where
             final_tx: self.final_tx.clone(),
             backends: self.backends.clone(),
             pending_inbound_messages: self.pending_inbound_messages.clone(),
+            options: self.options,
         }
     }
 }
@@ -167,7 +176,7 @@ impl StreamKey {
 
 #[derive(Clone)]
 pub struct BypasserTx {
-    tx: UnboundedSender<(StreamKey, InternalMessage)>,
+    tx: UnboundedSender<(StreamKey, OutboundFrame<WrappedMessage>)>,
     stream_key: StreamKey,
 }
 
@@ -186,16 +195,18 @@ impl BypasserTx {
 
         let bypass_key = StreamKey::bypass_ism();
 
-        self.tx.send((bypass_key, payload)).map_err(|err| {
-            let reason = err.to_string();
-            match err.0 .1 {
-                Payload::Message(message) => MessengerError::SendError {
-                    reason,
-                    message: Either::Right(message.contents),
-                },
-                _ => MessengerError::OtherError { reason },
-            }
-        })
+        self.tx
+            .send((bypass_key, OutboundFrame::legacy(payload)))
+            .map_err(|err| {
+                let reason = err.to_string();
+                match err.0 .1.payload {
+                    Payload::Message(message) => MessengerError::SendError {
+                        reason,
+                        message: Either::Right(message.contents),
+                    },
+                    _ => MessengerError::OtherError { reason },
+                }
+            })
     }
 }
 
@@ -274,25 +285,13 @@ impl intersession_layer_messaging::local_delivery::LocalDelivery<WrappedMessage>
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub enum WireWrapper {
-    Message {
-        source: u64,
-        destination: u64,
-        message_id: u64,
-        contents: Vec<u8>,
-    },
-    ISMAux {
-        signal: Box<InternalMessage>,
-    },
-}
-
 impl<B> CitadelWorkspaceMessenger<B>
 where
     B: CitadelBackendExt,
 {
     pub fn new<T: IOInterface>(
         connector: InternalServiceConnector<T>,
+        options: IlmOptions,
     ) -> (Self, UnboundedReceiver<InternalServiceResponse>) {
         let (final_tx, final_rx) = citadel_io::tokio::sync::mpsc::unbounded_channel();
         // background layer
@@ -307,6 +306,7 @@ where
             bypass_ism_tx_to_outbound,
             final_tx,
             pending_inbound_messages: Arc::new(Default::default()),
+            options,
         };
 
         this.spawn_background_tasks(connector, rx_to_outbound);
@@ -382,7 +382,7 @@ where
 
         self.backends.insert(cid, backend.clone());
 
-        let ism = ILM::new(backend, local_delivery_wrapper, ism_handle)
+        let ism = ILM::new(backend, local_delivery_wrapper, ism_handle, self.options)
             .await
             .map_err(|err| MessengerError::OtherError {
                 reason: format!("{err:?}"),
@@ -421,7 +421,7 @@ where
     fn spawn_background_tasks<T: IOInterface>(
         &self,
         connector: InternalServiceConnector<T>,
-        mut rx_to_outbound: UnboundedReceiver<(StreamKey, InternalMessage)>,
+        mut rx_to_outbound: UnboundedReceiver<(StreamKey, OutboundFrame<WrappedMessage>)>,
     ) {
         let InternalServiceConnector::<T> {
             mut sink,
@@ -446,19 +446,23 @@ where
                         ::log::info!(target: "ism", "[P2P-DEBUG] MessageNotification arrived: cid={}, peer_cid={}, msg_len={}",
                             message.cid, message.peer_cid, message.message.len());
                         // deserialize and relay to ISM
-                        match bincode2::deserialize::<WireWrapper>(&message.message) {
-                            Ok(ism_message) => {
-                                // ISM message processing
-
-                                let ism_message = match ism_message {
-                                    WireWrapper::ISMAux { signal } => *signal,
-                                    WireWrapper::Message {
+                        match wire::decode_notification(&message.message) {
+                            Ok(decoded) => {
+                                let ism_frame = match decoded {
+                                    wire::Decoded::Control { signal, evidence } => InboundFrame {
+                                        payload: *signal,
+                                        evidence,
+                                        piggybacked_ack: None,
+                                    },
+                                    wire::Decoded::Data {
                                         contents,
                                         source,
                                         destination,
                                         message_id,
+                                        piggybacked_ack,
                                     } => {
-                                        // Replace message bytes with unwrapped content
+                                        // Replace message bytes with unwrapped (and, for
+                                        // an extended frame, decompressed) content
                                         let _ = std::mem::replace(&mut message.message, contents);
 
                                         // CRITICAL FIX: Forward UNWRAPPED MessageNotification to JavaScript.
@@ -482,21 +486,25 @@ where
                                                 message.cid, message.peer_cid, message.message.len());
                                         }
 
-                                        InternalMessage::Message(WrappedMessage {
-                                            source_id: source,
-                                            destination_id: destination,
-                                            message_id,
-                                            contents: InternalServicePayload::Response(
-                                                InternalServiceResponse::MessageNotification(
-                                                    message,
+                                        InboundFrame {
+                                            payload: InternalMessage::Message(WrappedMessage {
+                                                source_id: source,
+                                                destination_id: destination,
+                                                message_id,
+                                                contents: InternalServicePayload::Response(
+                                                    InternalServiceResponse::MessageNotification(
+                                                        message,
+                                                    ),
                                                 ),
-                                            ),
-                                        })
+                                            }),
+                                            evidence: intersession_layer_messaging::CapabilityEvidence::Silent,
+                                            piggybacked_ack,
+                                        }
                                     }
                                 };
 
                                 let stream_key = StreamKey {
-                                    cid: ism_message.destination_id(),
+                                    cid: ism_frame.payload.destination_id(),
                                     stream_id: ISM_STREAM_ID,
                                 };
 
@@ -508,13 +516,13 @@ where
                                     let available_keys: Vec<StreamKey> =
                                         this.txs_to_inbound.iter().map(|r| *r.key()).collect();
                                     log::info!(target: "ism", "[MSG-ROUTE] Routing message: source={} dest={} msg_id={} | Looking for stream_key={:?} | Available: {:?}",
-                                        ism_message.source_id(), ism_message.destination_id(),
-                                        match &ism_message { InternalMessage::Message(m) => m.message_id, _ => 0 },
+                                        ism_frame.payload.source_id(), ism_frame.payload.destination_id(),
+                                        match &ism_frame.payload { InternalMessage::Message(m) => m.message_id, _ => 0 },
                                         stream_key, available_keys);
                                 }
 
                                 if let Some(tx) = this.txs_to_inbound.get(&stream_key) {
-                                    if let Err(err) = tx.send(ism_message) {
+                                    if let Err(err) = tx.send(ism_frame) {
                                         log::error!(target: "citadel", "[MSG-ROUTE] FAILED to send to ISM channel: {err:?}");
                                     } else {
                                         log::info!(target: "ism", "[MSG-ROUTE] SUCCESS - sent to ILM for dest={}", stream_key.cid);
@@ -535,10 +543,18 @@ where
                                     this.pending_inbound_messages
                                         .entry(stream_key.cid)
                                         .or_default()
-                                        .push(ism_message);
+                                        .push(ism_frame);
                                 }
                             }
-                            Err(err) => {
+                            Err(wire::DecodeError::Unreadable(reason)) => {
+                                // An ILM frame this build cannot honour. Not
+                                // forwarded: the bytes are compressed or framed,
+                                // and a UI would render them as a message. The
+                                // sender retransmits it, so the log says so once
+                                // per attempt rather than never.
+                                log::error!(target: "ism", "[WIRE] dropping an extended frame from peer {}: {reason}", message.peer_cid);
+                            }
+                            Err(wire::DecodeError::NotAFrame(err)) => {
                                 // `debug!`, and it says what it means.
                                 //
                                 // This read "Error while deserializing ISM (?)
@@ -668,8 +684,8 @@ where
         let this = self.clone();
         // Takes messages sent through ISM or a direct request and funnels them here
         let ism_to_background_task_outbound = async move {
-            while let Some((stream_key, message_internal)) = rx_to_outbound.recv().await {
-                log::trace!(target: "citadel", "Received message from ISM or background: {stream_key:?}: {message_internal:?}");
+            while let Some((stream_key, frame)) = rx_to_outbound.recv().await {
+                log::trace!(target: "citadel", "Received message from ISM or background: {stream_key:?}: {frame:?}");
                 if !this.is_running() {
                     return;
                 }
@@ -677,86 +693,37 @@ where
                 // We get one of two types of messages here:
                 // 1) Handle -> ISM -> Here, in which case, it is for messaging between nodes, or;
                 // 2) Handle -> Here, in which case, it is a request for the internal service
-                match message_internal {
-                    Payload::Message(message) if stream_key == bypass_key => {
-                        // This is a message for the internal service
-                        let InternalServicePayload::Request(request) = message.contents else {
-                            log::warn!(target: "citadel", "Received a message with no destination that was not a request: {message:?}");
-                            continue;
-                        };
+                if stream_key == bypass_key {
+                    // This is a message for the internal service
+                    let Payload::Message(message) = frame.payload else {
+                        log::warn!(target: "citadel", "Received a non-message on the bypass stream: {:?}", frame.payload);
+                        continue;
+                    };
+                    let InternalServicePayload::Request(request) = message.contents else {
+                        log::warn!(target: "citadel", "Received a message with no destination that was not a request: {message:?}");
+                        continue;
+                    };
 
-                        log::trace!(target: "citadel", "[Bypass] Received a message for the internal service: {request:?}");
+                    log::trace!(target: "citadel", "[Bypass] Received a message for the internal service: {request:?}");
 
-                        if let Err(err) = sink.send(request).await {
-                            log::error!(target: "citadel", "Error while sending ISM message to outbound network: {err:?}")
-                        }
+                    if let Err(err) = sink.send(request).await {
+                        log::error!(target: "citadel", "Error while sending ISM message to outbound network: {err:?}")
                     }
+                    continue;
+                }
 
-                    Payload::Message(mut ism_message) if stream_key != bypass_key => {
-                        let InternalServicePayload::Request(InternalServiceRequest::Message {
-                            request_id,
-                            message,
-                            cid,
-                            peer_cid,
-                            security_level,
-                        }) = &mut ism_message.contents
-                        else {
-                            log::warn!(target: "citadel", "Received an outgoing request for another node that was not a message: {stream_key:?}");
-                            continue;
-                        };
-
-                        // Create a new request where the payload is the serialized WireWrapper
-                        // The contents of the wirewrapper take the original message and the source and destination for preservation
-                        let wire_message = WireWrapper::Message {
-                            contents: std::mem::take(message),
-                            source: ism_message.source_id,
-                            destination: ism_message.destination_id,
-                            message_id: ism_message.message_id,
-                        };
-
-                        let request = InternalServiceRequest::Message {
-                            request_id: *request_id,
-                            message: bincode2::serialize(&wire_message)
-                                .expect("Should be able to serialize message"),
-                            cid: *cid,
-                            peer_cid: *peer_cid,
-                            security_level: *security_level,
-                        };
-
-                        if let Err(err) = sink.send(request).await {
-                            log::error!(target: "citadel", "Error while sending ISM message to outbound network: {err:?}");
-                            return;
-                        }
+                // Frames between nodes: data, Ack and Poll, with whatever
+                // extensions ILM chose for this peer.
+                let request = match wire::to_request(frame) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        log::error!(target: "citadel", "Refusing an outgoing ILM frame on {stream_key:?}: {err}");
+                        continue;
                     }
-
-                    ism_proto if stream_key != bypass_key => {
-                        // This is an ACK/POLL message which needs to be manually wrapped into a message
-                        log::info!(target: "citadel", "[NO-BYPASS] Received a message for another node: {stream_key:?}");
-                        let cid = ism_proto.source_id();
-                        let peer_cid = ism_proto.destination_id();
-                        let wire_message = WireWrapper::ISMAux {
-                            signal: Box::new(ism_proto),
-                        };
-                        let serialized_message = bincode2::serialize(&wire_message)
-                            .expect("Should be able to serialize message");
-                        // TODO: Add support for group messaging
-                        let message_request = InternalServiceRequest::Message {
-                            request_id: Uuid::new_v4(),
-                            message: serialized_message,
-                            cid,
-                            peer_cid: Some(peer_cid),
-                            security_level: Default::default(),
-                        };
-
-                        if let Err(err) = sink.send(message_request).await {
-                            log::error!(target: "citadel", "Error while sending ISM message to outbound network: {err:?}");
-                            return;
-                        }
-                    }
-
-                    other => {
-                        log::warn!(target: "citadel", "Received a message for an invalid stream {stream_key:?}: {other:?}");
-                    }
+                };
+                if let Err(err) = sink.send(request).await {
+                    log::error!(target: "citadel", "Error while sending ISM message to outbound network: {err:?}");
+                    return;
                 }
             }
         };
@@ -789,7 +756,9 @@ where
                         });
 
                         log::trace!(target: "citadel", "[POLL] Sending session status poller request {bypass_key:?}: {request:?}");
-                        if let Err(err) = this.bypass_ism_tx_to_outbound.send((bypass_key, request))
+                        if let Err(err) = this
+                            .bypass_ism_tx_to_outbound
+                            .send((bypass_key, OutboundFrame::legacy(request)))
                         {
                             log::error!(target: "citadel", "Error while sending session status poller request: {err:?}");
                             return;
@@ -1015,6 +984,22 @@ where
         request_id: Uuid,
         message: impl Into<Vec<u8>>,
     ) -> Result<(), MessengerError> {
+        self.send_message_to_with_hint(peer_cid, security_level, request_id, message, None)
+            .await
+    }
+
+    /// Send through ILM, saying what the bytes are so they can be compressed.
+    ///
+    /// `None` is "do not compress" and is exactly the other senders. A hint is
+    /// acted on only toward a peer that has advertised a matching codec.
+    pub async fn send_message_to_with_hint(
+        &self,
+        peer_cid: u64,
+        security_level: SecurityLevel,
+        request_id: Uuid,
+        message: impl Into<Vec<u8>>,
+        compression_hint: Option<CompressionHint>,
+    ) -> Result<(), MessengerError> {
         let payload = InternalServicePayload::Request(InternalServiceRequest::Message {
             request_id,
             message: message.into(),
@@ -1024,7 +1009,8 @@ where
         });
 
         // Send to ISM layer. ISM will then send to the background task using the sink in the UnderlyingNetworkTransport impl
-        self.send_message_to_ism(peer_cid, payload).await
+        self.send_message_to_ism(peer_cid, payload, compression_hint)
+            .await
     }
 
     /// Sends an arbitrary request to the internal service. Not processed by the ISM layer.
@@ -1039,9 +1025,10 @@ where
         &self,
         peer_cid: u64,
         request: impl Into<InternalServicePayload>,
+        compression_hint: Option<CompressionHint>,
     ) -> Result<(), MessengerError> {
         self.get_ism()
-            .send_to(peer_cid, request.into())
+            .send_to_with_hint(peer_cid, request.into(), compression_hint)
             .await
             .map_err(|err| match err {
                 NetworkError::SendFailed { reason, message } => match message.contents {
@@ -1075,8 +1062,8 @@ struct ISMHandle<B>
 where
     B: CitadelBackendExt,
 {
-    ism_to_background_outbound: UnboundedSender<InternalMessage>,
-    ism_from_background_inbound: Mutex<UnboundedReceiver<InternalMessage>>,
+    ism_to_background_outbound: UnboundedSender<OutboundFrame<WrappedMessage>>,
+    ism_from_background_inbound: Mutex<UnboundedReceiver<InboundFrame<WrappedMessage>>>,
     /// Read by the native `connected_peers` impl. The wasm32 impl asks
     /// TypeScript for the peer list instead and never touches this, so the field
     /// is genuinely dead on that target and only that one — hence a
@@ -1089,8 +1076,8 @@ where
 
 /// This is what the background will use to interact with the ISM
 struct BackgroundHandle {
-    background_from_ism_outbound: UnboundedReceiver<InternalMessage>,
-    background_to_ism_inbound: UnboundedSender<InternalMessage>,
+    background_from_ism_outbound: UnboundedReceiver<OutboundFrame<WrappedMessage>>,
+    background_to_ism_inbound: UnboundedSender<InboundFrame<WrappedMessage>>,
 }
 
 fn create_ipc_handles<B>(
@@ -1126,7 +1113,7 @@ where
 {
     type Message = WrappedMessage;
 
-    async fn next_message(&self) -> Option<Payload<Self::Message>> {
+    async fn next_message(&self) -> Option<InboundFrame<Self::Message>> {
         self.ism_from_background_inbound
             .try_lock()
             .expect("There should be only one caller polling for messages")
@@ -1136,8 +1123,8 @@ where
 
     async fn send_message(
         &self,
-        message: Payload<Self::Message>,
-    ) -> Result<(), NetworkError<Payload<Self::Message>>> {
+        message: OutboundFrame<Self::Message>,
+    ) -> Result<(), NetworkError<OutboundFrame<Self::Message>>> {
         self.ism_to_background_outbound
             .send(message)
             .map_err(|err| NetworkError::SendFailed {

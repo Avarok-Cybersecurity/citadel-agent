@@ -20,8 +20,10 @@ use once_cell::sync::{Lazy, OnceCell};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod connection_lifecycle;
+mod traffic;
 use connection_lifecycle::{refuse_init, should_report_death, teardown_before_connect};
 use std::sync::RwLock as StdRwLock;
+use traffic::{BROWSER_ILM_OPTIONS, parse_compression_hint};
 use wasm_bindgen::prelude::*;
 
 // WASM exports and logging setup - defined early for use in functions below
@@ -438,7 +440,7 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
         .await
         .ok_or_else(|| JsValue::from_str("Failed to create connector"))?;
 
-    let (messenger, stream) = CitadelWorkspaceMessenger::new(connector);
+    let (messenger, stream) = CitadelWorkspaceMessenger::new(connector, BROWSER_ILM_OPTIONS);
     let connections = Arc::new(DashMap::new());
     let pending_opens = Arc::new(DashSet::new());
 
@@ -833,12 +835,17 @@ fn parse_security_level(s: Option<&str>) -> SecurityLevel {
 /// Sends a P2P message using ISM-routed reliable messaging.
 /// Unlike send_p2p_message which bypasses ISM, this function uses
 /// send_message_to_with_security_level for guaranteed delivery.
+///
+/// `compression_hint` says what `message` is: "json", "text" or "yjs-update"
+/// may be compressed toward a peer that supports it; "opaque", "cbor-command"
+/// or an absent hint are sent as they are. Any other value is an error.
 #[wasm_bindgen]
 pub async fn send_p2p_message_reliable(
     local_cid_str: String,
     peer_cid_str: String,
     message: Vec<u8>,
     security_level: Option<String>,
+    compression_hint: Option<String>,
 ) -> Result<(), JsValue> {
     let local_cid: u64 = local_cid_str
         .parse()
@@ -854,6 +861,7 @@ pub async fn send_p2p_message_reliable(
     );
 
     let sec_level = parse_security_level(security_level.as_deref());
+    let compression_hint = parse_compression_hint(compression_hint.as_deref())?;
 
     // CRITICAL: Clone the Arc handle and release the lock BEFORE the long async send.
     // Holding a read lock across await blocks next_message() which needs a write lock,
@@ -871,9 +879,15 @@ pub async fn send_p2p_message_reliable(
 
     if let Some(tx) = tx {
         // Use ISM-routed send for reliability - lock is NOT held during this await
-        tx.send_message_to_with_security_level(peer_cid, sec_level, message)
-            .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        tx.send_message_to_with_hint(
+            peer_cid,
+            sec_level,
+            uuid::Uuid::new_v4(),
+            message,
+            compression_hint,
+        )
+        .await
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         console_log!(
             "Reliable P2P message sent from {} to {}",

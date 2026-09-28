@@ -10,7 +10,9 @@ mod tests {
     use citadel_internal_service_connector::io_interface::IOInterface;
     use citadel_internal_service_connector::messenger::backend::CitadelBackendExt;
     use citadel_internal_service_connector::messenger::backend::CitadelWorkspaceBackend;
-    use citadel_internal_service_connector::messenger::{CitadelWorkspaceMessenger, MessengerTx};
+    use citadel_internal_service_connector::messenger::{
+        CitadelWorkspaceMessenger, IlmOptions, MessengerTx,
+    };
     use citadel_internal_service_test_common::PeerServiceHandles;
     use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
     use citadel_io::tokio;
@@ -330,10 +332,14 @@ mod tests {
                 )
             })?;
 
-        let (messenger_a, mut rx_a) =
-            CitadelWorkspaceMessenger::<CitadelWorkspaceBackend>::new(connector_a);
-        let (messenger_b, mut rx_b) =
-            CitadelWorkspaceMessenger::<CitadelWorkspaceBackend>::new(connector_b);
+        let (messenger_a, mut rx_a) = CitadelWorkspaceMessenger::<CitadelWorkspaceBackend>::new(
+            connector_a,
+            IlmOptions::LEGACY,
+        );
+        let (messenger_b, mut rx_b) = CitadelWorkspaceMessenger::<CitadelWorkspaceBackend>::new(
+            connector_b,
+            IlmOptions::LEGACY,
+        );
 
         let tx_a = messenger_a.multiplex(cid_a).await?;
         let tx_b = messenger_b.multiplex(cid_b).await?;
@@ -562,7 +568,7 @@ mod tests {
                 "Unable to create in memory interface",
             )
         })?;
-        let (messenger, rx) = CitadelWorkspaceMessenger::new(connector);
+        let (messenger, rx) = CitadelWorkspaceMessenger::new(connector, IlmOptions::LEGACY);
         Ok((messenger, rx))
     }
 }

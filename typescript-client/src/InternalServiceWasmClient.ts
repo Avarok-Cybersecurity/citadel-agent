@@ -12,6 +12,14 @@ import { isResponseType } from './type-guards.js';
 
 // WASM module will be loaded dynamically
 
+/**
+ * What a reliable P2P payload is, so the WASM client can decide whether to
+ * compress it. "json", "text" and "yjs-update" are compressed toward a peer
+ * that supports it; "opaque" and "cbor-command" are sent as they are. The WASM
+ * client rejects any other string. Omit it and nothing is compressed.
+ */
+export type CompressionHint = 'opaque' | 'text' | 'json' | 'yjs-update' | 'cbor-command';
+
 // Type definitions for WASM functions (based on our WASM implementation)
 // WASM-BOUNDARY: next_message/send_p2p_message/send_direct_to_internal_service use `any`
 // because wasm-bindgen generates untyped JS bindings. Typed wrappers in this class contain
@@ -22,7 +30,7 @@ export interface WasmModule {
     open_p2p_connection(cid: string): Promise<void>;
     next_message(): Promise<any>;
     send_p2p_message(cid: string, message: any): Promise<void>;
-    send_p2p_message_reliable(localCid: string, peerCid: string, message: Uint8Array, securityLevel: string | null): Promise<void>;
+    send_p2p_message_reliable(localCid: string, peerCid: string, message: Uint8Array, securityLevel: string | null, compressionHint?: string | null): Promise<void>;
     send_direct_to_internal_service(message: any): Promise<void>;
     close_connection(): Promise<void>;
     get_version(): string;
@@ -215,12 +223,14 @@ export class InternalServiceWasmClient {
      * @param peerCid - The target peer's CID
      * @param message - The message bytes to send
      * @param securityLevel - Optional security level: 'Standard', 'Reinforced', 'High', or 'Extreme'
+     * @param compressionHint - Optional: what `message` is; see `CompressionHint`. Omitted means no compression.
      */
     async sendP2PMessageReliable(
         localCid: string,
         peerCid: string,
         message: Uint8Array,
-        securityLevel?: 'Standard' | 'Reinforced' | 'High' | 'Extreme'
+        securityLevel?: 'Standard' | 'Reinforced' | 'High' | 'Extreme',
+        compressionHint?: CompressionHint
     ): Promise<void> {
         this.ensureInitialized();
 
@@ -228,7 +238,8 @@ export class InternalServiceWasmClient {
             localCid,
             peerCid,
             message,
-            securityLevel || null
+            securityLevel || null,
+            compressionHint ?? null
         );
     }
 

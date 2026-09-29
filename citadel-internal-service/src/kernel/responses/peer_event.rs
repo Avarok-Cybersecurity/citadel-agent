@@ -31,6 +31,9 @@ use citadel_sdk::prelude::{
 };
 use std::sync::atomic::Ordering;
 
+#[cfg(test)]
+mod tests;
+
 /// Deliver a peer notification to the session it belongs to.
 ///
 /// The uuid carried on the event is the one recorded when the connection was
@@ -215,7 +218,22 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     peer_cid: session_cid,
                 },
             ticket_opt: _,
-            invitee_response: _,
+            invitee_response: Some(response),
+            ..
+        } => {
+            // An answer to OUR dial, not an offer: its outcome already went to the dial's
+            // PeerConnect request. Reaches here when the SDK forwards it after the dial's
+            // listener has gone (see peer_event/tests.rs).
+            info!(target: "citadel", "User {session_cid:?}: {peer_cid:?} answered our PeerConnect ({response:?}); not an incoming request");
+        }
+        PeerSignal::PostConnect {
+            peer_conn_type:
+                PeerConnectionType::LocalGroupPeer {
+                    session_cid: peer_cid,
+                    peer_cid: session_cid,
+                },
+            ticket_opt: _,
+            invitee_response: None,
             session_security_settings,
             udp_mode,
             session_password: _,

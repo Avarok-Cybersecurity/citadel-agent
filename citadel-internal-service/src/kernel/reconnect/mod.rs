@@ -17,9 +17,18 @@
 //! policy.rs decides (pure, tested); task.rs does the SDK I/O.
 
 pub(crate) mod policy;
+
+/// The log target of a session's link to its server: the drop, each attempt, the
+/// outcome. Under `citadel`, so a `citadel=` filter still covers it, and its own so a
+/// build that records only errors can record this path alone
+/// (`RUST_LOG=error,citadel::reconnect=info`): a few lines per drop, and without them a
+/// reconnect that failed says nothing about why.
+pub const LOG_TARGET: &str = "citadel::reconnect";
 #[cfg(test)]
 mod policy_tests;
 mod report;
+#[cfg(test)]
+mod stale_session_tests;
 pub(crate) mod task;
 
 use citadel_sdk::prelude::{

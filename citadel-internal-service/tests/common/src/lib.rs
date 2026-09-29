@@ -270,8 +270,11 @@ pub async fn services_connected_to_one_server<R: Ratchet>(
     for int_svc_addr_iter in int_svc_addrs.clone() {
         let bind_address_internal_service = int_svc_addr_iter;
         info!(target: "citadel", "Internal Service Spawning");
-        let internal_service_kernel =
-            CitadelWorkspaceService::<_, R>::new_tcp(bind_address_internal_service).await?;
+        let internal_service_kernel = CitadelWorkspaceService::<_, R>::new_tcp(
+            bind_address_internal_service,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
         let internal_service = test_stun_servers()
             .apply(&mut NodeBuilder::default())
             .with_backend(test_backend())
@@ -1168,7 +1171,11 @@ pub async fn two_sessions_on_one_service_reaching(
     server_addrs: [SocketAddr; 2],
 ) -> Result<(SocketAddr, PeerHandle, PeerHandle), Box<dyn Error>> {
     let service_addr: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
-    let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
+    let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+        service_addr,
+        citadel_internal_service::SERVER_RECONNECT,
+    )
+    .await?;
     let internal_service = test_stun_servers()
         .apply(&mut NodeBuilder::default())
         .with_backend(BackendType::InMemory)

@@ -3,6 +3,7 @@
 use citadel_internal_service_test_common as common;
 
 use citadel_internal_service::kernel::CitadelWorkspaceService;
+use citadel_internal_service::{ReconnectPolicy, SERVER_RECONNECT};
 use citadel_internal_service_connector::connector::{
     InternalServiceConnector, WrappedSink, WrappedStream,
 };
@@ -45,8 +46,16 @@ pub async fn spawn_server() -> Result<u16, Box<dyn Error>> {
 
 /// An agent storing its accounts under `store`. Aborting the handle stops it.
 pub async fn spawn_agent(store: &Path) -> Result<(SocketAddr, JoinHandle<()>), Box<dyn Error>> {
+    spawn_agent_with(store, SERVER_RECONNECT).await
+}
+
+/// As `spawn_agent`, reconnecting dropped sessions by `policy`.
+pub async fn spawn_agent_with(
+    store: &Path,
+    policy: ReconnectPolicy,
+) -> Result<(SocketAddr, JoinHandle<()>), Box<dyn Error>> {
     let bind: SocketAddr = format!("127.0.0.1:{}", common::get_free_port()).parse()?;
-    let kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind).await?;
+    let kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind, policy).await?;
     let mut builder = NodeBuilder::<StackedRatchet>::default();
     let node = common::test_stun_servers()
         .apply(&mut builder)

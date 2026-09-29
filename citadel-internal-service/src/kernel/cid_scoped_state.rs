@@ -94,7 +94,9 @@ mod tests {
     }
 
     fn seeded() -> Svc {
-        let (_c, svc): (_, Svc) = CitadelWorkspaceService::new_in_memory();
+        let (_c, svc): (_, Svc) = CitadelWorkspaceService::new_in_memory(
+            crate::kernel::reconnect::policy::SERVER_RECONNECT,
+        );
         {
             let mut m = svc.pending_peer_registrations.write();
             m.insert((1, 2), signal(1, 2)); // 1 is the local session

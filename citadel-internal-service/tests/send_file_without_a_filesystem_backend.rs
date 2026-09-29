@@ -35,9 +35,12 @@ type Service = (
 
 async fn spawn_agent(backend: BackendType) -> SocketAddr {
     let addr: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
-    let kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(addr)
-        .await
-        .unwrap();
+    let kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+        addr,
+        citadel_internal_service::SERVER_RECONNECT,
+    )
+    .await
+    .unwrap();
     let node = NodeBuilder::default()
         .with_backend(backend)
         .with_node_type(NodeType::Peer)

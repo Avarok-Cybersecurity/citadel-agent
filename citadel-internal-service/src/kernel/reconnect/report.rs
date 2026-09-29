@@ -1,6 +1,6 @@
 //! What the UI is told about a reconnect, and the give-up that removes the session.
 
-use super::LinkState;
+use super::{LinkState, LOG_TARGET};
 use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -33,7 +33,7 @@ pub(super) fn fail<T: IOInterface + Sync, R: Ratchet>(
         .associated_localhost_connection
         .load(Ordering::Relaxed);
     drop(removed);
-    warn!(target: "citadel", "[Reconnect] gave up on {cid}: {reason}");
+    warn!(target: LOG_TARGET, "[Reconnect] gave up on {cid}: {reason}");
     for response in [
         InternalServiceResponse::ServerReconnectFailed(ServerReconnectFailed {
             cid,
@@ -72,6 +72,6 @@ pub(super) fn notify<T: IOInterface + Sync, R: Ratchet>(
 /// Nothing is left to hand these errors to; they are recorded, not dropped.
 pub(super) fn logged(cid: u64, doing: &str, result: Result<(), NetworkError>) {
     if let Err(err) = result {
-        warn!(target: "citadel", "[Reconnect] {cid}: {doing} failed: {err:?}");
+        warn!(target: LOG_TARGET, "[Reconnect] {cid}: {doing} failed: {err:?}");
     }
 }

@@ -6,6 +6,8 @@
 //! decisions themselves (backoff, give-up, refusals) are unit-tested in
 //! src/kernel/reconnect/policy_tests.rs.
 
+// Shared with server_still_holds_the_session.rs, which strands links this file severs.
+#[allow(dead_code)]
 #[path = "reconnect_support/mod.rs"]
 mod reconnect;
 // Shared with account_server_host.rs, which uses the helpers this file does not.

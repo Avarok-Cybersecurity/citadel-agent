@@ -17,10 +17,14 @@ use uuid::Uuid;
 
 /// Stands between the agent and the server. `sever` resets every live link at once, as a
 /// Durable Object reset does ("Connection reset without closing handshake"); `refuse`
-/// makes new links close as soon as they open.
+/// makes new links close as soon as they open. `strand` resets only the agent's side of
+/// every live link and leaves the server's open and silent until `release`: a reset the
+/// server never saw, so it goes on holding the session.
 pub struct Proxy {
     pub addr: SocketAddr,
     severed: tokio::sync::watch::Sender<u64>,
+    stranded: tokio::sync::watch::Sender<u64>,
+    released: tokio::sync::watch::Sender<u64>,
     accepting: Arc<AtomicBool>,
 }
 
@@ -29,8 +33,11 @@ impl Proxy {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
         let (severed, _) = tokio::sync::watch::channel(0u64);
+        let (stranded, _) = tokio::sync::watch::channel(0u64);
+        let (released, _) = tokio::sync::watch::channel(0u64);
         let accepting = Arc::new(AtomicBool::new(true));
         let (severed_in, accepting_in) = (severed.clone(), accepting.clone());
+        let (stranded_in, released_in) = (stranded.clone(), released.clone());
         tokio::spawn(async move {
             while let Ok((inbound, _)) = listener.accept().await {
                 if !accepting_in.load(Ordering::SeqCst) {
@@ -39,16 +46,24 @@ impl Proxy {
                 }
                 let mut sever = severed_in.subscribe();
                 sever.mark_unchanged();
+                let mut strand = stranded_in.subscribe();
+                strand.mark_unchanged();
+                let mut release = released_in.subscribe();
+                release.mark_unchanged();
                 tokio::spawn(async move {
                     let Ok(outbound) = TcpStream::connect(upstream).await else {
                         return reset(inbound);
                     };
                     let (mut inbound, mut outbound) = (inbound, outbound);
-                    tokio::select! {
-                        _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound) => {}
-                        _ = sever.changed() => {}
-                    }
+                    let stranded = tokio::select! {
+                        _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound) => false,
+                        _ = sever.changed() => false,
+                        _ = strand.changed() => true,
+                    };
                     reset(inbound);
+                    if stranded {
+                        let _ = release.changed().await;
+                    }
                     reset(outbound);
                 });
             }
@@ -56,12 +71,22 @@ impl Proxy {
         Ok(Self {
             addr,
             severed,
+            stranded,
+            released,
             accepting,
         })
     }
 
     pub fn sever(&self) {
         self.severed.send_modify(|generation| *generation += 1);
+    }
+
+    pub fn strand(&self) {
+        self.stranded.send_modify(|generation| *generation += 1);
+    }
+
+    pub fn release(&self) {
+        self.released.send_modify(|generation| *generation += 1);
     }
 
     pub fn refuse(&self, refuse: bool) {

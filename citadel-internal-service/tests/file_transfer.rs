@@ -119,9 +119,11 @@ mod tests {
         tokio::task::spawn(server);
 
         info!(target: "citadel", "sub server spawn");
-        let internal_service_kernel =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
-                .await?;
+        let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_address_internal_service,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::Filesystem("filesystem".into()))
             .with_node_type(NodeType::Peer)
@@ -279,9 +281,11 @@ mod tests {
         tokio::task::spawn(server);
 
         info!(target: "citadel", "sub server spawn");
-        let internal_service_kernel =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
-                .await?;
+        let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_address_internal_service,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
 
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::Filesystem("filesystem".into()))
@@ -1115,9 +1119,11 @@ mod tests {
             server_info_file_transfer::<StackedRatchet>(server_success.clone());
         tokio::task::spawn(server);
 
-        let internal_service_kernel =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
-                .await?;
+        let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_address_internal_service,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::Filesystem("filesystem".into()))
             .with_node_type(NodeType::Peer)
@@ -1183,9 +1189,11 @@ mod tests {
             server_info_file_transfer::<StackedRatchet>(server_success.clone());
         tokio::task::spawn(server);
 
-        let internal_service_kernel =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
-                .await?;
+        let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_address_internal_service,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::Filesystem("filesystem".into()))
             .with_node_type(NodeType::Peer)

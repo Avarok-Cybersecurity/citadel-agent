@@ -34,9 +34,11 @@ mod tests {
 
         tokio::task::spawn(server);
 
-        let internal_service_kernel =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
-                .await?;
+        let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_address_internal_service,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -95,9 +97,11 @@ mod tests {
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
 
-        let internal_service_kernel =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
-                .await?;
+        let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_address_internal_service,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
 
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
@@ -157,9 +161,11 @@ mod tests {
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
 
-        let internal_service_kernel =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
-                .await?;
+        let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_address_internal_service,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
 
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
@@ -343,9 +349,11 @@ mod tests {
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
-        let internal_service_kernel =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
-                .await?;
+        let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_address_internal_service,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
 
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
@@ -449,9 +457,11 @@ mod tests {
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
-        let internal_service_kernel =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
-                .await?;
+        let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_address_internal_service,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
 
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
@@ -722,6 +732,7 @@ mod tests {
             info!(target: "citadel", "Internal Service Spawning");
             let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
                 bind_address_internal_service,
+                citadel_internal_service::SERVER_RECONNECT,
             )
             .await?;
 
@@ -969,6 +980,7 @@ mod tests {
             .build(
                 CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
                     bind_address_internal_service_a,
+                    citadel_internal_service::SERVER_RECONNECT,
                 )
                 .await?,
             )?;
@@ -1053,6 +1065,7 @@ mod tests {
             let bind_address_internal_service = internal_service_address;
             let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
                 bind_address_internal_service,
+                citadel_internal_service::SERVER_RECONNECT,
             )
             .await?;
 

@@ -25,7 +25,11 @@ mod tests {
         tokio::task::spawn(server);
 
         let service_addr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
-        let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
+        let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            service_addr,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
 
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::InMemory)
@@ -95,7 +99,11 @@ mod tests {
         tokio::task::spawn(server);
 
         let service_addr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
-        let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
+        let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            service_addr,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
 
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::InMemory)
@@ -201,7 +209,11 @@ mod tests {
         tokio::task::spawn(server);
 
         let service_addr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
-        let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
+        let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            service_addr,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
 
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::Filesystem("filesystem".into()))
@@ -342,7 +354,11 @@ mod tests {
         tokio::task::spawn(server);
 
         let service_addr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
-        let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
+        let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            service_addr,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
 
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::Filesystem("filesystem".into()))

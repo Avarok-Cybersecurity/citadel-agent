@@ -49,6 +49,7 @@ citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Proto
 citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "master" }
 citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "master" }
 citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "master" }
+citadel_proto = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, branch = "master" }
 
 # Standard deps
 serde = { version = "1.0.104", features = ["derive"] }

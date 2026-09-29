@@ -706,8 +706,16 @@ where
 
                     log::trace!(target: "citadel", "[Bypass] Received a message for the internal service: {request:?}");
 
+                    let request_id = request.request_id().copied();
                     if let Err(err) = sink.send(request).await {
-                        log::error!(target: "citadel", "Error while sending ISM message to outbound network: {err:?}")
+                        log::error!(target: "citadel", "Error while sending ISM message to outbound network: {err:?}");
+                        // A backend waiting on this request would wait for an
+                        // answer to something the agent never received.
+                        if let (Some(request_id), Some(backend)) =
+                            (request_id, this.backends.get(&message.source_id))
+                        {
+                            backend.abandon_request(&request_id);
+                        }
                     }
                     continue;
                 }
@@ -785,6 +793,13 @@ where
             }
 
             this.is_running.store(false, Ordering::SeqCst);
+            // After the select, which has dropped the outbound receiver: a
+            // request sent from here on fails to send, and every request sent
+            // before is in the map now, so none is left waiting for an answer
+            // that this connection can no longer carry.
+            for backend in this.backends.iter() {
+                backend.value().abandon_all_requests();
+            }
         };
 
         #[cfg(not(target_arch = "wasm32"))]

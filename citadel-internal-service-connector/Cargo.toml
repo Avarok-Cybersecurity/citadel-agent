@@ -74,7 +74,9 @@ citadel_io = { workspace = true, features = ["std"] }
 # and cannot be satisfied by the certificate the agent ships.
 rcgen = "0.14"
 rand = "0.8.5"
-tokio = { workspace = true, features = ["full"] }
+# test-util: paused time, so a stalled agent can be modelled exactly and a
+# deadline told apart from a connection loss (tests/a_slow_agent_is_not_a_failed_agent.rs).
+tokio = { workspace = true, features = ["full", "test-util"] }
 env_logger = "0.10"
 # Builds a decompression bomb for the wire tests; the production path only
 # ever reaches brotli through intersession-layer-messaging.

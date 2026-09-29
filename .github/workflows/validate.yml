@@ -22,16 +22,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
-  # Panics keep full backtraces (RUST_BACKTRACE); library captures do not. With
-  # this unset, every anyhow error captured a backtrace, and under RUST_LOG=trace
-  # SDK code logs benign ones with `{err:?}` (netbeam's "Unable to forward packet:
-  # channel closed"), symbolizing it synchronously on the async runtime. The first
-  # symbolization of a debug test binary takes seconds on a CI runner, and each
-  # messenger test runs every node on one current-thread runtime: that stall
-  # expired the 3 s hole-punch window (30 s PeerConnect failure) and the 5 s
-  # LocalDB reply timeout (ping_pong). Under local load, with vs without this:
-  # messaging failed 168/240 vs 2/240, ping_pong 54/240 vs 1/240.
-  RUST_LIB_BACKTRACE: 0
   # 40 MiB stack
   RUST_MIN_STACK: 40971520
   RUST_LOG: "citadel=trace"

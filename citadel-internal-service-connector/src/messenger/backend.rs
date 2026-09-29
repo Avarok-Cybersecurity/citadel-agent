@@ -1,11 +1,11 @@
 use crate::messenger::backend_map::{mutate, MapStore, State};
-use crate::messenger::{sleep_internal, timeout_internal, BypasserTx, MessengerTx, WrappedMessage};
+use crate::messenger::{sleep_internal, BypasserTx, MessengerTx, WrappedMessage};
 use async_trait::async_trait;
 use citadel_internal_service_types::{
-    BatchedResponseData, InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
-    KEY_NOT_FOUND,
+    BatchedResponseData, InternalServiceRequest, InternalServiceResponse, KEY_NOT_FOUND,
 };
 use citadel_io::tokio::sync::Mutex;
+use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use intersession_layer_messaging::{Backend, BackendError};
 use std::collections::HashMap;
@@ -45,17 +45,13 @@ pub const OUTBOUND_MESSAGE_PREFIX: &str = "outbound_messages";
 /// refusal. So a refused write returned `Ok(())`, the map read as stored, ILM read
 /// as queued, and the sender saw a message as sent that nothing would retransmit.
 pub(crate) fn write_outcome(
-    response: Option<InternalServiceResponse>,
+    response: InternalServiceResponse,
     what: &str,
 ) -> Result<(), BackendError<WrappedMessage>> {
     match response {
-        Some(InternalServiceResponse::LocalDBSetKVSuccess(_)) => Ok(()),
-        Some(other) => Err(BackendError::StorageError(format!(
+        InternalServiceResponse::LocalDBSetKVSuccess(_) => Ok(()),
+        other => Err(BackendError::StorageError(format!(
             "Writing {what} was refused or failed: {other:?}"
-        ))),
-        // A timeout is not a success either; the caller must be able to retry.
-        None => Err(BackendError::StorageError(format!(
-            "Timed out writing {what}; the change may not be stored"
         ))),
     }
 }
@@ -96,43 +92,57 @@ impl CitadelWorkspaceBackend {
     /// matched nothing, was passed on as uncaught, and its waiter timed out five
     /// seconds later on an answer that had already arrived (see the
     /// `a_reply_that_beats_its_waiter` test).
+    ///
+    /// There is no deadline, on purpose. The agent is local, the connection is
+    /// reliable and ordered, and the agent answers every LocalDB and Batched
+    /// request it receives (a refusal is an answer). So an unanswered request
+    /// means one thing — the connection is gone — and that is reported, at
+    /// once, by the messenger calling [`CitadelBackendExt::abandon_all_requests`]
+    /// when its connection ends. Everything else is lateness.
+    ///
+    /// It had a five-second deadline, and a stalled agent (a debug binary
+    /// symbolising a backtrace, a rekey's keygen, a loaded machine) turned
+    /// lateness into failure: the write was reported as "may not be stored"
+    /// while it was in fact stored, and the reply that confirmed it matched no
+    /// waiter and was passed on to the application as unsolicited. The browser
+    /// runs this same code over its WebSocket, with the same deadline (wasmtimer
+    /// on wasm32), so a slow agent failed browser sends exactly the same way.
+    ///
+    /// Cancellation-safe without a guard: if this future is dropped, the slot
+    /// stays until its reply arrives, and `inspect_received_payload` still
+    /// consumes that reply as the backend's own rather than forwarding it. The
+    /// slot cannot outlive the connection, which is the only thing that could
+    /// stop the reply from coming.
     async fn request(
         &self,
         request: InternalServiceRequest,
         request_id: Uuid,
-    ) -> Result<Option<InternalServiceResponse>, BackendError<WrappedMessage>> {
+    ) -> Result<InternalServiceResponse, BackendError<WrappedMessage>> {
         let (tx, rx) = citadel_io::tokio::sync::oneshot::channel();
-        self.expected_requests.insert(request_id, tx);
+        match self.expected_requests.entry(request_id) {
+            // Displacing a waiter would drop its sender, which now reads as
+            // "connection lost", and hand this request's reply to nobody.
+            Entry::Occupied(_) => {
+                return Err(BackendError::StorageError(format!(
+                    "request_id {request_id} is already awaiting a reply"
+                )))
+            }
+            Entry::Vacant(slot) => {
+                slot.insert(tx);
+            }
+        }
         if let Err(err) = self.send_to_network(request).await {
             // Nothing will ever answer a request that never left.
             self.expected_requests.remove(&request_id);
             return Err(err);
         }
-        Ok(self.wait_for_response(request_id, rx).await)
-    }
-
-    async fn wait_for_response(
-        &self,
-        request_id: Uuid,
-        rx: citadel_io::tokio::sync::oneshot::Receiver<InternalServiceResponse>,
-    ) -> Option<InternalServiceResponse> {
-        citadel_logging::info!(target: "citadel", "[BACKEND-WAIT] Waiting for response to request_id: {} (CID: {})", request_id, self.cid);
-
-        // Add a timeout to prevent infinite waiting (using platform-agnostic timeout)
-        match timeout_internal(Duration::from_secs(5), rx).await {
-            Ok(result) => {
-                let response = result.ok();
-                citadel_logging::info!(target: "citadel", "[BACKEND-WAIT] Received response for request_id {}: {:?}", request_id, response.as_ref().map(|r| std::any::type_name_of_val(r)));
-                response
-            }
-            Err(_) => {
-                // Remove the request from expected_requests if it times out
-                self.expected_requests.remove(&request_id);
-                citadel_logging::warn!(target: "citadel", "[BACKEND-WAIT] TIMEOUT waiting for response to request_id: {} (CID: {}, pending requests: {})",
-                    request_id, self.cid, self.expected_requests.len());
-                None
-            }
-        }
+        rx.await.map_err(|_| {
+            BackendError::StorageError(format!(
+                "The connection to the agent closed before it answered request_id {request_id} \
+                 (CID {}); whether it was applied is unknown",
+                self.cid
+            ))
+        })
     }
 
     /// Sends a message to the network layer
@@ -170,48 +180,37 @@ impl CitadelWorkspaceBackend {
             key,
         };
 
-        if let Some(response) = self.request(request, request_id).await? {
-            match response {
-                InternalServiceResponse::LocalDBGetKVSuccess(success_response) => {
-                    citadel_logging::debug!(target: "citadel", "[GET_MAP] Got {} map successfully", prefix);
-                    let state: State =
-                        bincode2::deserialize(&success_response.value).map_err(|err| {
-                            BackendError::StorageError(format!(
-                                "Failed to deserialize {prefix} map: {err}"
-                            ))
-                        })?;
-                    Ok(state)
-                }
-                InternalServiceResponse::LocalDBGetKVFailure(failure_response) => {
-                    let failure_message = failure_response.message;
-                    if failure_message == KEY_NOT_FOUND {
-                        citadel_logging::debug!(target: "citadel", "[GET_MAP] {} map not found, initializing new one", prefix);
-                        self.initialize_map(prefix).await
-                    } else {
-                        Err(BackendError::StorageError(format!(
-                            "Failed to get {prefix} map: {failure_message}"
-                        )))
-                    }
-                }
-                _ => Err(BackendError::StorageError(format!(
-                    "Unexpected response when getting {prefix} map"
-                ))),
+        match self.request(request, request_id).await? {
+            InternalServiceResponse::LocalDBGetKVSuccess(success_response) => {
+                citadel_logging::debug!(target: "citadel", "[GET_MAP] Got {} map successfully", prefix);
+                let state: State =
+                    bincode2::deserialize(&success_response.value).map_err(|err| {
+                        BackendError::StorageError(format!(
+                            "Failed to deserialize {prefix} map: {err}"
+                        ))
+                    })?;
+                Ok(state)
             }
-        } else {
-            // A timeout is NOT "the map is empty".
-            //
-            // This used to return an empty map, and every caller here is a
-            // read-modify-write over the WHOLE queue: get the map, change one
-            // entry, write it back. So one slow LocalDB read during a send
-            // replaced the entire pending queue with a map containing only the
-            // new message — silently erasing every other queued message, each of
-            // whose senders had already been shown "sent". Genuine absence is a
-            // different answer ("Key not found", handled above) and still
-            // initializes.
-            Err(BackendError::StorageError(format!(
-                "Timed out reading the {prefix} map; refusing to treat that as an empty queue"
-            )))
+            InternalServiceResponse::LocalDBGetKVFailure(failure_response) => {
+                let failure_message = failure_response.message;
+                if failure_message == KEY_NOT_FOUND {
+                    citadel_logging::debug!(target: "citadel", "[GET_MAP] {} map not found, initializing new one", prefix);
+                    self.initialize_map(prefix).await
+                } else {
+                    Err(BackendError::StorageError(format!(
+                        "Failed to get {prefix} map: {failure_message}"
+                    )))
+                }
+            }
+            _ => Err(BackendError::StorageError(format!(
+                "Unexpected response when getting {prefix} map"
+            ))),
         }
+        // A read with no answer is NOT "the map is empty": `request` fails it,
+        // and the `?` above propagates that. Returning an empty map here once
+        // replaced a whole pending queue with one message on a slow read.
+        // Genuine absence is a different answer ("Key not found", handled
+        // above) and still initializes.
     }
 
     /// Generic function to initialize a map (inbound or outbound)
@@ -317,23 +316,16 @@ impl CitadelWorkspaceBackend {
             commands: requests,
         };
 
-        if let Some(response) = self.request(batched_request, batch_request_id).await? {
-            match response {
-                InternalServiceResponse::BatchedResponse(BatchedResponseData {
-                    results, ..
-                }) => Ok(results),
-                other => {
-                    citadel_logging::warn!(target: "citadel", "[SEND_BATCHED] Unexpected response type: {:?}", other);
-                    Err(BackendError::StorageError(
-                        "Unexpected response type for batched request".to_string(),
-                    ))
-                }
+        match self.request(batched_request, batch_request_id).await? {
+            InternalServiceResponse::BatchedResponse(BatchedResponseData { results, .. }) => {
+                Ok(results)
             }
-        } else {
-            citadel_logging::warn!(target: "citadel", "[SEND_BATCHED] Timeout waiting for batched response");
-            Err(BackendError::StorageError(
-                "Timeout waiting for batched response".to_string(),
-            ))
+            other => {
+                citadel_logging::warn!(target: "citadel", "[SEND_BATCHED] Unexpected response type: {:?}", other);
+                Err(BackendError::StorageError(
+                    "Unexpected response type for batched request".to_string(),
+                ))
+            }
         }
     }
 
@@ -420,11 +412,10 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
     ) -> Result<(), BackendError<WrappedMessage>> {
         let message_id = message.message_id;
         let peer_cid = message.destination_id;
-        let request_id = if let InternalServicePayload::Request(request) = &message.contents {
-            request.request_id().copied().unwrap_or_default()
-        } else {
-            Uuid::new_v4()
-        };
+        // The storage request's own id, never the message's. The message's id
+        // is the application's (and nil when it has none), and a reused id
+        // collides in `expected_requests` with another write of the same id.
+        let request_id = Uuid::new_v4();
 
         citadel_logging::debug!(target: "citadel", "[STORE_OUTBOUND] Storing outbound message: source_id={}, destination_id={}, message_id={}",
             message.source_id, message.destination_id, message.message_id);
@@ -450,11 +441,9 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
     ) -> Result<(), BackendError<WrappedMessage>> {
         let message_id = message.message_id;
         let peer_cid = message.source_id; // Use source_id for inbound messages
-        let request_id = if let InternalServicePayload::Request(request) = &message.contents {
-            request.request_id().copied().unwrap_or_default()
-        } else {
-            Uuid::new_v4()
-        };
+
+        // The storage request's own id, never the message's (see store_outbound).
+        let request_id = Uuid::new_v4();
 
         citadel_logging::debug!(target: "citadel", "[STORE_INBOUND] Storing inbound message: source_id={}, destination_id={}, message_id={}",
             message.source_id, message.destination_id, message.message_id);
@@ -648,16 +637,9 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         // This is how the delivery frontier and the next-id counter are read. A
         // read that failed, reported as "nothing stored", restarts the counter and
         // re-delivers messages the peer has already seen.
-        match response {
-            Some(response) => {
-                let value = read_outcome(response, key)?;
-                citadel_logging::debug!(target: "citadel", "[LOAD_VALUE] Loaded value for key={}", key);
-                Ok(value)
-            }
-            None => Err(BackendError::StorageError(format!(
-                "Timed out reading key={key}; whether it exists is unknown"
-            ))),
-        }
+        let value = read_outcome(response, key)?;
+        citadel_logging::debug!(target: "citadel", "[LOAD_VALUE] Loaded value for key={}", key);
+        Ok(value)
     }
 
     async fn load_values_batched(
@@ -673,9 +655,8 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
     /// The inbound path writes the receipt map and the per-peer high-water mark
     /// for every arriving message, inline in the single sequential listener.
     /// Two separate `store_value` calls meant two round trips to the agent per
-    /// message, each with its own five-second `wait_for_response` window in
-    /// which one lost response freezes ALL inbound processing -- ACKs included,
-    /// so the senders start retransmitting into a receiver that is not reading.
+    /// message, each of which holds up ALL inbound processing -- ACKs
+    /// included -- until the agent answers.
     async fn store_values_batched(
         &self,
         entries: &[(&str, Vec<u8>)],
@@ -735,6 +716,14 @@ pub trait CitadelBackendExt: Backend<WrappedMessage> + Clone + Send + Sync + 'st
     ) -> Result<Option<InternalServiceResponse>, BackendError<WrappedMessage>> {
         Ok(Some(response))
     }
+
+    /// The request carrying `request_id` did not leave, so nothing will answer
+    /// it: fail whoever is waiting for that answer.
+    fn abandon_request(&self, _request_id: &Uuid) {}
+
+    /// The connection to the agent has ended, so no outstanding request will be
+    /// answered: fail every one of them now rather than leave them waiting.
+    fn abandon_all_requests(&self) {}
 }
 
 #[async_trait]
@@ -767,10 +756,22 @@ impl CitadelBackendExt for CitadelWorkspaceBackend {
 
         Ok(Some(response))
     }
+
+    fn abandon_request(&self, request_id: &Uuid) {
+        // Dropping the sender wakes the waiter with the connection-lost error.
+        self.expected_requests.remove(request_id);
+    }
+
+    fn abandon_all_requests(&self) {
+        self.expected_requests.clear();
+    }
 }
 
 #[cfg(test)]
 mod a_reply_that_beats_its_waiter;
+
+#[cfg(test)]
+mod a_late_reply_is_still_the_answer;
 
 #[cfg(test)]
 mod response_classification {
@@ -825,7 +826,7 @@ mod response_classification {
 
     #[test]
     fn an_acknowledged_write_is_a_write() {
-        assert!(write_outcome(Some(set_ok()), "the outbound map").is_ok());
+        assert!(write_outcome(set_ok(), "the outbound map").is_ok());
     }
 
     #[test]
@@ -837,7 +838,7 @@ mod response_classification {
             "propose_target failed",
             "This request is not permitted for this session",
         ] {
-            let outcome = write_outcome(Some(set_failed(message)), "the outbound map");
+            let outcome = write_outcome(set_failed(message), "the outbound map");
             assert!(
                 outcome.is_err(),
                 "a LocalDBSetKVFailure({message:?}) must not report a stored write"
@@ -849,12 +850,7 @@ mod response_classification {
     fn a_write_answered_by_the_wrong_variant_is_not_a_write() {
         // A response addressed to this request that is not a set-KV answer at all
         // is a protocol confusion, not a success.
-        assert!(write_outcome(Some(get_ok(b"x")), "the outbound map").is_err());
-    }
-
-    #[test]
-    fn an_unanswered_write_is_not_a_write() {
-        assert!(write_outcome(None, "the outbound map").is_err());
+        assert!(write_outcome(get_ok(b"x"), "the outbound map").is_err());
     }
 
     #[test]

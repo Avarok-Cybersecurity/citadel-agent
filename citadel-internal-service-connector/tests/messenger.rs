@@ -26,6 +26,13 @@ mod tests {
     use std::ops::DerefMut;
     use uuid::Uuid;
 
+    /// The one bound on any single wait in this file: a hang guard, not a
+    /// latency claim. It was 5 s for most waits and 30 s for a message, and a
+    /// 5 s guard reports a stalled runtime (a debug binary symbolising a
+    /// backtrace, a rekey's keygen, a loaded CI runner) as a failed request,
+    /// which is the very misreading the backend no longer makes.
+    const REPLY_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+
     #[tokio::test]
     async fn test_connector_mapping() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
@@ -70,7 +77,7 @@ mod tests {
 
         // Add timeout to prevent hanging
         let timeout_result = time::timeout(
-            std::time::Duration::from_secs(5),
+            REPLY_BUDGET,
             test_get_sessions_connector(&mut connector_a, 1, cid_a),
         )
         .await;
@@ -79,13 +86,13 @@ mod tests {
             Ok(result) => result?,
             Err(_) => {
                 return Err(
-                    "test_get_sessions_connector for client A timed out after 5 seconds".into(),
+                    "test_get_sessions_connector for client A timed out (REPLY_BUDGET)".into(),
                 )
             }
         }
 
         let timeout_result = time::timeout(
-            std::time::Duration::from_secs(5),
+            REPLY_BUDGET,
             test_get_sessions_connector(&mut connector_b, 1, cid_b),
         )
         .await;
@@ -94,7 +101,7 @@ mod tests {
             Ok(result) => result?,
             Err(_) => {
                 return Err(
-                    "test_get_sessions_connector for client B timed out after 5 seconds".into(),
+                    "test_get_sessions_connector for client B timed out (REPLY_BUDGET)".into(),
                 )
             }
         }
@@ -139,7 +146,7 @@ mod tests {
 
         // Add timeout to prevent hanging
         let timeout_result = time::timeout(
-            std::time::Duration::from_secs(5),
+            REPLY_BUDGET,
             test_get_sessions_messenger_get_sessions(&tx_a, &mut rx_a, 1, cid_a),
         )
         .await;
@@ -147,13 +154,13 @@ mod tests {
         match timeout_result {
             Ok(result) => result?,
             Err(_) => return Err(
-                "test_get_sessions_messenger_get_sessions for client A timed out after 5 seconds"
+                "test_get_sessions_messenger_get_sessions for client A timed out (REPLY_BUDGET)"
                     .into(),
             ),
         }
 
         let timeout_result = time::timeout(
-            std::time::Duration::from_secs(5),
+            REPLY_BUDGET,
             test_get_sessions_messenger_get_sessions(&tx_b, &mut rx_b, 1, cid_b),
         )
         .await;
@@ -161,13 +168,13 @@ mod tests {
         match timeout_result {
             Ok(result) => result?,
             Err(_) => return Err(
-                "test_get_sessions_messenger_get_sessions for client B timed out after 5 seconds"
+                "test_get_sessions_messenger_get_sessions for client B timed out (REPLY_BUDGET)"
                     .into(),
             ),
         }
 
         // Add timeout for get_connected_peers calls
-        let timeout_result = time::timeout(std::time::Duration::from_secs(5), async {
+        let timeout_result = time::timeout(REPLY_BUDGET, async {
             let peers_a = tx_a.get_connected_peers().await;
             assert_eq!(peers_a, vec![cid_b]);
             Ok::<_, Box<dyn Error>>(peers_a)
@@ -179,11 +186,11 @@ mod tests {
                 let _ = result?;
             }
             Err(_) => {
-                return Err("get_connected_peers for client A timed out after 5 seconds".into())
+                return Err("get_connected_peers for client A timed out (REPLY_BUDGET)".into())
             }
         }
 
-        let timeout_result = time::timeout(std::time::Duration::from_secs(5), async {
+        let timeout_result = time::timeout(REPLY_BUDGET, async {
             let peers_b = tx_b.get_connected_peers().await;
             assert_eq!(peers_b, vec![cid_a]);
             Ok::<_, Box<dyn Error>>(peers_b)
@@ -195,7 +202,7 @@ mod tests {
                 let _ = result?;
             }
             Err(_) => {
-                return Err("get_connected_peers for client B timed out after 5 seconds".into())
+                return Err("get_connected_peers for client B timed out (REPLY_BUDGET)".into())
             }
         }
 
@@ -265,21 +272,13 @@ mod tests {
                     let (tx_0, rx_0) = i_locked.deref_mut();
                     let (tx_1, rx_1) = j_locked.deref_mut();
 
-                    // Add timeout to prevent hanging
-                    let timeout_result = time::timeout(
-                        std::time::Duration::from_secs(5),
-                        test_ping_pong(tx_0, rx_0, tx_1, rx_1),
-                    )
-                    .await;
-
-                    match timeout_result {
-                        Ok(result) => result?,
-                        Err(_) => {
-                            citadel_logging::warn!(target: "citadel", "Ping-pong test timed out after 5 seconds between clients {} and {}", clients[i], clients[j]);
-                            // Continue with the next pair instead of failing the whole test
-                            continue;
-                        }
-                    }
+                    // No budget of its own, and no skipping. This used to give
+                    // the pair five seconds and `continue` past a pair that ran
+                    // out, so a failed exchange passed the test. The wait for
+                    // each message is bounded (and fails) in
+                    // `expect_message_from`; a hang elsewhere is nextest's
+                    // slow-timeout's to report.
+                    test_ping_pong(tx_0, rx_0, tx_1, rx_1).await?;
                 }
             }
         }
@@ -356,17 +355,10 @@ mod tests {
         assert_eq!(tx_a.get_connected_peers().await, vec![cid_b]);
         assert_eq!(tx_b.get_connected_peers().await, vec![cid_a]);
 
-        // Only run the ping-pong test once instead of 10 times to avoid potential infinite loops
-        let timeout_result = time::timeout(
-            std::time::Duration::from_secs(5),
-            test_ping_pong(&tx_a, &mut rx_a, &tx_b, &mut rx_b),
-        )
-        .await;
-
-        match timeout_result {
-            Ok(result) => result?,
-            Err(_) => return Err("Ping-pong test timed out after 5 seconds".into()),
-        }
+        // No outer budget: five seconds here contradicted the 30 s that
+        // `expect_message_from` allows each message, so this fired first and
+        // reported a slow exchange as a failed one.
+        test_ping_pong(&tx_a, &mut rx_a, &tx_b, &mut rx_b).await?;
 
         Ok(())
     }
@@ -390,7 +382,7 @@ mod tests {
         from_peer: u64,
         payload: &[u8],
     ) {
-        let budget = std::time::Duration::from_secs(30);
+        let budget = REPLY_BUDGET;
 
         let wait = async {
             loop {
@@ -492,16 +484,15 @@ mod tests {
         F: FnOnce(InternalServiceResponse),
     {
         // Send the request with a timeout
-        let timeout_result =
-            time::timeout(std::time::Duration::from_secs(5), tx.send_request(request)).await;
+        let timeout_result = time::timeout(REPLY_BUDGET, tx.send_request(request)).await;
 
         match timeout_result {
             Ok(result) => result?,
-            Err(_) => return Err("send_request timed out after 5 seconds".into()),
+            Err(_) => return Err("send_request timed out (REPLY_BUDGET)".into()),
         }
 
         // Receive the response with a timeout
-        let timeout_result = time::timeout(std::time::Duration::from_secs(5), rx.recv()).await;
+        let timeout_result = time::timeout(REPLY_BUDGET, rx.recv()).await;
 
         match timeout_result {
             Ok(Some(response)) => {
@@ -509,7 +500,7 @@ mod tests {
                 Ok(())
             }
             Ok(None) => Err("Channel closed unexpectedly".into()),
-            Err(_) => Err("Receiving response timed out after 5 seconds".into()),
+            Err(_) => Err("Receiving response timed out (REPLY_BUDGET)".into()),
         }
     }
 
@@ -520,7 +511,7 @@ mod tests {
     ) -> Result<(), Box<dyn Error>> {
         // Send the request with a timeout
         let timeout_result = time::timeout(
-            std::time::Duration::from_secs(5),
+            REPLY_BUDGET,
             connector.sink.send(InternalServiceRequest::GetSessions {
                 request_id: Uuid::new_v4(),
             }),
@@ -529,12 +520,11 @@ mod tests {
 
         match timeout_result {
             Ok(result) => result?,
-            Err(_) => return Err("Sending GetSessions request timed out after 5 seconds".into()),
+            Err(_) => return Err("Sending GetSessions request timed out (REPLY_BUDGET)".into()),
         }
 
         // Receive the response with a timeout
-        let timeout_result =
-            time::timeout(std::time::Duration::from_secs(5), connector.stream.next()).await;
+        let timeout_result = time::timeout(REPLY_BUDGET, connector.stream.next()).await;
 
         match timeout_result {
             Ok(Some(response)) => {
@@ -547,7 +537,7 @@ mod tests {
                 }
             }
             Ok(None) => Err("Stream ended unexpectedly".into()),
-            Err(_) => Err("Receiving response timed out after 5 seconds".into()),
+            Err(_) => Err("Receiving response timed out (REPLY_BUDGET)".into()),
         }
     }
 

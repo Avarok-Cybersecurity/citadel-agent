@@ -29,16 +29,22 @@ mod tests {
         let bind_addr_1: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         let bind_addr_2: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
-        let internal_service_kernel_1 =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_addr_1).await?;
+        let internal_service_kernel_1 = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_addr_1,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
         let internal_service_1 = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
             .build(internal_service_kernel_1)?;
 
-        let internal_service_kernel_2 =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_addr_2).await?;
+        let internal_service_kernel_2 = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_addr_2,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
         let internal_service_2 = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -159,16 +165,22 @@ mod tests {
         let bind_addr_1: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         let bind_addr_2: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
-        let internal_service_kernel_1 =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_addr_1).await?;
+        let internal_service_kernel_1 = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_addr_1,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
         let internal_service_1 = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
             .build(internal_service_kernel_1)?;
 
-        let internal_service_kernel_2 =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_addr_2).await?;
+        let internal_service_kernel_2 = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_addr_2,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
         let internal_service_2 = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -274,16 +286,22 @@ mod tests {
         let bind_addr_1: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         let bind_addr_2: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
-        let internal_service_kernel_1 =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_addr_1).await?;
+        let internal_service_kernel_1 = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_addr_1,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
         let internal_service_1 = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
             .build(internal_service_kernel_1)?;
 
-        let internal_service_kernel_2 =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_addr_2).await?;
+        let internal_service_kernel_2 = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_addr_2,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
         let internal_service_2 = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)

@@ -43,6 +43,8 @@ pub(crate) mod media;
 pub(crate) mod pending_group_invites;
 pub(crate) mod picked_files;
 pub(crate) mod reconnect;
+
+use reconnect::policy::ReconnectPolicy;
 pub(crate) mod requests;
 pub(crate) mod responses;
 pub(crate) mod revfs_correlation;
@@ -89,7 +91,7 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     /// This prevents TOCTOU race conditions where two Connect requests arrive simultaneously.
     pub connecting_usernames: Arc<Mutex<HashSet<String>>>,
     /// How a session its server dropped is brought back (kernel/reconnect).
-    pub(crate) reconnect_policy: reconnect::policy::ReconnectPolicy,
+    pub(crate) reconnect_policy: ReconnectPolicy,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -111,8 +113,10 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
     }
 }
 
-impl<T: IOInterface, R: Ratchet> From<T> for CitadelWorkspaceService<T, R> {
-    fn from(io: T) -> Self {
+impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
+    /// `reconnect_policy` is how a session its server dropped is brought back; the
+    /// agent's is `SERVER_RECONNECT`. Required, so every caller states it.
+    pub fn new(io: T, reconnect_policy: ReconnectPolicy) -> Self {
         CitadelWorkspaceService {
             remote: None,
             server_connection_map: Arc::new(RwLock::new(Default::default())),
@@ -123,21 +127,9 @@ impl<T: IOInterface, R: Ratchet> From<T> for CitadelWorkspaceService<T, R> {
             pending_peer_registrations: Arc::new(RwLock::new(Default::default())),
             peer_username_cache: Arc::new(RwLock::new(Default::default())),
             connecting_usernames: Arc::new(Mutex::new(HashSet::new())),
-            reconnect_policy: reconnect::policy::SERVER_RECONNECT,
+            reconnect_policy,
             io: Arc::new(RwLock::new(Some(io))),
         }
-    }
-}
-
-impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
-    pub fn new(io: T) -> Self {
-        io.into()
-    }
-
-    /// Reconnect dropped sessions by `policy` instead of `SERVER_RECONNECT`.
-    pub fn with_reconnect_policy(mut self, policy: reconnect::policy::ReconnectPolicy) -> Self {
-        self.reconnect_policy = policy;
-        self
     }
 
     pub fn remote(&self) -> &NodeRemote<R> {
@@ -148,8 +140,10 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
 impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
     pub async fn new_tcp(
         bind_address: SocketAddr,
+        reconnect_policy: ReconnectPolicy,
     ) -> std::io::Result<CitadelWorkspaceService<TcpIOInterface, R>> {
-        Ok(TcpIOInterface::new(bind_address).await?.into())
+        let io = TcpIOInterface::new(bind_address).await?;
+        Ok(CitadelWorkspaceService::new(io, reconnect_policy))
     }
 
     #[cfg(feature = "websockets")]
@@ -159,9 +153,10 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
     pub async fn new_websocket(
         bind_address: SocketAddr,
         origins: OriginPolicy,
+        reconnect_policy: ReconnectPolicy,
     ) -> std::io::Result<CitadelWorkspaceService<WebSocketInterface, R>> {
         let ws_server_io = WebSocketInterface::new(bind_address, origins).await?;
-        Ok(ws_server_io.into())
+        Ok(CitadelWorkspaceService::new(ws_server_io, reconnect_policy))
     }
 
     #[cfg(feature = "websockets")]
@@ -177,18 +172,21 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
         origins: OriginPolicy,
         certificate_chain: &[u8],
         private_key: &[u8],
+        reconnect_policy: ReconnectPolicy,
     ) -> std::io::Result<CitadelWorkspaceService<WebSocketInterface, R>> {
         let ws_server_io =
             WebSocketInterface::new_tls(bind_address, origins, certificate_chain, private_key)
                 .await?;
-        Ok(ws_server_io.into())
+        Ok(CitadelWorkspaceService::new(ws_server_io, reconnect_policy))
     }
 }
 
 impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {
     /// Generates an in-memory service connector and kernel. This is useful for programs that do not need
     /// networking to connect between the application and the internal service
-    pub fn new_in_memory() -> (
+    pub fn new_in_memory(
+        reconnect_policy: ReconnectPolicy,
+    ) -> (
         InternalServiceConnector<InMemoryInterface>,
         CitadelWorkspaceService<InMemoryInterface, R>,
     ) {
@@ -200,11 +198,11 @@ impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {
             },
             stream: WrappedStream::new(InMemoryStream(rx_from_consumer)),
         };
-        let kernel = InMemoryInterface {
+        let io = InMemoryInterface {
             sink: Some(tx_to_consumer),
             stream: Some(rx_from_svc),
-        }
-        .into();
+        };
+        let kernel = CitadelWorkspaceService::new(io, reconnect_policy);
         (connector, kernel)
     }
 }

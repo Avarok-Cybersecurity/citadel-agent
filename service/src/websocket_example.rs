@@ -52,7 +52,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write("server_config.json", config)?;
 
     // Create the CitadelWorkspaceService with WebSocket interface
-    let service = CitadelWorkspaceService::<_, RatchetType>::new(websocket_interface);
+    let service = CitadelWorkspaceService::<_, RatchetType>::new(
+        websocket_interface,
+        citadel_internal_service::SERVER_RECONNECT,
+    );
 
     // Build and run the internal service node
     let stun_servers = StunServers::parse(

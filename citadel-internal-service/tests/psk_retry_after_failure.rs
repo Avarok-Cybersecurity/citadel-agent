@@ -293,7 +293,11 @@ mod tests {
 
         let mut services_to_spawn: Vec<InternalServicesFutures> = Vec::new();
         for addr in addrs.clone() {
-            let kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(addr).await?;
+            let kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+                addr,
+                citadel_internal_service::SERVER_RECONNECT,
+            )
+            .await?;
             let node = NodeBuilder::default()
                 .with_backend(BackendType::Filesystem("filesystem".into()))
                 .with_node_type(NodeType::Peer)

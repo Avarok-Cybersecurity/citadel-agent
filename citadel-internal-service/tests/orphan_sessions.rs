@@ -25,9 +25,11 @@ mod tests {
         let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
-        let internal_service_kernel =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
-                .await?;
+        let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_address_internal_service,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -104,9 +106,11 @@ mod tests {
         let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
-        let internal_service_kernel =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
-                .await?;
+        let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_address_internal_service,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -192,9 +196,11 @@ mod tests {
         let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
-        let internal_service_kernel =
-            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
-                .await?;
+        let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_address_internal_service,
+            citadel_internal_service::SERVER_RECONNECT,
+        )
+        .await?;
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)

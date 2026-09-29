@@ -3,7 +3,7 @@
 
 use super::policy::{self, DropAction, FailureKind, GiveUp, Next, ReconnectPolicy};
 use super::report::{fail, logged, notify};
-use super::{Credentials, LinkState};
+use super::{Credentials, LinkState, LOG_TARGET};
 use crate::kernel::{
     c2s_reader, create_client_server_remote, group_channels, CitadelWorkspaceService, Connection,
 };
@@ -87,7 +87,7 @@ async fn run<T: IOInterface + Sync, R: Ratchet>(this: &CitadelWorkspaceService<T
         tokio::time::sleep(delay).await;
         let Some((username, credentials)) = still_reconnecting(&this.server_connection_map, cid)
         else {
-            info!(target: "citadel", "[Reconnect] {cid} was ended while reconnecting; stopping");
+            info!(target: LOG_TARGET, "[Reconnect] {cid} was ended while reconnecting; stopping");
             return;
         };
         let policy = this
@@ -117,7 +117,7 @@ async fn run<T: IOInterface + Sync, R: Ratchet>(this: &CitadelWorkspaceService<T
         let code = failure.code();
         let message = failure.into_string();
         let kind = policy::classify(code, &message);
-        warn!(target: "citadel", "[Reconnect] attempt {attempt} for {cid} failed ({kind:?}, {code:?}): {message}");
+        warn!(target: LOG_TARGET, "[Reconnect] attempt {attempt} for {cid} failed ({kind:?}, {code:?}): {message}");
         match policy.after_failure(attempt, started.elapsed(), kind) {
             Next::RetryAfter(next) => {
                 attempt = attempt.saturating_add(1);
@@ -192,7 +192,7 @@ async fn install<T: IOInterface + Sync, R: Ratchet>(
     };
     let Some(tcp_uuid) = installed else {
         // Ended while this attempt was in flight: the session it opened has no owner.
-        info!(target: "citadel", "[Reconnect] {cid} was ended mid-attempt; closing the new link");
+        info!(target: LOG_TARGET, "[Reconnect] {cid} was ended mid-attempt; closing the new link");
         logged(cid, "closing an unowned link", remote.disconnect().await);
         return;
     };
@@ -204,7 +204,7 @@ async fn install<T: IOInterface + Sync, R: Ratchet>(
         connect_request_id,
         tcp_uuid,
     );
-    info!(target: "citadel", "[Reconnect] {cid} is back");
+    info!(target: LOG_TARGET, "[Reconnect] {cid} is back");
     let sent = notify(
         this,
         cid,

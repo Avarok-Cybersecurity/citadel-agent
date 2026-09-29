@@ -19,6 +19,7 @@
 
 use crate::kernel::reconnect::policy::SERVER_HOLDS_SESSION;
 use crate::kernel::reconnect::task::{self, Began};
+use crate::kernel::reconnect::LOG_TARGET;
 use crate::kernel::requests::peer::{cleanup_state, DisconnectedConnection};
 use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -48,13 +49,13 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         };
         if refusal_leaves_session_standing(&sdk_holds) {
             citadel_sdk::logging::info!(
-                target: "citadel",
+                target: LOG_TARGET,
                 "Disconnect due to '{}' - preserving existing session in server_connection_map",
                 reject_msg
             );
             return Ok(());
         }
-        citadel_sdk::logging::warn!(target: "citadel", "Disconnect due to '{reject_msg}', and the SDK no longer holds the session: treating it as dropped");
+        citadel_sdk::logging::warn!(target: LOG_TARGET, "Disconnect due to '{reject_msg}', and the SDK no longer holds the session: treating it as dropped");
     }
 
     // In SDK v0.13.1+, NodeResult::Disconnect only carries C2S connection types.
@@ -66,7 +67,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         };
 
         citadel_sdk::logging::info!(
-            target: "citadel",
+            target: LOG_TARGET,
             "[Disconnect Response] SDK reports C2S session {} disconnected. Reason: {}",
             cid,
             disconnect.message
@@ -75,7 +76,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         match task::begin(&this.server_connection_map, cid) {
             Began::NotTracked => {}
             Began::AlreadyReconnecting => {
-                citadel_sdk::logging::info!(target: "citadel", "[Disconnect Response] {cid} is already reconnecting");
+                citadel_sdk::logging::info!(target: LOG_TARGET, "[Disconnect Response] {cid} is already reconnecting");
             }
             Began::Reconnecting => {
                 this.prune_cid_scoped_state(cid, None);
@@ -84,7 +85,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             Began::Remove => return remove(this, cid),
         }
     } else {
-        citadel_sdk::logging::warn!(target: "citadel", "The disconnect request does not contain a connection type")
+        citadel_sdk::logging::warn!(target: LOG_TARGET, "The disconnect request does not contain a connection type")
     }
 
     Ok(())

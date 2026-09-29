@@ -37,7 +37,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         opts.stun_servers.as_deref(),
     )?;
 
-    let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(opts.bind).await?;
+    let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+        opts.bind,
+        citadel_internal_service::SERVER_RECONNECT,
+    )
+    .await?;
 
     // Resolve the SDK backend from CLI + env (env takes precedence so docker
     // operators can flip backends without rebuilding). `filesystem` is required

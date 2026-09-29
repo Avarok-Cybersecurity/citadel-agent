@@ -20,6 +20,8 @@
 //! - `register.rs` → `remote.register()` → Creates NEW account with NEW CID
 //! - `connect.rs` (this file) → `remote.connect()` → Connects to EXISTING account, SAME CID
 
+use crate::kernel::reconnect::sign_in::{self, SignIn};
+use crate::kernel::reconnect::LinkState;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::{create_client_server_remote, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -30,7 +32,7 @@ use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt, Ratchet};
 use std::sync::Arc;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
@@ -48,6 +50,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     else {
         unreachable!("Should never happen if programmed properly")
     };
+    let connect_mode = crate::kernel::requests::connect_mode::server_connect_mode(
+        connect_mode,
+        crate::kernel::requests::connect_mode::LoginOrigin::UserSignIn,
+    );
     let remote = this.remote();
 
     // The SDK takes ownership of the password when it carries it to the server,
@@ -81,24 +87,17 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         let lock = this.server_connection_map.read();
         lock.iter()
             .find(|(_, conn)| conn.username == username)
-            .map(|(cid, _)| *cid)
+            .map(|(cid, conn)| (*cid, conn.link))
     };
 
-    if let Some(cid) = existing_cid {
+    if let Some((cid, link)) = existing_cid {
         citadel_sdk::logging::info!(target: "citadel", "[Connect] Found existing session {} for user {}, checking SDK...", cid, username);
 
-        // A session the agent is reconnecting after a server drop is held, not stale:
-        // the SDK has no session for it yet, and connecting here would race the
-        // reconnect with a second SDK connect for the same account.
-        let reconnecting = {
-            let lock = this.server_connection_map.read();
-            lock.get(&cid)
-                .is_some_and(|conn| conn.link == crate::kernel::reconnect::LinkState::Reconnecting)
-        };
-
-        // Query SDK to see if session is actually active
-        let sdk_active = reconnecting
-            || match remote.sessions().await {
+        // A session the agent is reconnecting is not in the SDK by design, so the SDK is
+        // asked only about the others.
+        let sdk_holds = match link {
+            LinkState::Reconnecting | LinkState::SigningIn => false,
+            LinkState::Up | LinkState::Ending => match remote.sessions().await {
                 Ok(sessions) => sessions.sessions.iter().any(|sess| sess.cid == cid),
                 Err(e) => {
                     // A FAILED query is not an empty answer. This assumed
@@ -122,28 +121,31 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     });
                     return Some(HandledRequestResult { response, uuid });
                 }
-            };
+            },
+        };
+        let tracked = sign_in::tracked(link, sdk_holds);
 
-        if sdk_active {
-            // Prove the caller knows the password before handing them the
-            // session. This branch never reaches the SDK, so nothing else in it
-            // ever looks at the password: it used to re-point the session's
-            // message stream to the caller and return the real CID on the
-            // strength of a username alone. Any client of this agent's socket
-            // could name a live username and take over its stream.
-            //
-            // See kernel/credential_fingerprint.rs for why this is a recorded
-            // fingerprint and not a local credential check -- the short version
-            // is that authentication belongs to the server, re-connecting here
-            // would reset the ratchet this branch exists to protect, and the
-            // SDK's client-side `validate_credentials` rejects every password.
-            let presented = crate::kernel::credential_fingerprint::derive(
-                remote,
-                &username,
-                password_for_fingerprint,
-            )
-            .await;
-            let authorized = {
+        // Prove the caller knows the password before handing them a tracked session. The
+        // live branch never reaches the SDK, so nothing else in it ever looks at the
+        // password: it used to re-point the session's message stream to the caller and
+        // return the real CID on the strength of a username alone. A takeover does reach
+        // the SDK, but it stops the reconnect first, so a wrong password must not get
+        // that far either.
+        //
+        // See kernel/credential_fingerprint.rs for why this is a recorded fingerprint and
+        // not a local credential check -- the short version is that authentication
+        // belongs to the server, re-connecting here would reset the ratchet this branch
+        // exists to protect, and the SDK's client-side `validate_credentials` rejects
+        // every password.
+        let authorized = match tracked {
+            sign_in::Tracked::Stale => false,
+            sign_in::Tracked::Live | sign_in::Tracked::Reconnecting => {
+                let presented = crate::kernel::credential_fingerprint::derive(
+                    remote,
+                    &username,
+                    password_for_fingerprint.clone(),
+                )
+                .await;
                 let lock = this.server_connection_map.read();
                 lock.get(&cid).is_some_and(|conn| {
                     crate::kernel::credential_fingerprint::matches(
@@ -151,9 +153,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         presented.as_ref(),
                     )
                 })
-            };
+            }
+        };
 
-            if !authorized {
+        match sign_in::on_sign_in(tracked, authorized) {
+            SignIn::Refuse => {
                 citadel_sdk::logging::warn!(target: "citadel", "[Connect] REFUSED reuse of session {} for user {}: the password does not match the one that opened it", cid, username);
                 cleanup_username(this, &username);
                 // Deliberately the same message a wrong password on a fresh
@@ -167,39 +171,58 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 });
                 return Some(HandledRequestResult { response, uuid });
             }
-
-            // Session is active in both internal state and SDK - inform frontend
-            citadel_sdk::logging::info!(target: "citadel", "[Connect] Session {} already active for user {} - returning SessionAlreadyActive", cid, username);
-
-            // Update TCP mapping to new connection
-            {
-                let lock = this.server_connection_map.read();
-                if let Some(conn) = lock.get(&cid) {
-                    conn.associated_localhost_connection
-                        .store(uuid, std::sync::atomic::Ordering::Relaxed);
+            SignIn::AlreadyActive => {
+                citadel_sdk::logging::info!(target: "citadel", "[Connect] Session {} already active for user {} - returning SessionAlreadyActive", cid, username);
+                {
+                    let lock = this.server_connection_map.read();
+                    if let Some(conn) = lock.get(&cid) {
+                        conn.associated_localhost_connection
+                            .store(uuid, std::sync::atomic::Ordering::Relaxed);
+                    }
                 }
+                // Lets the frontend handle it gracefully (e.g. redirect to the workspace).
+                let response = InternalServiceResponse::SessionAlreadyActive(
+                    citadel_internal_service_types::SessionAlreadyActive {
+                        cid,
+                        username: username.clone(),
+                        message: "Session already active. Use the navbar to switch sessions or proceed to workspace.".to_string(),
+                        request_id: Some(request_id),
+                    },
+                );
+                cleanup_username(this, &username);
+                return Some(HandledRequestResult { response, uuid });
             }
-
-            // Return SessionAlreadyActive to let frontend know the session was already connected
-            // This allows the frontend to gracefully handle the case (e.g., redirect to workspace)
-            let response = InternalServiceResponse::SessionAlreadyActive(
-                citadel_internal_service_types::SessionAlreadyActive {
+            SignIn::TakeOverReconnect => {
+                citadel_sdk::logging::info!(target: "citadel", "[Connect] Session {} for user {} is reconnecting; the sign-in takes it over", cid, username);
+                let credentials = crate::kernel::reconnect::Credentials {
+                    password,
+                    connect_mode,
+                    udp_mode,
+                    keep_alive_timeout,
+                    session_security_settings,
+                    server_password,
+                    connect_request_id: request_id,
+                };
+                let response = crate::kernel::reconnect::takeover::take_over(
+                    this,
                     cid,
-                    username: username.clone(),
-                    message: "Session already active. Use the navbar to switch sessions or proceed to workspace.".to_string(),
-                    request_id: Some(request_id),
-                },
-            );
-
-            cleanup_username(this, &username);
-            return Some(HandledRequestResult { response, uuid });
-        } else {
-            // Internal has session but SDK doesn't - clean up stale state
-            citadel_sdk::logging::info!(target: "citadel", "[Connect] Clearing stale session {} for user {} (SDK session disconnected)", cid, username);
-            this.server_connection_map.write().remove(&cid);
-            this.prune_cid_scoped_state(cid, None);
-            // Allow SDK protocol layer to stabilize after stale session cleanup
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    uuid,
+                    request_id,
+                    username.clone(),
+                    credentials,
+                )
+                .await;
+                cleanup_username(this, &username);
+                return Some(HandledRequestResult { response, uuid });
+            }
+            SignIn::ReplaceStale => {
+                // Internal has session but SDK doesn't - clean up stale state
+                citadel_sdk::logging::info!(target: "citadel", "[Connect] Clearing stale session {} for user {} (SDK session disconnected)", cid, username);
+                this.server_connection_map.write().remove(&cid);
+                this.prune_cid_scoped_state(cid, None);
+                // Allow SDK protocol layer to stabilize after stale session cleanup
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
         }
     }
 

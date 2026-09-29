@@ -218,7 +218,7 @@ pub async fn register_and_connect_to_server<
             let command = InternalServiceRequest::Connect {
                 username,
                 password,
-                connect_mode: Default::default(),
+                connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
                 udp_mode: Default::default(),
                 keep_alive_timeout: None,
                 session_security_settings,

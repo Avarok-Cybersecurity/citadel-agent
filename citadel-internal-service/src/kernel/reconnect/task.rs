@@ -1,16 +1,14 @@
 //! The SDK side of a reconnect: mark the session, retry per the policy, install the
 //! new channel or give up. Every decision is policy.rs's.
 
+use super::link::put_link;
 use super::policy::{self, DropAction, FailureKind, GiveUp, Next, ReconnectPolicy};
 use super::report::{fail, logged, notify};
-use super::{Credentials, LinkState, LOG_TARGET};
-use crate::kernel::{
-    c2s_reader, create_client_server_remote, group_channels, CitadelWorkspaceService, Connection,
-};
+use super::sign_in;
+use super::{Credentials, Handoff, LinkState, LOG_TARGET};
+use crate::kernel::{group_channels, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
-use citadel_internal_service_types::{
-    InternalServiceResponse, ServerConnectionLost, ServerReconnected,
-};
+use citadel_internal_service_types::{InternalServiceResponse, ServerConnectionLost};
 use citadel_sdk::logging::{info, warn};
 use citadel_sdk::prelude::{
     AuthenticationRequest, CitadelClientServerConnection, NetworkError, ProtocolRemoteExt,
@@ -18,7 +16,6 @@ use citadel_sdk::prelude::{
 };
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
@@ -46,6 +43,7 @@ pub(crate) fn begin<R: Ratchet>(map: &Arc<RwLock<HashMap<u64, Connection<R>>>>, 
         DropAction::Remove => Began::Remove,
         DropAction::Reconnect => {
             conn.link = LinkState::Reconnecting;
+            conn.handoff.next_generation();
             conn.peers.clear();
             // Only the send halves live here, and dropping one sends nothing. The recv
             // half, whose drop sends `LeaveRoom`, is owned by its receiver task and ends
@@ -74,20 +72,58 @@ pub(crate) fn spawn<T: IOInterface + Sync, R: Ratchet>(
             request_id: None,
         }),
     )?;
-    let this = this.clone();
-    drop(tokio::spawn(async move { run(&this, cid).await }));
+    let generation = {
+        let lock = this.server_connection_map.read();
+        lock.get(&cid).map(|conn| conn.handoff.generation())
+    };
+    if let Some(generation) = generation {
+        resume(this, cid, generation);
+    }
     Ok(())
 }
 
-async fn run<T: IOInterface + Sync, R: Ratchet>(this: &CitadelWorkspaceService<T, R>, cid: u64) {
+/// Start reconnect run `generation` for `cid`, telling the UI nothing: it already knows
+/// the session is reconnecting (a takeover that failed hands it back through here).
+pub(crate) fn resume<T: IOInterface + Sync, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    cid: u64,
+    generation: u64,
+) {
+    let this = this.clone();
+    drop(tokio::spawn(
+        async move { run(&this, cid, generation).await },
+    ));
+}
+
+/// The session's handoff, whose attempt lock a takeover takes to wait out an attempt in
+/// flight (see `Handoff`).
+fn attempt_gate<R: Ratchet>(
+    map: &Arc<RwLock<HashMap<u64, Connection<R>>>>,
+    cid: u64,
+) -> Option<Handoff> {
+    map.read().get(&cid).map(|conn| conn.handoff.clone())
+}
+
+async fn run<T: IOInterface + Sync, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    cid: u64,
+    generation: u64,
+) {
     let started = Instant::now();
     let mut attempt: u32 = 0;
     let mut delay = this.reconnect_policy.delay_before(attempt);
     loop {
         tokio::time::sleep(delay).await;
-        let Some((username, credentials)) = still_reconnecting(&this.server_connection_map, cid)
-        else {
+        let Some(gate) = attempt_gate(&this.server_connection_map, cid) else {
             info!(target: LOG_TARGET, "[Reconnect] {cid} was ended while reconnecting; stopping");
+            return;
+        };
+        // Held until this attempt's outcome is installed or discarded.
+        let _attempt = gate.hold_attempts().await;
+        let Some((username, credentials)) =
+            still_reconnecting(&this.server_connection_map, cid, generation)
+        else {
+            info!(target: LOG_TARGET, "[Reconnect] {cid} is no longer this run's to reconnect (ended, signed in to, or handed to a newer run); stopping");
             return;
         };
         let policy = this
@@ -97,7 +133,15 @@ async fn run<T: IOInterface + Sync, R: Ratchet>(this: &CitadelWorkspaceService<T
         let settings = credentials.session_security_settings;
         let failure = match attempt_once(this, &policy, username, credentials).await {
             Ok(connected) if connected.cid == cid => {
-                return install(this, cid, connected, settings, connect_request_id).await;
+                return install(
+                    this,
+                    cid,
+                    generation,
+                    connected,
+                    settings,
+                    connect_request_id,
+                )
+                .await;
             }
             Ok(connected) => {
                 // Should be impossible (a CID is permanent per account); never adopt it.
@@ -109,6 +153,7 @@ async fn run<T: IOInterface + Sync, R: Ratchet>(this: &CitadelWorkspaceService<T
                 return fail(
                     this,
                     cid,
+                    generation,
                     format!("the server answered as {}", connected.cid),
                 );
             }
@@ -123,7 +168,7 @@ async fn run<T: IOInterface + Sync, R: Ratchet>(this: &CitadelWorkspaceService<T
                 attempt = attempt.saturating_add(1);
                 delay = next;
             }
-            Next::GiveUp(GiveUp::Refused) => return fail(this, cid, message),
+            Next::GiveUp(GiveUp::Refused) => return fail(this, cid, generation, message),
             Next::GiveUp(GiveUp::OutOfTime) => {
                 let budget = policy.limit(kind);
                 let reason = match kind {
@@ -134,7 +179,7 @@ async fn run<T: IOInterface + Sync, R: Ratchet>(this: &CitadelWorkspaceService<T
                         format!("no answer from the server in {budget:?}: {message}")
                     }
                 };
-                return fail(this, cid, reason);
+                return fail(this, cid, generation, reason);
             }
         }
     }
@@ -143,10 +188,12 @@ async fn run<T: IOInterface + Sync, R: Ratchet>(this: &CitadelWorkspaceService<T
 fn still_reconnecting<R: Ratchet>(
     map: &Arc<RwLock<HashMap<u64, Connection<R>>>>,
     cid: u64,
+    generation: u64,
 ) -> Option<(String, Credentials)> {
     let lock = map.read();
     let conn = lock.get(&cid)?;
-    (conn.link == LinkState::Reconnecting).then(|| (conn.username.clone(), conn.reconnect.clone()))
+    sign_in::attempt_wanted(conn.link, conn.handoff.generation(), generation)
+        .then(|| (conn.username.clone(), conn.reconnect.clone()))
 }
 
 async fn attempt_once<T: IOInterface + Sync, R: Ratchet>(
@@ -157,7 +204,10 @@ async fn attempt_once<T: IOInterface + Sync, R: Ratchet>(
 ) -> Result<CitadelClientServerConnection<R>, NetworkError> {
     let connect = this.remote().connect(
         AuthenticationRequest::credentialed(username, credentials.password),
-        credentials.connect_mode,
+        crate::kernel::requests::connect_mode::server_connect_mode(
+            credentials.connect_mode,
+            crate::kernel::requests::connect_mode::LoginOrigin::AutomaticReconnect,
+        ),
         credentials.udp_mode,
         credentials.keep_alive_timeout,
         credentials.session_security_settings,
@@ -172,46 +222,20 @@ async fn attempt_once<T: IOInterface + Sync, R: Ratchet>(
 async fn install<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     cid: u64,
+    generation: u64,
     connected: CitadelClientServerConnection<R>,
     settings: citadel_sdk::prelude::SessionSecuritySettings,
     connect_request_id: Uuid,
 ) {
-    let (sink, stream) = connected.split();
-    let remote = create_client_server_remote(stream.vconn_type, this.remote().clone(), settings);
-    let installed = {
-        let mut lock = this.server_connection_map.write();
-        match lock.get_mut(&cid) {
-            Some(conn) if conn.link == LinkState::Reconnecting => {
-                conn.sink_to_server = Arc::new(tokio::sync::Mutex::new(sink));
-                conn.client_server_remote = remote.clone();
-                conn.link = LinkState::Up;
-                Some(conn.associated_localhost_connection.load(Ordering::Relaxed))
-            }
-            _ => None,
-        }
+    // A sign-in that began taking over while this attempt was in flight is still waiting
+    // for it: the session this attempt opened is the one it wants, so it is adopted, and
+    // the sign-in finds the entry `Up` (reconnect/takeover.rs).
+    let admit = |conn: &mut Connection<R>| {
+        sign_in::attempt_installs(conn.link, conn.handoff.generation(), generation)
     };
-    let Some(tcp_uuid) = installed else {
-        // Ended while this attempt was in flight: the session it opened has no owner.
-        info!(target: LOG_TARGET, "[Reconnect] {cid} was ended mid-attempt; closing the new link");
-        logged(cid, "closing an unowned link", remote.disconnect().await);
-        return;
-    };
-    c2s_reader::spawn(
-        this.server_connection_map.clone(),
-        this.tx_to_localhost_clients.clone(),
-        cid,
-        stream,
-        connect_request_id,
-        tcp_uuid,
-    );
-    info!(target: LOG_TARGET, "[Reconnect] {cid} is back");
-    let sent = notify(
-        this,
-        cid,
-        InternalServiceResponse::ServerReconnected(ServerReconnected {
-            cid,
-            request_id: None,
-        }),
-    );
-    logged(cid, "sending ServerReconnected", sent);
+    if put_link(this, cid, connected, settings, connect_request_id, admit).await {
+        info!(target: LOG_TARGET, "[Reconnect] {cid} is back");
+    } else {
+        info!(target: LOG_TARGET, "[Reconnect] {cid} was ended mid-attempt; closed the new link");
+    }
 }

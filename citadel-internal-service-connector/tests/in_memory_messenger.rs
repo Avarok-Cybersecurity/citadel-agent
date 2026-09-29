@@ -47,7 +47,9 @@ mod tests {
         let connect_request = InternalServiceRequest::Connect {
             username: "test_user".to_string(),
             password: vec![].into(), // SecBuffer
-            connect_mode: Default::default(),
+            connect_mode: citadel_internal_service_types::ConnectMode::Standard {
+                force_login: false,
+            },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
             session_security_settings: Default::default(),
@@ -89,7 +91,9 @@ mod tests {
         let connect_req = InternalServiceRequest::Connect {
             username: "test".to_string(),
             password: vec![].into(),
-            connect_mode: Default::default(),
+            connect_mode: citadel_internal_service_types::ConnectMode::Standard {
+                force_login: false,
+            },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
             session_security_settings: Default::default(),

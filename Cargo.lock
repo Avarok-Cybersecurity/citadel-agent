@@ -274,7 +274,7 @@ dependencies = [
 [[package]]
 name = "async_ip"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#58fd47a7455fcf1cd4c92e235f803e8a38809c27"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#db3e482e096838b878fc84207c018c3db2e020ec"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -783,7 +783,7 @@ dependencies = [
 [[package]]
 name = "citadel_crypt"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#58fd47a7455fcf1cd4c92e235f803e8a38809c27"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#db3e482e096838b878fc84207c018c3db2e020ec"
 dependencies = [
  "arrayvec",
  "async-trait",
@@ -816,7 +816,7 @@ dependencies = [
 [[package]]
 name = "citadel_io"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#58fd47a7455fcf1cd4c92e235f803e8a38809c27"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#db3e482e096838b878fc84207c018c3db2e020ec"
 dependencies = [
  "bytes",
  "citadel_io_macros",
@@ -838,7 +838,7 @@ dependencies = [
 [[package]]
 name = "citadel_io_macros"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#58fd47a7455fcf1cd4c92e235f803e8a38809c27"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#db3e482e096838b878fc84207c018c3db2e020ec"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -848,7 +848,7 @@ dependencies = [
 [[package]]
 name = "citadel_logging"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#58fd47a7455fcf1cd4c92e235f803e8a38809c27"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#db3e482e096838b878fc84207c018c3db2e020ec"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -857,7 +857,7 @@ dependencies = [
 [[package]]
 name = "citadel_media"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#58fd47a7455fcf1cd4c92e235f803e8a38809c27"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#db3e482e096838b878fc84207c018c3db2e020ec"
 dependencies = [
  "bytes",
 ]
@@ -865,7 +865,7 @@ dependencies = [
 [[package]]
 name = "citadel_pqcrypto"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#58fd47a7455fcf1cd4c92e235f803e8a38809c27"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#db3e482e096838b878fc84207c018c3db2e020ec"
 dependencies = [
  "aes-gcm",
  "ascon-aead",
@@ -893,7 +893,7 @@ dependencies = [
 [[package]]
 name = "citadel_proto"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#58fd47a7455fcf1cd4c92e235f803e8a38809c27"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#db3e482e096838b878fc84207c018c3db2e020ec"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -936,7 +936,7 @@ dependencies = [
 [[package]]
 name = "citadel_sdk"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#58fd47a7455fcf1cd4c92e235f803e8a38809c27"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#db3e482e096838b878fc84207c018c3db2e020ec"
 dependencies = [
  "anyhow",
  "bytes",
@@ -973,7 +973,7 @@ dependencies = [
 [[package]]
 name = "citadel_treekem"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#58fd47a7455fcf1cd4c92e235f803e8a38809c27"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#db3e482e096838b878fc84207c018c3db2e020ec"
 dependencies = [
  "arrayvec",
  "bincode",
@@ -991,7 +991,7 @@ dependencies = [
 [[package]]
 name = "citadel_types"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#58fd47a7455fcf1cd4c92e235f803e8a38809c27"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#db3e482e096838b878fc84207c018c3db2e020ec"
 dependencies = [
  "bincode",
  "bytes",
@@ -1010,7 +1010,7 @@ dependencies = [
 [[package]]
 name = "citadel_user"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#58fd47a7455fcf1cd4c92e235f803e8a38809c27"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#db3e482e096838b878fc84207c018c3db2e020ec"
 dependencies = [
  "async-trait",
  "bincode",
@@ -1036,7 +1036,7 @@ dependencies = [
 [[package]]
 name = "citadel_wire"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#58fd47a7455fcf1cd4c92e235f803e8a38809c27"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#db3e482e096838b878fc84207c018c3db2e020ec"
 dependencies = [
  "anyhow",
  "async-trait-with-sync",
@@ -1563,7 +1563,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2365,7 +2365,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi 0.5.2",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2751,7 +2751,7 @@ dependencies = [
 [[package]]
 name = "netbeam"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#58fd47a7455fcf1cd4c92e235f803e8a38809c27"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#db3e482e096838b878fc84207c018c3db2e020ec"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3367,7 +3367,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3686,7 +3686,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3752,7 +3752,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4244,10 +4244,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0136791f7c95b1f6dd99f9cc786b91bb81c3800b639b3478e561ddb7be95e5f1"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.1",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5148,7 +5148,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

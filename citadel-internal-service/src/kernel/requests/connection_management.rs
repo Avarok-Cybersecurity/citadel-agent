@@ -237,7 +237,7 @@ async fn disconnect_orphan<T: IOInterface, R: Ratchet>(
                         .associated_localhost_connection
                         .load(Ordering::Relaxed);
                     removed.push(DisconnectedConnection::C2S {
-                        connection,
+                        connection: Box::new(connection),
                         cid: session_cid,
                         tcp_uuid,
                     });
@@ -279,7 +279,7 @@ async fn disconnect_orphan<T: IOInterface, R: Ratchet>(
                         .associated_localhost_connection
                         .load(Ordering::Relaxed);
                     removed.push(DisconnectedConnection::C2S {
-                        connection,
+                        connection: Box::new(connection),
                         cid,
                         tcp_uuid,
                     });

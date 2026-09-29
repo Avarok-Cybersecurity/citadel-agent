@@ -122,14 +122,34 @@ pub async fn connect(
     stream: &mut Stream,
     username: &str,
 ) -> Result<InternalServiceResponse, Box<dyn Error>> {
+    connect_with_password(sink, stream, username, PASSWORD).await
+}
+
+/// A sign-in with `password`, which may be wrong.
+pub async fn connect_with_password(
+    sink: &mut WrappedSink<TcpIOInterface>,
+    stream: &mut Stream,
+    username: &str,
+    password: &str,
+) -> Result<InternalServiceResponse, Box<dyn Error>> {
+    Ok(connect_observing(sink, stream, username, password).await?.0)
+}
+
+/// A sign-in, and every link notification that arrived before its answer.
+pub async fn connect_observing(
+    sink: &mut WrappedSink<TcpIOInterface>,
+    stream: &mut Stream,
+    username: &str,
+    password: &str,
+) -> Result<(InternalServiceResponse, Vec<String>), Box<dyn Error>> {
     let request_id = Uuid::new_v4();
     common::send(
         sink,
         InternalServiceRequest::Connect {
             request_id,
             username: username.to_string(),
-            password: PASSWORD.as_bytes().to_vec().into(),
-            connect_mode: Default::default(),
+            password: password.as_bytes().to_vec().into(),
+            connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
             session_security_settings: Default::default(),
@@ -137,10 +157,15 @@ pub async fn connect(
         },
     )
     .await?;
-    expect(stream, |response| {
+    let mut seen = Vec::new();
+    let answer = expect(stream, |response| {
+        if let Some(event) = any_link_event(&response) {
+            seen.push(event);
+        }
         (response.request_id() == Some(&request_id)).then_some(response)
     })
-    .await
+    .await?;
+    Ok((answer, seen))
 }
 
 /// The server answers over the session: proof the SDK session is live again.
@@ -206,4 +231,16 @@ fn link_event(response: &InternalServiceResponse, cid: u64) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// A link notification for any session.
+fn any_link_event(response: &InternalServiceResponse) -> Option<String> {
+    let cid = match response {
+        InternalServiceResponse::ServerConnectionLost(r) => r.cid,
+        InternalServiceResponse::ServerReconnected(r) => r.cid,
+        InternalServiceResponse::ServerReconnectFailed(r) => r.cid,
+        InternalServiceResponse::DisconnectNotification(r) => r.cid,
+        _ => return None,
+    };
+    link_event(response, cid)
 }

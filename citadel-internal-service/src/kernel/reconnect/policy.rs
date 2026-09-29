@@ -91,7 +91,8 @@ pub enum DropAction {
 pub fn on_unrequested_drop(link: LinkState) -> DropAction {
     match link {
         LinkState::Up => DropAction::Reconnect,
-        LinkState::Reconnecting => DropAction::AlreadyReconnecting,
+        // During a takeover the drops reported are the stopped reconnect's own attempts.
+        LinkState::Reconnecting | LinkState::SigningIn => DropAction::AlreadyReconnecting,
         LinkState::Ending => DropAction::Remove,
     }
 }
@@ -103,7 +104,7 @@ pub fn on_unrequested_drop(link: LinkState) -> DropAction {
 /// absence as death, removed the session and so stopped its reconnect -- a page
 /// reloaded during a server drop signed its user out.
 pub fn claim_requires_sdk_session(link: LinkState) -> bool {
-    link != LinkState::Reconnecting
+    !matches!(link, LinkState::Reconnecting | LinkState::SigningIn)
 }
 
 impl ReconnectPolicy {

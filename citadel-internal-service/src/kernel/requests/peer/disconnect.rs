@@ -36,14 +36,16 @@ const SDK_DISCONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub enum DisconnectedConnection<R: Ratchet> {
     /// C2S session - the Connection contains the target-locked ClientServerRemote
     C2S {
-        connection: Connection<R>,
+        /// Boxed, as is the peer connection below: each is hundreds of bytes, and
+        /// unboxed the enum was as large as the larger for every value of either.
+        connection: Box<Connection<R>>,
         cid: u64,
         tcp_uuid: Uuid,
     },
     /// P2P peer connection
     P2P {
         #[allow(dead_code)] // Kept alive for RAII - prevents Drop during SDK disconnect
-        peer_connection: PeerConnection<R>,
+        peer_connection: Box<PeerConnection<R>>,
         cid: u64,
         peer_cid: u64,
         tcp_uuid: Uuid,
@@ -149,7 +151,7 @@ pub fn cleanup_state<R: Ratchet>(
                     "[cleanup_state] Removed peer {target_cid} from session {cid}"
                 );
                 return Some(DisconnectedConnection::P2P {
-                    peer_connection: peer_conn,
+                    peer_connection: Box::new(peer_conn),
                     cid,
                     peer_cid: target_cid,
                     tcp_uuid,
@@ -180,7 +182,7 @@ pub fn cleanup_state<R: Ratchet>(
                 remaining_keys
             );
             return Some(DisconnectedConnection::C2S {
-                connection: conn,
+                connection: Box::new(conn),
                 cid,
                 tcp_uuid,
             });

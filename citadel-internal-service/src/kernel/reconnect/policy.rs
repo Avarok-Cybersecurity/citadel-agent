@@ -3,6 +3,7 @@
 
 use crate::kernel::reconnect::LinkState;
 use citadel_io::ErrorCode;
+use citadel_proto::constants::{KEEP_ALIVE_INTERVAL_MS, KEEP_ALIVE_TIMEOUT_NS};
 use std::time::Duration;
 
 /// How a session whose server dropped it is brought back.
@@ -15,6 +16,10 @@ pub struct ReconnectPolicy {
     pub give_up_after: Duration,
     /// One attempt that has not answered by then counts as a transient failure.
     pub attempt_timeout: Duration,
+    /// How long after the drop the server may still hold the session that dropped, and
+    /// so refuse every attempt as "already connected". While it says so, attempts go on
+    /// this long instead of `give_up_after`. See `ServerHoldsSession`.
+    pub server_holds_session_for: Duration,
 }
 
 /// The policy the agent runs. A deploy resets every socket at once and is back in
@@ -24,7 +29,21 @@ pub const SERVER_RECONNECT: ReconnectPolicy = ReconnectPolicy {
     max_delay: Duration::from_secs(30),
     give_up_after: Duration::from_secs(600),
     attempt_timeout: Duration::from_secs(30),
+    server_holds_session_for: server_session_expiry(SDK_KEEP_ALIVE_TIMEOUT),
 };
+
+/// The keep-alive timeout a session gets when its Connect names none.
+const SDK_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_nanos(KEEP_ALIVE_TIMEOUT_NS as u64);
+
+/// How often a server checks a session's keep-alives.
+const SDK_KEEP_ALIVE_CHECK: Duration = Duration::from_millis(KEEP_ALIVE_INTERVAL_MS);
+
+/// The latest a server ends a session whose keep-alives stopped: its checker runs once
+/// per period and ends the session only once the last keep-alive is older than the
+/// timeout, so up to one period past it. With the SDK's defaults that is an hour.
+const fn server_session_expiry(keep_alive_timeout: Duration) -> Duration {
+    keep_alive_timeout.saturating_add(SDK_KEEP_ALIVE_CHECK)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailureKind {
@@ -32,7 +51,19 @@ pub enum FailureKind {
     Refused,
     /// The server is unreachable or not ready yet.
     Transient,
+    /// The server still holds this account's session -- the one that dropped -- and
+    /// refuses a second. It happens when only this side saw the link die: a reset that
+    /// never reached the server leaves its end open, and it keeps the session until its
+    /// keep-alive check ends it, up to an hour later. Every attempt until then is
+    /// refused, and giving up after ten minutes removed a session the server was
+    /// about to let go of: measured live, the account's chip vanished and nothing
+    /// brought it back.
+    ServerHoldsSession,
 }
+
+/// How the SDK's server words a refusal of a second session for a CID it holds. The
+/// SDK has no error code for it, so it is known by this lead (see `states`).
+pub(crate) const SERVER_HOLDS_SESSION: &str = "Session Already Connected";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Next {
@@ -90,10 +121,37 @@ impl ReconnectPolicy {
             return Next::GiveUp(GiveUp::Refused);
         }
         let delay = self.delay_before(attempt.saturating_add(1));
-        if elapsed.saturating_add(delay) > self.give_up_after {
+        if elapsed.saturating_add(delay) > self.limit(kind) {
             return Next::GiveUp(GiveUp::OutOfTime);
         }
         Next::RetryAfter(delay)
+    }
+
+    /// How long after the drop attempts may still start, given how the last one failed.
+    pub fn limit(&self, kind: FailureKind) -> Duration {
+        match kind {
+            FailureKind::ServerHoldsSession => {
+                self.give_up_after.max(self.server_holds_session_for)
+            }
+            FailureKind::Refused | FailureKind::Transient => self.give_up_after,
+        }
+    }
+
+    /// This policy for a session whose Connect named `keep_alive_timeout`: the server
+    /// holds a dead session by that session's own keep-alive, not the default one.
+    pub fn for_keep_alive(self, keep_alive_timeout: Option<Duration>) -> Self {
+        let server_holds_session_for = match keep_alive_timeout {
+            None => return self,
+            // Zero turns keep-alives off, so the server never ends a dead session on
+            // its own: there is no expiry to wait for, and the usual limit stands.
+            Some(timeout) if timeout.as_secs() == 0 => Duration::ZERO,
+            // The SDK sends whole seconds.
+            Some(timeout) => server_session_expiry(Duration::from_secs(timeout.as_secs())),
+        };
+        Self {
+            server_holds_session_for,
+            ..self
+        }
     }
 }
 
@@ -121,6 +179,9 @@ pub fn classify(code: ErrorCode, message: &str) -> FailureKind {
     if REFUSALS.contains(&code) {
         return FailureKind::Refused;
     }
+    if states(message, SERVER_HOLDS_SESSION) {
+        return FailureKind::ServerHoldsSession;
+    }
     if matches!(code, ErrorCode::RemoteConnectFailed | ErrorCode::Generic)
         && REFUSALS
             .iter()
@@ -144,9 +205,8 @@ fn renders(form: &str, message: &str) -> bool {
         Some((first, rest)) if !first.is_empty() => (*first, rest),
         _ => return false,
     };
-    let after_separator = message.match_indices(": ").map(|(at, sep)| at + sep.len());
-    std::iter::once(0).chain(after_separator).any(|start| {
-        let Some(mut rest) = message[start..].strip_prefix(first) else {
+    clauses(message).any(|clause| {
+        let Some(mut rest) = clause.strip_prefix(first) else {
             return false;
         };
         // Each later part follows a placeholder, which must hold something.
@@ -165,4 +225,18 @@ fn renders(form: &str, message: &str) -> bool {
         }
         true
     })
+}
+
+/// Whether `message` leads with `lead`, at its start or right after a `": "`.
+fn states(message: &str, lead: &str) -> bool {
+    clauses(message).any(|clause| clause.starts_with(lead))
+}
+
+/// `message` from its start and from after each `": "`, where a server's own reason
+/// may prefix the error it forwards.
+fn clauses(message: &str) -> impl Iterator<Item = &str> {
+    let after_separator = message.match_indices(": ").map(|(at, sep)| at + sep.len());
+    std::iter::once(0)
+        .chain(after_separator)
+        .map(move |start| &message[start..])
 }

@@ -17,6 +17,7 @@
 //! - `requests/peer/disconnect.rs`: User-initiated (outbound) disconnect - calls SDK then cleans state
 //! - `responses/disconnect.rs` (this file): SDK-initiated (inbound) C2S disconnect event
 
+use crate::kernel::reconnect::policy::SERVER_HOLDS_SESSION;
 use crate::kernel::reconnect::task::{self, Began};
 use crate::kernel::requests::peer::{cleanup_state, DisconnectedConnection};
 use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
@@ -31,8 +32,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     // If disconnect is due to a rejected connection attempt, the existing session should remain valid.
     // These are cases where a duplicate/failed connection attempt was rejected,
     // but the original session is still active and shouldn't be removed.
-    let rejected_connection_messages =
-        ["Session Already Connected", "Preconnect signalled to halt"];
+    let rejected_connection_messages = [SERVER_HOLDS_SESSION, "Preconnect signalled to halt"];
 
     if let Some(reject_msg) = rejected_connection_messages
         .iter()

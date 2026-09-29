@@ -3,6 +3,8 @@ pub mod stun;
 
 pub use stun::StunServers;
 
+pub use kernel::reconnect::policy::{ReconnectPolicy, SERVER_RECONNECT};
+
 // Re-export the browser-transfer startup sweep so the binary entrypoint
 // can call it before the runtime spins up, without exposing the full
 // internal `requests::file` module.

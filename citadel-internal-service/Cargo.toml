@@ -20,6 +20,9 @@ deadlock-detection = []
 citadel_sdk = { workspace = true, features=["multi-threaded"] }
 # `ErrorCode`: which failed reconnects are refusals (kernel/reconnect/policy.rs).
 citadel_io = { workspace = true }
+# The keep-alive constants that bound how long a server holds a dead session
+# (kernel/reconnect/policy.rs), from the SDK rather than copied.
+citadel_proto = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt", "macros"] }
 bincode2 = { workspace = true }
 citadel-internal-service-types = { workspace = true }

@@ -88,6 +88,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     /// Tracks usernames currently being connected to prevent duplicate concurrent connection attempts.
     /// This prevents TOCTOU race conditions where two Connect requests arrive simultaneously.
     pub connecting_usernames: Arc<Mutex<HashSet<String>>>,
+    /// How a session its server dropped is brought back (kernel/reconnect).
+    pub(crate) reconnect_policy: reconnect::policy::ReconnectPolicy,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -103,6 +105,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             pending_peer_registrations: self.pending_peer_registrations.clone(),
             peer_username_cache: self.peer_username_cache.clone(),
             connecting_usernames: self.connecting_usernames.clone(),
+            reconnect_policy: self.reconnect_policy,
             io: self.io.clone(),
         }
     }
@@ -120,6 +123,7 @@ impl<T: IOInterface, R: Ratchet> From<T> for CitadelWorkspaceService<T, R> {
             pending_peer_registrations: Arc::new(RwLock::new(Default::default())),
             peer_username_cache: Arc::new(RwLock::new(Default::default())),
             connecting_usernames: Arc::new(Mutex::new(HashSet::new())),
+            reconnect_policy: reconnect::policy::SERVER_RECONNECT,
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -128,6 +132,12 @@ impl<T: IOInterface, R: Ratchet> From<T> for CitadelWorkspaceService<T, R> {
 impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
     pub fn new(io: T) -> Self {
         io.into()
+    }
+
+    /// Reconnect dropped sessions by `policy` instead of `SERVER_RECONNECT`.
+    pub fn with_reconnect_policy(mut self, policy: reconnect::policy::ReconnectPolicy) -> Self {
+        self.reconnect_policy = policy;
+        self
     }
 
     pub fn remote(&self) -> &NodeRemote<R> {

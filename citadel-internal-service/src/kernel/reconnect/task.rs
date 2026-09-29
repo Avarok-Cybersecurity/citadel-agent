@@ -1,7 +1,7 @@
 //! The SDK side of a reconnect: mark the session, retry per the policy, install the
 //! new channel or give up. Every decision is policy.rs's.
 
-use super::policy::{self, DropAction, GiveUp, Next, SERVER_RECONNECT};
+use super::policy::{self, DropAction, FailureKind, GiveUp, Next, ReconnectPolicy};
 use super::report::{fail, logged, notify};
 use super::{Credentials, LinkState};
 use crate::kernel::{
@@ -82,7 +82,7 @@ pub(crate) fn spawn<T: IOInterface + Sync, R: Ratchet>(
 async fn run<T: IOInterface + Sync, R: Ratchet>(this: &CitadelWorkspaceService<T, R>, cid: u64) {
     let started = Instant::now();
     let mut attempt: u32 = 0;
-    let mut delay = SERVER_RECONNECT.delay_before(attempt);
+    let mut delay = this.reconnect_policy.delay_before(attempt);
     loop {
         tokio::time::sleep(delay).await;
         let Some((username, credentials)) = still_reconnecting(&this.server_connection_map, cid)
@@ -90,9 +90,12 @@ async fn run<T: IOInterface + Sync, R: Ratchet>(this: &CitadelWorkspaceService<T
             info!(target: "citadel", "[Reconnect] {cid} was ended while reconnecting; stopping");
             return;
         };
+        let policy = this
+            .reconnect_policy
+            .for_keep_alive(credentials.keep_alive_timeout);
         let connect_request_id = credentials.connect_request_id;
         let settings = credentials.session_security_settings;
-        let failure = match attempt_once(this, username, credentials).await {
+        let failure = match attempt_once(this, &policy, username, credentials).await {
             Ok(connected) if connected.cid == cid => {
                 return install(this, cid, connected, settings, connect_request_id).await;
             }
@@ -115,19 +118,23 @@ async fn run<T: IOInterface + Sync, R: Ratchet>(this: &CitadelWorkspaceService<T
         let message = failure.into_string();
         let kind = policy::classify(code, &message);
         warn!(target: "citadel", "[Reconnect] attempt {attempt} for {cid} failed ({kind:?}, {code:?}): {message}");
-        match SERVER_RECONNECT.after_failure(attempt, started.elapsed(), kind) {
+        match policy.after_failure(attempt, started.elapsed(), kind) {
             Next::RetryAfter(next) => {
                 attempt = attempt.saturating_add(1);
                 delay = next;
             }
             Next::GiveUp(GiveUp::Refused) => return fail(this, cid, message),
             Next::GiveUp(GiveUp::OutOfTime) => {
-                let budget = SERVER_RECONNECT.give_up_after;
-                return fail(
-                    this,
-                    cid,
-                    format!("no answer from the server in {budget:?}: {message}"),
-                );
+                let budget = policy.limit(kind);
+                let reason = match kind {
+                    FailureKind::ServerHoldsSession => {
+                        format!("the server still held the previous session after {budget:?}: {message}")
+                    }
+                    FailureKind::Refused | FailureKind::Transient => {
+                        format!("no answer from the server in {budget:?}: {message}")
+                    }
+                };
+                return fail(this, cid, reason);
             }
         }
     }
@@ -144,6 +151,7 @@ fn still_reconnecting<R: Ratchet>(
 
 async fn attempt_once<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
+    policy: &ReconnectPolicy,
     username: String,
     credentials: Credentials,
 ) -> Result<CitadelClientServerConnection<R>, NetworkError> {
@@ -155,11 +163,9 @@ async fn attempt_once<T: IOInterface + Sync, R: Ratchet>(
         credentials.session_security_settings,
         credentials.server_password,
     );
-    match tokio::time::timeout(SERVER_RECONNECT.attempt_timeout, connect).await {
+    match tokio::time::timeout(policy.attempt_timeout, connect).await {
         Ok(result) => result,
-        Err(_) => Err(NetworkError::timeout(
-            SERVER_RECONNECT.attempt_timeout.as_secs(),
-        )),
+        Err(_) => Err(NetworkError::timeout(policy.attempt_timeout.as_secs())),
     }
 }
 

@@ -144,10 +144,6 @@ fn a_server_without_the_account_is_a_refusal() {
 fn an_unreachable_or_busy_server_is_transient() {
     let remote = ErrorCode::RemoteConnectFailed;
     assert_eq!(
-        classify(remote, "Session Already Connected"),
-        FailureKind::Transient
-    );
-    assert_eq!(
         classify(ErrorCode::RemoteKernelStreamDied, "connect"),
         FailureKind::Transient
     );

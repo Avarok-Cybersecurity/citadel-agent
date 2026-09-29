@@ -20,6 +20,8 @@ pub(crate) mod policy;
 #[cfg(test)]
 mod policy_tests;
 mod report;
+#[cfg(test)]
+mod stale_session_tests;
 pub(crate) mod task;
 
 use citadel_sdk::prelude::{

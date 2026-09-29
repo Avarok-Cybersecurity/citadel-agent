@@ -165,8 +165,10 @@ async fn a_login_while_reconnecting_waits_for_the_same_session() -> Result<(), B
         "lost(reconnecting=true)"
     );
 
-    // A tab reloading mid-reconnect logs in again. That must not start a second SDK
-    // connect for the account: it is told the session exists, and nothing is replaced.
+    // A tab reloading mid-reconnect logs in again. That must not run a second SDK connect
+    // beside the reconnect, nor send the page to the sign-in form: the sign-in stops the
+    // reconnect and tries once itself, cannot reach the server, hands the session back to
+    // the reconnect and is told the session exists.
     let login = connect(&mut sink, &mut stream, &name).await?;
     assert!(
         matches!(login, InternalServiceResponse::SessionAlreadyActive(ref s) if s.cid == cid),

@@ -266,6 +266,7 @@ pub struct Connection<R: Ratchet> {
     /// In memory only. See kernel/reconnect/mod.rs.
     pub(crate) reconnect: reconnect::Credentials,
     pub(crate) link: reconnect::LinkState,
+    pub(crate) handoff: reconnect::Handoff,
 }
 
 #[allow(dead_code)]
@@ -340,6 +341,7 @@ impl<R: Ratchet> Connection<R> {
             credential_fingerprint,
             reconnect,
             link: reconnect::LinkState::Up,
+            handoff: reconnect::Handoff::default(),
         }
     }
 

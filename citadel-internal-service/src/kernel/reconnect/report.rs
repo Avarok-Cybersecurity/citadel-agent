@@ -14,14 +14,21 @@ use std::sync::atomic::Ordering;
 pub(super) fn fail<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     cid: u64,
+    generation: u64,
     reason: String,
 ) {
     // Checked and removed under one lock: a user Disconnect that got here first owns
-    // the answer, and this says nothing.
+    // the answer, and this says nothing; so does a sign-in taking the session over,
+    // and a newer reconnect run.
     let removed = {
         let mut lock = this.server_connection_map.write();
         match lock.get(&cid) {
-            Some(conn) if conn.link == LinkState::Reconnecting => lock.remove(&cid),
+            Some(conn)
+                if conn.link == LinkState::Reconnecting
+                    && conn.handoff.generation() == generation =>
+            {
+                lock.remove(&cid)
+            }
             _ => None,
         }
     };

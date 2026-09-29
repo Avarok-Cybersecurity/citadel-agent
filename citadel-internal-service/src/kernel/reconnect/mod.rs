@@ -16,6 +16,7 @@
 //!
 //! policy.rs decides (pure, tested); task.rs does the SDK I/O.
 
+mod link;
 pub(crate) mod policy;
 
 /// The log target of a session's link to its server: the drop, each attempt, the
@@ -27,13 +28,17 @@ pub const LOG_TARGET: &str = "citadel::reconnect";
 #[cfg(test)]
 mod policy_tests;
 mod report;
+pub(crate) mod sign_in;
 #[cfg(test)]
 mod stale_session_tests;
+pub(crate) mod takeover;
 pub(crate) mod task;
 
 use citadel_sdk::prelude::{
     ConnectMode, PreSharedKey, SecBuffer, SessionSecuritySettings, UdpMode,
 };
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -45,6 +50,50 @@ pub enum LinkState {
     Reconnecting,
     /// The user is ending it; a drop now is expected.
     Ending,
+    /// A user's sign-in is taking a reconnect over (reconnect/takeover.rs). The reconnect
+    /// stops at its next check, and the sign-in owns the outcome: nothing else installs a
+    /// link into the entry or removes it for a failed attempt.
+    SigningIn,
+}
+
+/// What lets a sign-in stop the reconnect without ever running a second SDK connect for
+/// the account beside it.
+///
+/// The reconnect holds `attempt` for the whole of each attempt, from checking that it is
+/// still wanted to installing or discarding what the attempt produced; a takeover marks the
+/// entry `SigningIn` first and then takes `attempt`, so it waits out an attempt in flight
+/// and every later check sees the mark. `generation` names the reconnect run that is
+/// wanted: a takeover that fails hands the session back to a NEW run, and an older one,
+/// asleep between attempts, sees the number moved and stops instead of running beside it.
+///
+/// One pointer wide: it lives on every `Connection`, whose size several enums carry.
+#[derive(Clone, Default)]
+pub struct Handoff(Arc<HandoffState>);
+
+#[derive(Default)]
+struct HandoffState {
+    attempt: tokio::sync::Mutex<()>,
+    generation: AtomicU64,
+}
+
+impl Handoff {
+    /// Wait for no attempt to be in flight, and keep it so while the guard lives.
+    pub(crate) async fn hold_attempts(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.0.attempt.lock().await
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.0.generation.load(Ordering::SeqCst)
+    }
+
+    /// Start a new reconnect run; any older one stops at its next check. Called under
+    /// the map's write lock, like every change of the link state it goes with.
+    pub(crate) fn next_generation(&self) -> u64 {
+        self.0
+            .generation
+            .fetch_add(1, Ordering::SeqCst)
+            .wrapping_add(1)
+    }
 }
 
 /// What a session was opened with, so it can be opened again the same way. The

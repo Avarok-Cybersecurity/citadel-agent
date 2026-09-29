@@ -110,7 +110,7 @@ async fn the_host_survives_an_agent_restart() -> Result<(), Box<dyn Error>> {
                 request_id: Uuid::new_v4(),
                 username: name.clone(),
                 password: PASSWORD.as_bytes().to_vec().into(),
-                connect_mode: Default::default(),
+                connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
                 udp_mode: Default::default(),
                 keep_alive_timeout: None,
                 session_security_settings: Default::default(),

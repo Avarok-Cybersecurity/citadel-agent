@@ -48,6 +48,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     else {
         unreachable!("Should never happen if programmed properly")
     };
+    let connect_mode = crate::kernel::requests::connect_mode::server_connect_mode(
+        connect_mode,
+        crate::kernel::requests::connect_mode::LoginOrigin::UserSignIn,
+    );
     let remote = this.remote();
 
     // The SDK takes ownership of the password when it carries it to the server,

@@ -20,6 +20,7 @@ pub(crate) struct HandledRequestResult {
 }
 
 mod connect;
+pub(crate) mod connect_mode;
 mod deregister;
 mod disconnect;
 mod get_account_information;

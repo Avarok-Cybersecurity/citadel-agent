@@ -157,7 +157,10 @@ async fn attempt_once<T: IOInterface + Sync, R: Ratchet>(
 ) -> Result<CitadelClientServerConnection<R>, NetworkError> {
     let connect = this.remote().connect(
         AuthenticationRequest::credentialed(username, credentials.password),
-        credentials.connect_mode,
+        crate::kernel::requests::connect_mode::server_connect_mode(
+            credentials.connect_mode,
+            crate::kernel::requests::connect_mode::LoginOrigin::AutomaticReconnect,
+        ),
         credentials.udp_mode,
         credentials.keep_alive_timeout,
         credentials.session_security_settings,

@@ -25,7 +25,7 @@ use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
 use citadel_sdk::logging::info;
-use citadel_sdk::prelude::{ProtocolRemoteExt, Ratchet};
+use citadel_sdk::prelude::{ConnectMode, ProtocolRemoteExt, Ratchet};
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
@@ -154,7 +154,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     password: proposed_password,
                     keep_alive_timeout: None,
                     udp_mode: Default::default(),
-                    connect_mode: Default::default(),
+                    // The Connect handler sets force_login by origin (requests/connect_mode.rs).
+                    connect_mode: ConnectMode::Standard { force_login: false },
                     session_security_settings,
                     request_id,
                     server_password,

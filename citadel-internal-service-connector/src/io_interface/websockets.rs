@@ -613,7 +613,9 @@ mod tests {
             request_id,
             username: "test_user".to_string(),
             password: SecBuffer::from(b"password".to_vec()),
-            connect_mode: Default::default(),
+            connect_mode: citadel_internal_service_types::ConnectMode::Standard {
+                force_login: false,
+            },
             udp_mode: Default::default(),
             keep_alive_timeout: Some(Duration::from_secs(30)),
             session_security_settings: Default::default(),
@@ -679,7 +681,9 @@ mod tests {
             request_id: Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap(),
             username: "frontend_user".to_string(),
             password: SecBuffer::from(b"password".to_vec()),
-            connect_mode: Default::default(),
+            connect_mode: citadel_internal_service_types::ConnectMode::Standard {
+                force_login: false,
+            },
             udp_mode: Default::default(),
             keep_alive_timeout: Some(Duration::from_secs(30)),
             session_security_settings: Default::default(),
@@ -767,7 +771,9 @@ mod tests {
                 request_id: Uuid::new_v4(),
                 username: format!("test_user_{}", i),
                 password: SecBuffer::from(b"password".to_vec()),
-                connect_mode: Default::default(),
+                connect_mode: citadel_internal_service_types::ConnectMode::Standard {
+                    force_login: false,
+                },
                 udp_mode: Default::default(),
                 keep_alive_timeout: Some(Duration::from_secs(30)),
                 session_security_settings: Default::default(),
@@ -823,7 +829,9 @@ mod tests {
             request_id: Uuid::new_v4(),
             username: "test_user".to_string(),
             password: SecBuffer::from(b"password".to_vec()),
-            connect_mode: Default::default(),
+            connect_mode: citadel_internal_service_types::ConnectMode::Standard {
+                force_login: false,
+            },
             udp_mode: Default::default(),
             keep_alive_timeout: Some(Duration::from_secs(30)),
             session_security_settings: Default::default(),

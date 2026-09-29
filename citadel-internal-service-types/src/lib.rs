@@ -2109,7 +2109,7 @@ mod tests {
             request_id,
             username: "test".to_string(),
             password: SecBuffer::from(vec![]),
-            connect_mode: ConnectMode::default(),
+            connect_mode: ConnectMode::Standard { force_login: false },
             udp_mode: UdpMode::Enabled,
             keep_alive_timeout: None,
             session_security_settings: SessionSecuritySettings::default(),

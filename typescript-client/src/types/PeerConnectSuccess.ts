@@ -3,6 +3,14 @@ import type { P2pPathReport } from "./P2pPathReport";
 
 export type PeerConnectSuccess = { cid: bigint, peer_cid: bigint, 
 /**
- * Which path the connection's traffic takes, read once the path is settled.
+ * The path the connection's traffic takes at the moment it is delivered. The connection is
+ * usable at once over the server relay, so this is normally `server_relay`; a later change
+ * (a direct or TURN path attaching, or being lost) arrives as a
+ * [`PeerPathChangedNotification`].
  */
-path: P2pPathReport, request_id: string | null, };
+path: P2pPathReport, 
+/**
+ * Whether a background upgrade may still move the connection off the server relay. `false`
+ * with `server_relay` means it stays relayed.
+ */
+upgrading: boolean, request_id: string | null, };

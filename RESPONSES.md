@@ -27,6 +27,7 @@ This document catalogs all `InternalServiceResponse` variants, their handlers (i
 | **DeleteVirtualFileFailure** | File delete handler | Reports delete failure | N/A | File may still exist |
 | **PeerConnectSuccess** | P2P connect handler | Confirms P2P connection established | `PeerConnection` added to `Connection::peers` | Session persists |
 | **PeerConnectFailure** | P2P connect handler | Reports P2P connection failure | N/A | No peer session created |
+| **PeerPathChangedNotification** | `src/kernel/peer_path.rs` | A peer connection's path changed (direct/TURN attached, lost, or the upgrade gave up); unsolicited, route by `cid` | N/A | The connection stays open across every change |
 | **PeerConnectNotification** | `src/kernel/responses/peer_event.rs` | Incoming P2P connection from peer | `PeerConnection` added to `Connection::peers` | Peer-initiated connection |
 | **PeerRegisterNotification** | `src/kernel/responses/peer_event.rs` | Peer registered us mutually | N/A | Registration notification only |
 | **PeerDisconnectSuccess** | P2P disconnect handler | Confirms P2P disconnection | Peer removed from `Connection::peers` | Proper cleanup |

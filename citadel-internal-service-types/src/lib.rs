@@ -534,8 +534,32 @@ pub struct PeerConnectSuccess {
     pub cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub peer_cid: u64,
-    /// Which path the connection's traffic takes, read once the path is settled.
+    /// The path the connection's traffic takes at the moment it is delivered. The connection is
+    /// usable at once over the server relay, so this is normally `server_relay`; a later change
+    /// (a direct or TURN path attaching, or being lost) arrives as a
+    /// [`PeerPathChangedNotification`].
     pub path: P2pPathReport,
+    /// Whether a background upgrade may still move the connection off the server relay. `false`
+    /// with `server_relay` means it stays relayed.
+    pub upgrading: bool,
+    pub request_id: Option<Uuid>,
+}
+
+/// The path of an established peer connection changed: a direct (or TURN) path attached, it was
+/// lost and traffic fell back to the server relay, or the background upgrade gave up. Messages
+/// keep flowing, in order, across every change. Unsolicited: route it by `cid`.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct PeerPathChangedNotification {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub peer_cid: u64,
+    pub path: P2pPathReport,
+    /// Whether a background upgrade may still move the connection off the server relay.
+    pub upgrading: bool,
+    /// Always `None`: path changes are not answers to a request.
     pub request_id: Option<Uuid>,
 }
 
@@ -1347,6 +1371,7 @@ pub enum InternalServiceResponse {
     PickFileFailure(PickFileFailure),
     PeerConnectSuccess(PeerConnectSuccess),
     PeerConnectFailure(PeerConnectFailure),
+    PeerPathChangedNotification(PeerPathChangedNotification),
     PeerConnectAcceptSuccess(PeerConnectAcceptSuccess),
     PeerConnectAcceptFailure(PeerConnectAcceptFailure),
     PeerConnectNotification(PeerConnectNotification),

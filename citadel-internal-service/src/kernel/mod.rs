@@ -40,6 +40,7 @@ pub(crate) mod credential_fingerprint;
 pub(crate) mod ext;
 pub(crate) mod group_channels;
 pub(crate) mod media;
+pub(crate) mod peer_path;
 pub(crate) mod pending_group_invites;
 pub(crate) mod picked_files;
 pub(crate) mod reconnect;

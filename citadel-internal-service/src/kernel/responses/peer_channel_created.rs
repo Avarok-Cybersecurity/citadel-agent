@@ -1,4 +1,4 @@
-use crate::kernel::requests::peer::turn::path_report;
+use crate::kernel::peer_path::PathWatch;
 use crate::kernel::session_route::SessionRoute;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -31,7 +31,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let channel = *peer_channel_created.channel;
     let session_cid = channel.get_session_cid();
     let peer_cid = channel.get_peer_cid();
-    let path = path_report(channel.p2p_path());
+    // Subscribed before the path is read, so no change falls between the report below and the
+    // notifications that follow it.
+    let path_watch = PathWatch::new(&channel.p2p_path_cell());
+    let (path, upgrading) = path_watch.current();
 
     info!(target: "citadel", "[PeerChannelCreated] *** RECEIVED P2P CHANNEL *** session_cid={}, peer_cid={}, path={:?}", session_cid, peer_cid, path);
     info!(target: "citadel", "[PeerChannelCreated] This is the SDK event indicating successful P2P handshake");
@@ -120,6 +123,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     cid: session_cid,
                     peer_cid,
                     path,
+                    upgrading,
                     request_id: None,
                 },
             ))
@@ -127,6 +131,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         {
             warn!(target: "citadel", "[PeerChannelCreated] No localhost connection owns CID {session_cid} - PeerConnectSuccess dropped");
         }
+        // After the success above, on the same route: the application hears of the connection
+        // before any change to its path.
+        path_watch.forward(session_cid, peer_cid, route);
 
         Ok(())
     } else {

@@ -3,7 +3,7 @@
 
 use crate::{
     connect_p2p_with_turn, get_free_port, register_p2p, services_connected_to_one_server,
-    PeerReturnHandle,
+    settled_path, PeerReturnHandle,
 };
 use citadel_internal_service_types::{
     IceServer, InternalServiceRequest, InternalServiceResponse, P2pPathReport, PeerTurnConfig,
@@ -248,11 +248,14 @@ pub async fn connect_by_accept(
     })
     .unwrap();
 
-    // The agent bounds the connect at 30s and then answers with a failure.
-    let initiator = tokio::time::timeout(Duration::from_secs(45), async {
+    // The channel is delivered as soon as it works over the relay; the path then settles in the
+    // background (the SDK bounds the whole connect at 60s).
+    let initiator = tokio::time::timeout(Duration::from_secs(90), async {
         loop {
             match rx_a.recv().await.expect("service channel closed") {
-                InternalServiceResponse::PeerConnectSuccess(s) => return Ok(s.path),
+                InternalServiceResponse::PeerConnectSuccess(s) => {
+                    return Ok(settled_path(rx_a, cid_a, cid_b, (s.path, s.upgrading)).await)
+                }
                 InternalServiceResponse::PeerConnectFailure(f) => return Err(f.message),
                 _ => continue,
             }
@@ -266,9 +269,8 @@ pub async fn connect_by_accept(
         accept_delivered: false,
         acceptor: None,
     };
-    // Bounded past the SDK's 30s hole-punch timeout: an acceptor whose direct attempt has no
-    // counterpart reports only once that attempt gives up.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(40);
+    // The acceptor's channel arrives at once over the relay; its path settles in the background.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
     while !(outcome.accept_delivered && outcome.acceptor.is_some()) {
         match tokio::time::timeout_at(deadline, rx_b.recv()).await {
             Ok(Some(InternalServiceResponse::PeerConnectAcceptSuccess(s))) => {
@@ -277,7 +279,8 @@ pub async fn connect_by_accept(
             }
             Ok(Some(InternalServiceResponse::PeerConnectSuccess(s))) => {
                 assert_eq!(s.peer_cid, cid_a);
-                outcome.acceptor = Some(s.path);
+                outcome.acceptor =
+                    Some(settled_path(rx_b, cid_b, cid_a, (s.path, s.upgrading)).await);
             }
             Ok(Some(_)) => continue,
             Ok(None) => panic!("service channel closed"),

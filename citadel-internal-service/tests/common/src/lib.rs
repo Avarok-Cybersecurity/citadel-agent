@@ -594,6 +594,7 @@ pub async fn connect_p2p_with_turn(
             cid,
             peer_cid,
             path,
+            upgrading,
             ..
         }) = signal
         else {
@@ -601,10 +602,39 @@ pub async fn connect_p2p_with_turn(
         };
         assert_eq!(cid, me);
         assert_eq!(peer_cid, peer);
-        paths.push(path);
+        // The connection is usable over the relay now; settle the background upgrade so the
+        // caller sees the final path and no path change arrives in the middle of its test.
+        paths.push(settled_path(rx, me, peer, (path, upgrading)).await);
     }
 
     Ok([paths[0], paths[1]])
+}
+
+/// The agent's `PeerChannel::ensure_direct`: follows `cid`'s connection to `peer_cid` from the
+/// path its `PeerConnectSuccess` reported until the background upgrade settles, returning the
+/// first P2P path, or `ServerRelay` once no upgrade is pending. Other traffic on `rx` while it
+/// waits is not expected here and is skipped (logged).
+pub async fn settled_path(
+    rx: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid: u64,
+    peer_cid: u64,
+    reported: (P2pPathReport, bool),
+) -> P2pPathReport {
+    let (mut path, mut upgrading) = reported;
+    while path == P2pPathReport::ServerRelay && upgrading {
+        match rx.recv().await.expect("service channel closed") {
+            InternalServiceResponse::PeerPathChangedNotification(n)
+                if n.cid == cid && n.peer_cid == peer_cid =>
+            {
+                path = n.path;
+                upgrading = n.upgrading;
+            }
+            other => {
+                info!(target: "citadel", "settled_path({cid} -> {peer_cid}) skipped {other:?}")
+            }
+        }
+    }
+    path
 }
 
 pub fn spawn_services(futures_to_spawn: Vec<InternalServicesFutures>) {

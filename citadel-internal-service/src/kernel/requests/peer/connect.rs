@@ -1,5 +1,7 @@
-use crate::kernel::requests::peer::turn::{path_report, set_peer_turn};
+use crate::kernel::peer_path::PathWatch;
+use crate::kernel::requests::peer::turn::set_peer_turn;
 use crate::kernel::requests::HandledRequestResult;
+use crate::kernel::session_route::SessionRoute;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -121,7 +123,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     info!(target: "citadel", "[PeerConnect] Calling find_target({}, {})...", cid, peer_cid);
     let response = match client_to_server_remote.find_target(cid, peer_cid).await {
         Ok(symmetric_identifier_handle_ref) => {
-            info!(target: "citadel", "[PeerConnect] find_target succeeded, calling connect_to_peer_custom with 30s timeout...");
+            info!(target: "citadel", "[PeerConnect] find_target succeeded, calling connect_to_peer_custom...");
 
             // Before connecting: the peer's own PeerConnect / PeerConnectAccept supplies the
             // other half.
@@ -138,138 +140,139 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 });
             }
 
-            // Add timeout to prevent indefinite hanging
-            let connect_future = symmetric_identifier_handle_ref.connect_to_peer_custom(
-                session_security_settings,
-                udp_mode,
-                peer_session_password,
-            );
-
-            match tokio::time::timeout(std::time::Duration::from_secs(30), connect_future).await {
-                Ok(connect_result) => match connect_result {
-                    Ok(peer_connect_success) => {
-                        info!(target: "citadel", "[PeerConnect] connect_to_peer_custom succeeded!");
-                        let mut peer_connect_success = peer_connect_success;
-                        // Taken before the channel is split and the struct is
-                        // consumed. This is the only moment the UDP channel is
-                        // offered; dropping it here would mean no call with this
-                        // peer could ever use a datagram path.
-                        let udp_rx = peer_connect_success.udp_channel_rx.take();
-                        let path = path_report(peer_connect_success.channel.p2p_path());
-                        info!(target: "citadel", "[PeerConnect] peer {} connected over {:?}", peer_cid, path);
-                        let (sink, mut stream) = peer_connect_success.channel.split();
-                        {
-                            let mut map = this.server_connection_map.write();
-                            if let Some(conn) = map.get_mut(&cid) {
-                                conn.add_peer_connection(
-                                    peer_cid,
-                                    sink,
-                                    peer_connect_success.remote,
-                                    udp_rx,
-                                );
-                                info!(target: "citadel", "[PeerConnect] Added peer {} to cid {}'s peers. Total peers: {}", peer_cid, cid, conn.peers.len());
-                            } else {
-                                error!(target: "citadel", "[PeerConnect] CRITICAL: Cannot find session {} in server_connection_map to add peer {}", cid, peer_cid);
-                            }
+            // No timeout of our own: the SDK delivers the channel as soon as it works over the
+            // server relay (NAT traversal continues in the background), and bounds the wait for
+            // the peer's answer itself. The 30s wrapper that stood here cut off connections that
+            // were waiting on hole punching (PR #89 removed it alone; this supersedes that).
+            match symmetric_identifier_handle_ref
+                .connect_to_peer_custom(session_security_settings, udp_mode, peer_session_password)
+                .await
+            {
+                Ok(peer_connect_success) => {
+                    info!(target: "citadel", "[PeerConnect] connect_to_peer_custom succeeded!");
+                    let mut peer_connect_success = peer_connect_success;
+                    // Taken before the channel is split and the struct is
+                    // consumed. This is the only moment the UDP channel is
+                    // offered; dropping it here would mean no call with this
+                    // peer could ever use a datagram path.
+                    let udp_rx = peer_connect_success.udp_channel_rx.take();
+                    // Subscribed before the path is read, so no change falls between the
+                    // report below and the notifications that follow it.
+                    let path_watch = PathWatch::new(&peer_connect_success.channel.p2p_path_cell());
+                    let (path, upgrading) = path_watch.current();
+                    info!(target: "citadel", "[PeerConnect] peer {} connected over {:?} (upgrading: {})", peer_cid, path, upgrading);
+                    let (sink, mut stream) = peer_connect_success.channel.split();
+                    let mut path_route = None;
+                    {
+                        let mut map = this.server_connection_map.write();
+                        if let Some(conn) = map.get_mut(&cid) {
+                            path_route = Some(SessionRoute::new(
+                                conn.associated_localhost_connection.clone(),
+                                this.tx_to_localhost_clients.clone(),
+                            ));
+                            conn.add_peer_connection(
+                                peer_cid,
+                                sink,
+                                peer_connect_success.remote,
+                                udp_rx,
+                            );
+                            info!(target: "citadel", "[PeerConnect] Added peer {} to cid {}'s peers. Total peers: {}", peer_cid, cid, conn.peers.len());
+                        } else {
+                            error!(target: "citadel", "[PeerConnect] CRITICAL: Cannot find session {} in server_connection_map to add peer {}", cid, peer_cid);
                         }
+                    }
 
-                        let hm_for_conn = this.tx_to_localhost_clients.clone();
-                        let server_conn_map = this.server_connection_map.clone();
+                    let hm_for_conn = this.tx_to_localhost_clients.clone();
+                    let server_conn_map = this.server_connection_map.clone();
 
-                        let connection_read_stream = async move {
-                            info!(target:"citadel","[P2P-RECV-CONNECT] *** Starting P2P read stream for LOCAL_CID={cid} from PEER={peer_cid} ***");
-                            info!(target:"citadel","[P2P-RECV-CONNECT] This stream will receive messages SENT BY peer {peer_cid}");
-                            while let Some(message) = stream.next().await {
-                                info!(target:"citadel","[P2P-RECV] Received P2P message! cid={cid}, peer_cid={peer_cid}, msg_len={}", message.len());
-                                let message = InternalServiceResponse::MessageNotification(
-                                    MessageNotification {
-                                        message: message.into_buffer().into(),
-                                        cid,
-                                        peer_cid,
-                                        request_id: Some(request_id),
-                                    },
-                                );
+                    let connection_read_stream = async move {
+                        info!(target:"citadel","[P2P-RECV-CONNECT] *** Starting P2P read stream for LOCAL_CID={cid} from PEER={peer_cid} ***");
+                        info!(target:"citadel","[P2P-RECV-CONNECT] This stream will receive messages SENT BY peer {peer_cid}");
+                        while let Some(message) = stream.next().await {
+                            info!(target:"citadel","[P2P-RECV] Received P2P message! cid={cid}, peer_cid={peer_cid}, msg_len={}", message.len());
+                            let message =
+                                InternalServiceResponse::MessageNotification(MessageNotification {
+                                    message: message.into_buffer().into(),
+                                    cid,
+                                    peer_cid,
+                                    request_id: Some(request_id),
+                                });
 
-                                // Get the current associated TCP connection for this session (may have changed via ClaimSession)
-                                let server_lock = server_conn_map.read();
-                                let current_tcp_uuid = server_lock
-                                    .get(&cid)
-                                    .map(|conn| {
-                                        conn.associated_localhost_connection
-                                            .load(std::sync::atomic::Ordering::Relaxed)
-                                    })
-                                    .unwrap_or(uuid);
-                                drop(server_lock);
+                            // Get the current associated TCP connection for this session (may have changed via ClaimSession)
+                            let server_lock = server_conn_map.read();
+                            let current_tcp_uuid = server_lock
+                                .get(&cid)
+                                .map(|conn| {
+                                    conn.associated_localhost_connection
+                                        .load(std::sync::atomic::Ordering::Relaxed)
+                                })
+                                .unwrap_or(uuid);
+                            drop(server_lock);
 
-                                info!(target:"citadel","[P2P-RECV] Forwarding to TCP uuid: {current_tcp_uuid}");
+                            info!(target:"citadel","[P2P-RECV] Forwarding to TCP uuid: {current_tcp_uuid}");
 
-                                // Send only to that one client. This used to
-                                // fall back to broadcasting the notification to
-                                // EVERY live TCP entry when the target uuid was
-                                // stale — which handed the decrypted body of a
-                                // P2P message to every other session
-                                // multiplexed through this agent, including
-                                // other users' sessions and any other origin
-                                // holding a socket.
-                                //
-                                // The acceptor side (responses/peer_channel_created.rs)
-                                // already removed exactly this broadcast, for
-                                // exactly this reason, and the comment there
-                                // spells it out. The fix was applied to one of
-                                // the two paths.
-                                //
-                                // The stale-uuid case the broadcast was working
-                                // around is real, and the answer is the one that
-                                // side settled on: the session's current
-                                // `associated_localhost_connection` — re-read
-                                // above, after any ClaimSession — is the sole
-                                // authoritative destination, and if it is not in
-                                // the live map then ILM is the layer that
-                                // retries. Delivering to the wrong client is not
-                                // a recovery.
-                                let tcp_map = hm_for_conn.read();
+                            // Send only to that one client. This used to
+                            // fall back to broadcasting the notification to
+                            // EVERY live TCP entry when the target uuid was
+                            // stale — which handed the decrypted body of a
+                            // P2P message to every other session
+                            // multiplexed through this agent, including
+                            // other users' sessions and any other origin
+                            // holding a socket.
+                            //
+                            // The acceptor side (responses/peer_channel_created.rs)
+                            // already removed exactly this broadcast, for
+                            // exactly this reason, and the comment there
+                            // spells it out. The fix was applied to one of
+                            // the two paths.
+                            //
+                            // The stale-uuid case the broadcast was working
+                            // around is real, and the answer is the one that
+                            // side settled on: the session's current
+                            // `associated_localhost_connection` — re-read
+                            // above, after any ClaimSession — is the sole
+                            // authoritative destination, and if it is not in
+                            // the live map then ILM is the layer that
+                            // retries. Delivering to the wrong client is not
+                            // a recovery.
+                            let tcp_map = hm_for_conn.read();
 
-                                if let Some(sender) = tcp_map.get(&current_tcp_uuid) {
-                                    if sender.send(message).is_ok() {
-                                        info!(target:"citadel","[P2P-RECV] Delivered MessageNotification to {current_tcp_uuid}");
-                                    } else {
-                                        warn!(target:"citadel","[P2P-RECV] TCP {current_tcp_uuid} is closed; ILM will retry");
-                                    }
+                            if let Some(sender) = tcp_map.get(&current_tcp_uuid) {
+                                if sender.send(message).is_ok() {
+                                    info!(target:"citadel","[P2P-RECV] Delivered MessageNotification to {current_tcp_uuid}");
                                 } else {
-                                    warn!(target:"citadel","[P2P-RECV] No live TCP for {current_tcp_uuid}; ILM will retry");
+                                    warn!(target:"citadel","[P2P-RECV] TCP {current_tcp_uuid} is closed; ILM will retry");
                                 }
-
-                                drop(tcp_map);
+                            } else {
+                                warn!(target:"citadel","[P2P-RECV] No live TCP for {current_tcp_uuid}; ILM will retry");
                             }
-                            info!(target:"citadel","[P2P-RECV] P2P read stream ended for cid={cid} from peer={peer_cid}");
-                        };
 
-                        tokio::spawn(connection_read_stream);
+                            drop(tcp_map);
+                        }
+                        info!(target:"citadel","[P2P-RECV] P2P read stream ended for cid={cid} from peer={peer_cid}");
+                    };
 
-                        InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
-                            cid,
-                            peer_cid,
-                            path,
-                            request_id: Some(request_id),
-                        })
+                    tokio::spawn(connection_read_stream);
+                    if let Some(route) = path_route {
+                        path_watch.forward(cid, peer_cid, route);
                     }
 
-                    Err(err) => {
-                        let err_str = err.into_string();
-                        error!(target: "citadel", "[PeerConnect] connect_to_peer_custom FAILED: {}", err_str);
+                    InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
+                        cid,
+                        peer_cid,
+                        path,
+                        upgrading,
+                        request_id: Some(request_id),
+                    })
+                }
 
-                        InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
-                            cid,
-                            message: err_str,
-                            request_id: Some(request_id),
-                        })
-                    }
-                },
-                Err(_elapsed) => {
-                    error!(target: "citadel", "[PeerConnect] connect_to_peer_custom TIMED OUT after 30 seconds");
+                Err(err) => {
+                    let err_str = err.into_string();
+                    error!(target: "citadel", "[PeerConnect] connect_to_peer_custom FAILED: {}", err_str);
+
                     InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
                         cid,
-                        message: "P2P connection timed out after 30 seconds".to_string(),
+                        message: err_str,
                         request_id: Some(request_id),
                     })
                 }

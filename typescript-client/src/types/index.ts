@@ -98,6 +98,7 @@ export * from './PeerConnectSuccess.js';
 export * from './PeerDisconnectFailure.js';
 export * from './PeerDisconnectSuccess.js';
 export * from './PeerInformation.js';
+export * from './PeerPathChangedNotification.js';
 export * from './PeerRegisterFailure.js';
 export * from './PeerRegisterNotification.js';
 export * from './PeerRegisterSuccess.js';

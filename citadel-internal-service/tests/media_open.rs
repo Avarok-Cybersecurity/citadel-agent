@@ -5,7 +5,9 @@ mod tests {
     use crate::common::{
         get_free_port, open_media_and_measure, setup_log, two_sessions_on_one_service,
     };
-    use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
+    use citadel_internal_service_types::{
+        InternalServiceRequest, InternalServiceResponse, P2pPathReport,
+    };
 
     use citadel_sdk::prelude::*;
     use std::error::Error;
@@ -178,6 +180,13 @@ mod tests {
                 ),
                 "{who} got {signal:?} instead of a connect success"
             );
+            // Media needs the datagram path, which attaches in the background: wait for it
+            // (the agent's ensure_direct) before opening.
+            if let InternalServiceResponse::PeerConnectSuccess(s) = signal {
+                let path =
+                    crate::common::settled_path(rx, s.cid, s.peer_cid, (s.path, s.upgrading)).await;
+                assert_eq!(path, P2pPathReport::Direct, "{who}");
+            }
         }
 
         open_media_and_measure(&tx0, &mut rx0, cid0, cid1, "accepted connection").await;

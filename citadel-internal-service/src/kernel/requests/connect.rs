@@ -408,9 +408,13 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 fingerprint,
                 reconnect_credentials,
             );
-            this.server_connection_map
-                .write()
-                .insert(cid, connection_struct);
+            {
+                let mut map = this.server_connection_map.write();
+                map.insert(cid, connection_struct);
+                // Signed in again: no longer signed out by the server. Under the map's
+                // lock, as the give-up records it (reconnect/report.rs).
+                this.signed_out.clear(cid);
+            }
 
             let response = InternalServiceResponse::ConnectSuccess(
                 citadel_internal_service_types::ConnectSuccess {

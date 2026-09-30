@@ -117,6 +117,7 @@ export * from './ServerReconnected.js';
 export * from './ServiceConnectionAccepted.js';
 export * from './SessionAlreadyActive.js';
 export * from './SessionInformation.js';
+export * from './SignedOutSession.js';
 export * from './TurnPolicy.js';
 
 // Re-export protocol types used in InternalServiceRequest fields.

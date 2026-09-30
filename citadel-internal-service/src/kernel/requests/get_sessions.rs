@@ -105,9 +105,15 @@ fn build_response_from_internal_state<T: IOInterface, R: Ratchet>(
         sessions.push(session);
     }
 
+    // Read under the map's lock, which the give-up and a sign-in both hold while they
+    // change it, so an account is never reported both signed in and signed out.
+    let signed_out = this.signed_out.list();
+    drop(lock);
+
     let response = InternalServiceResponse::GetSessionsResponse(GetSessionsResponse {
         cid: 0,
         sessions,
+        signed_out,
         request_id: Some(request_id),
     });
 

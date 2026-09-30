@@ -20,6 +20,11 @@ pub(super) fn fail<T: IOInterface + Sync, R: Ratchet>(
     // Checked and removed under one lock: a user Disconnect that got here first owns
     // the answer, and this says nothing; so does a sign-in taking the session over,
     // and a newer reconnect run.
+    //
+    // Recorded as signed out under the same lock, for a UI that is not attached to hear
+    // the notification below. A sign-in inserts its session and clears the record under
+    // this lock too (requests/connect.rs), so a record never outlives a session it
+    // raced with.
     let removed = {
         let mut lock = this.server_connection_map.write();
         match lock.get(&cid) {
@@ -27,7 +32,10 @@ pub(super) fn fail<T: IOInterface + Sync, R: Ratchet>(
                 if conn.link == LinkState::Reconnecting
                     && conn.handoff.generation() == generation =>
             {
-                lock.remove(&cid)
+                lock.remove(&cid).inspect(|conn| {
+                    this.signed_out
+                        .record(cid, conn.username.clone(), reason.clone())
+                })
             }
             _ => None,
         }

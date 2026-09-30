@@ -20,7 +20,9 @@ mod group_drop;
 mod server_link;
 mod turn;
 pub use group_drop::GroupMessageDroppedNotification;
-pub use server_link::{ServerConnectionLost, ServerReconnectFailed, ServerReconnected};
+pub use server_link::{
+    ServerConnectionLost, ServerReconnectFailed, ServerReconnected, SignedOutSession,
+};
 pub use turn::{IceServer, P2pPathReport, PeerTurnConfig, TurnPolicy};
 
 /// The `LocalDBGetKVFailure` message that means "no such key", as opposed to a
@@ -1293,6 +1295,10 @@ pub struct GetSessionsResponse {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
     pub sessions: Vec<SessionInformation>,
+    /// Accounts whose sessions the server ended, until each signs in again. Absent from an
+    /// older agent, hence the default.
+    #[serde(default)]
+    pub signed_out: Vec<SignedOutSession>,
     pub request_id: Option<Uuid>,
 }
 

@@ -8,6 +8,11 @@
 //!
 //! None of them answers a request, so `request_id` is always `None`; it is here because
 //! every response carries one.
+//!
+//! Those three reach only the UI attached when they are sent. A give-up while no page is
+//! open (a closed laptop lid, a tab closed during the outage) used to leave nothing but an
+//! absence: the next `GetSessions` listed no session and no reason. `SignedOutSession` is
+//! that give-up kept, reported in every `GetSessions` until the account signs in again.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -43,4 +48,17 @@ pub struct ServerReconnectFailed {
     pub cid: u64,
     pub reason: String,
     pub request_id: Option<Uuid>,
+}
+
+/// A session the agent removed because its server would not take it back, kept so a UI that
+/// was not attached at the time can say "signed out by the server, sign in again".
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct SignedOutSession {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    pub username: String,
+    /// What `ServerReconnectFailed` said.
+    pub reason: String,
 }

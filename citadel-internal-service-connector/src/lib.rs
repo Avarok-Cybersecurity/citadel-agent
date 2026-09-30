@@ -52,6 +52,7 @@ mod wasm_tests {
                 citadel_internal_service_types::GetSessionsResponse {
                     cid: 1,
                     sessions: vec![],
+                    signed_out: vec![],
                     request_id: None,
                 },
             );

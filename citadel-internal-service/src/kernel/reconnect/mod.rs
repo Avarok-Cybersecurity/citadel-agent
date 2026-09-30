@@ -29,6 +29,7 @@ pub const LOG_TARGET: &str = "citadel::reconnect";
 mod policy_tests;
 mod report;
 pub(crate) mod sign_in;
+pub(crate) mod signed_out;
 #[cfg(test)]
 mod stale_session_tests;
 pub(crate) mod takeover;

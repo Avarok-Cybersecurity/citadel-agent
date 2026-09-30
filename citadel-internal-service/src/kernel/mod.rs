@@ -93,6 +93,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub connecting_usernames: Arc<Mutex<HashSet<String>>>,
     /// How a session its server dropped is brought back (kernel/reconnect).
     pub(crate) reconnect_policy: ReconnectPolicy,
+    /// Sessions a reconnect gave up on, until they sign in again (reconnect/signed_out.rs).
+    pub(crate) signed_out: reconnect::signed_out::SignedOut,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -109,6 +111,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             peer_username_cache: self.peer_username_cache.clone(),
             connecting_usernames: self.connecting_usernames.clone(),
             reconnect_policy: self.reconnect_policy,
+            signed_out: self.signed_out.clone(),
             io: self.io.clone(),
         }
     }
@@ -129,6 +132,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             peer_username_cache: Arc::new(RwLock::new(Default::default())),
             connecting_usernames: Arc::new(Mutex::new(HashSet::new())),
             reconnect_policy,
+            signed_out: Default::default(),
             io: Arc::new(RwLock::new(Some(io))),
         }
     }

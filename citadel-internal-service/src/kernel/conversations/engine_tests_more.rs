@@ -3,6 +3,7 @@ use super::super::engine::{store, Engine};
 use super::super::engine_fake::*;
 use super::super::outbound::Outgoing;
 use citadel_internal_service_types::MessageType;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 /// The point of a single writer. Inbound messages and sends from two windows,
@@ -166,5 +167,28 @@ async fn a_sends_appended_event_names_the_request() {
             (ConversationEventKind::Appended, Some(request)),
             (ConversationEventKind::Updated, None)
         ]
+    );
+}
+
+#[tokio::test]
+async fn ephemeral_traffic_needs_no_window_and_window_traffic_waits_for_one() {
+    let agent = FakeAgent::default();
+    let engine = Engine::default();
+    let typing = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/p2p_commands/typing.cbor"
+    ))
+    .unwrap();
+    assert!(engine.delivered(&agent, from_peer(typing)).await);
+    assert!(
+        !engine
+            .delivered(&agent, from_peer(b"a revfs or file frame".to_vec()))
+            .await
+    );
+    agent.windows.store(true, Ordering::SeqCst);
+    assert!(
+        engine
+            .delivered(&agent, from_peer(b"a revfs or file frame".to_vec()))
+            .await
     );
 }

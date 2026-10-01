@@ -100,7 +100,7 @@ mod tests {
             .unwrap();
         let cid = older.2;
         let mut newer = open_window(addr).await.unwrap();
-        newer.0.send(declare_agent_ilm()).unwrap();
+        declared(&mut newer).await;
         attach(&mut newer, cid, password(ALICE_PASSWORD))
             .await
             .expect("the newer page attaches");

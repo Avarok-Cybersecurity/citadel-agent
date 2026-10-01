@@ -224,28 +224,5 @@ async fn marking_read_sends_receipts_only_when_the_account_does() {
     )));
 }
 
-#[tokio::test]
-async fn ephemeral_traffic_needs_no_window_and_window_traffic_waits_for_one() {
-    let agent = FakeAgent::default();
-    let engine = Engine::default();
-    let typing = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/p2p_commands/typing.cbor"
-    ))
-    .unwrap();
-    assert!(engine.delivered(&agent, from_peer(typing)).await);
-    assert!(
-        !engine
-            .delivered(&agent, from_peer(b"a revfs or file frame".to_vec()))
-            .await
-    );
-    agent.windows.store(true, Ordering::SeqCst);
-    assert!(
-        engine
-            .delivered(&agent, from_peer(b"a revfs or file frame".to_vec()))
-            .await
-    );
-}
-
 #[path = "engine_tests_more.rs"]
 mod more;

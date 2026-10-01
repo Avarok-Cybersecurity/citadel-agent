@@ -46,6 +46,20 @@ pub fn declare_agent_ilm() -> InternalServiceRequest {
     }
 }
 
+/// Declare on a new window that the agent hosts its sessions' ILM, and wait for
+/// the answer, as the web UI does: requests are handled in parallel, so a claim
+/// sent straight after could overtake the declaration and be refused.
+pub async fn declared(window: &mut crate::multi_window::Window) {
+    window
+        .0
+        .send(declare_agent_ilm())
+        .expect("the window is open");
+    recv_until(&mut window.1, "capabilities", |r| {
+        matches!(r, InternalServiceResponse::AgentCapabilities(_))
+    })
+    .await;
+}
+
 /// Declare on `alice`'s window that the agent hosts her ILM, and wait for the answer.
 pub async fn host_alice(alice: &mut PeerHandle) {
     alice.0.send(declare_agent_ilm()).expect("alice open");

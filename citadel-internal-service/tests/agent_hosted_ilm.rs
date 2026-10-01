@@ -149,7 +149,7 @@ mod tests {
         let mut window = open_localhost_connection(alice_addr)
             .await
             .expect("a new window");
-        window.0.send(declare_agent_ilm()).expect("open");
+        declared(&mut window).await;
         window
             .0
             .send(InternalServiceRequest::ConnectionManagement {

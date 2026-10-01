@@ -128,8 +128,22 @@ mod tests {
                 security_level: SecurityLevel::Standard,
             })
             .unwrap();
+        // The window's own bubble first, named by its request: the event is
+        // announced before ILM has the message, and the answer after.
+        let shown = recv_until(&mut world.alice.1, "the bubble", |r| {
+            matches!(r, InternalServiceResponse::ConversationEvent(_))
+        })
+        .await;
+        let InternalServiceResponse::ConversationEvent(shown) = shown else {
+            unreachable!()
+        };
+        assert_eq!(
+            (shown.kind, shown.request_id),
+            (ConversationEventKind::Appended, Some(request_id))
+        );
         let answer = recv_until(&mut world.alice.1, "the send", |r| {
-            r.request_id() == Some(&request_id)
+            matches!(r, InternalServiceResponse::ConversationUpdated(_))
+                && r.request_id() == Some(&request_id)
         })
         .await;
         let InternalServiceResponse::ConversationUpdated(sent) = answer else {
@@ -166,7 +180,7 @@ mod tests {
         );
 
         let mut window = open_localhost_connection(alice_addr).await.unwrap();
-        window.0.send(declare_agent_ilm()).unwrap();
+        declared(&mut window).await;
         window
             .0
             .send(InternalServiceRequest::ConnectionManagement {

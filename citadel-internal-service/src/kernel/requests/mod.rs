@@ -40,6 +40,9 @@ pub(crate) mod peer;
 
 #[async_recursion]
 #[allow(clippy::multiple_bound_locations)]
+// Clippy 1.99's double_must_use fires on async_recursion's generated `#[must_use]` (1.1.1 is
+// the newest release); the attribute is the macro's, not ours.
+#[allow(clippy::double_must_use)]
 pub async fn handle_request<T, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,

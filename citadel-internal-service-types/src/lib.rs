@@ -17,9 +17,11 @@ use uuid::Uuid;
 use ts_rs::TS;
 
 mod group_drop;
+mod multi_window;
 mod server_link;
 mod turn;
 pub use group_drop::GroupMessageDroppedNotification;
+pub use multi_window::{AttachProof, SessionAttached, SessionRole, SessionRoleNotification};
 pub use server_link::{
     ServerConnectionLost, ServerReconnectFailed, ServerReconnected, SignedOutSession,
 };
@@ -1444,6 +1446,8 @@ pub enum InternalServiceResponse {
     ServerConnectionLost(ServerConnectionLost),
     ServerReconnected(ServerReconnected),
     ServerReconnectFailed(ServerReconnectFailed),
+    SessionAttached(SessionAttached),
+    SessionRoleNotification(SessionRoleNotification),
     /// Results from a batched request, in the same order as input commands
     BatchedResponse(BatchedResponseData),
 }
@@ -1931,6 +1935,14 @@ pub enum ConfigCommand {
     ReleaseSession {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         session_cid: u64,
+    },
+    /// Join a session another connection holds, keeping that connection
+    /// attached too. A live session requires `proof`; an orphan is claimed as
+    /// `ClaimSession` claims it. See kernel/requests/connection_management_attach.rs.
+    AttachSession {
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        session_cid: u64,
+        proof: AttachProof,
     },
 }
 

@@ -1,4 +1,6 @@
 use crate::kernel::requests::HandledRequestResult;
+use crate::kernel::session_route::SessionRoute;
+use crate::kernel::session_subscribers::SessionSubscribers;
 use crate::kernel::{CitadelWorkspaceService, Connection, PeerConnection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -11,7 +13,6 @@ use citadel_sdk::prelude::{
 };
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -40,7 +41,8 @@ pub enum DisconnectedConnection<R: Ratchet> {
         /// unboxed the enum was as large as the larger for every value of either.
         connection: Box<Connection<R>>,
         cid: u64,
-        tcp_uuid: Uuid,
+        /// Who was attached when it was removed, to be told it ended.
+        subscribers: SessionSubscribers,
     },
     /// P2P peer connection
     P2P {
@@ -48,8 +50,17 @@ pub enum DisconnectedConnection<R: Ratchet> {
         peer_connection: Box<PeerConnection<R>>,
         cid: u64,
         peer_cid: u64,
-        tcp_uuid: Uuid,
+        subscribers: SessionSubscribers,
     },
+}
+
+impl<R: Ratchet> DisconnectedConnection<R> {
+    /// The connections attached to the session when this was removed.
+    pub fn subscribers(&self) -> &SessionSubscribers {
+        match self {
+            Self::C2S { subscribers, .. } | Self::P2P { subscribers, .. } => subscribers,
+        }
+    }
 }
 
 /// Disconnects a peer or C2S connection at the SDK/protocol layer.
@@ -144,9 +155,7 @@ pub fn cleanup_state<R: Ratchet>(
         let mut lock = server_connection_map.write();
         if let Some(sess) = lock.get_mut(&cid) {
             if let Some(peer_conn) = sess.peers.remove(&target_cid) {
-                let tcp_uuid = peer_conn
-                    .associated_localhost_connection
-                    .load(Ordering::Relaxed);
+                let subscribers = peer_conn.subscribers.clone();
                 citadel_sdk::logging::info!(
                     "[cleanup_state] Removed peer {target_cid} from session {cid}"
                 );
@@ -154,7 +163,7 @@ pub fn cleanup_state<R: Ratchet>(
                     peer_connection: Box::new(peer_conn),
                     cid,
                     peer_cid: target_cid,
-                    tcp_uuid,
+                    subscribers,
                 });
             }
         }
@@ -173,7 +182,7 @@ pub fn cleanup_state<R: Ratchet>(
             session_keys
         );
         if let Some(conn) = lock.remove(&cid) {
-            let tcp_uuid = conn.associated_localhost_connection.load(Ordering::Relaxed);
+            let subscribers = conn.subscribers.clone();
             let count_after = lock.len();
             let remaining_keys: Vec<u64> = lock.keys().copied().collect();
             citadel_sdk::logging::info!(
@@ -184,7 +193,7 @@ pub fn cleanup_state<R: Ratchet>(
             return Some(DisconnectedConnection::C2S {
                 connection: Box::new(conn),
                 cid,
-                tcp_uuid,
+                subscribers,
             });
         }
         citadel_sdk::logging::warn!("[cleanup_state] Session {cid} already removed (not in map)");
@@ -319,20 +328,13 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     // causing the orphan handler to preserve the session that we're trying to remove.
     if peer_cid.is_none() {
         // Only for C2S disconnects (full session disconnect)
-        let conn_id = {
-            let conns = this.server_connection_map.read();
-            conns
-                .get(&cid)
-                .map(|conn| conn.associated_localhost_connection.load(Ordering::Relaxed))
-        };
-        if let Some(conn_id) = conn_id {
-            citadel_sdk::logging::info!(
-                "[Disconnect] Clearing orphan mode for connection {:?} before disconnecting CID {}",
-                conn_id,
-                cid
-            );
-            this.orphan_sessions.write().remove(&conn_id);
-        }
+        // The requester: the gate admitted it, so it is attached to this session.
+        citadel_sdk::logging::info!(
+            "[Disconnect] Clearing orphan mode for connection {:?} before disconnecting CID {}",
+            uuid,
+            cid
+        );
+        this.orphan_sessions.write().remove(&uuid);
     }
 
     // STEP 1: Remove from internal state FIRST, get back the struct
@@ -411,20 +413,31 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         }
     };
 
-    // STEP 3: Get the TCP UUID from the enum before dropping
-    let tcp_uuid = match &disconnected {
-        DisconnectedConnection::C2S { tcp_uuid, .. } => *tcp_uuid,
-        DisconnectedConnection::P2P { tcp_uuid, .. } => *tcp_uuid,
-    };
+    // STEP 3: Every OTHER window attached to the session is told it ended. The
+    // requester gets the response below; the entry is already out of the map, so
+    // the session is gone for all of them whatever the SDK said.
+    let others = SessionRoute::new(
+        disconnected.subscribers().clone(),
+        this.tx_to_localhost_clients.clone(),
+    )
+    .send_to_others(
+        uuid,
+        InternalServiceResponse::DisconnectNotification(DisconnectNotification {
+            cid,
+            peer_cid,
+            request_id: None,
+        }),
+    );
 
     // STEP 4: Enum drops here (end of scope) - RAII cleanup is now safe since SDK disconnect completed
     drop(disconnected);
 
     citadel_sdk::logging::info!(
-        "[Disconnect] Completed for CID {} peer {:?}, notifying TCP client {:?}",
+        "[Disconnect] Completed for CID {} peer {:?}; requester {:?}, other windows told: {:?}",
         cid,
         peer_cid,
-        tcp_uuid
+        uuid,
+        others
     );
 
     // Success only when the protocol session actually went away.

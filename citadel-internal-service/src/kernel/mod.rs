@@ -4,6 +4,7 @@ use crate::kernel::media::{
 };
 use crate::kernel::requests::{handle_request, HandledRequestResult};
 use crate::kernel::session_route::SessionRoute;
+use crate::kernel::session_subscribers::SessionSubscribers;
 use citadel_internal_service_connector::connector::{
     InternalServiceConnector, WrappedSink, WrappedStream,
 };
@@ -28,7 +29,6 @@ use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
@@ -46,12 +46,15 @@ pub(crate) mod picked_files;
 pub(crate) mod reconnect;
 
 use reconnect::policy::ReconnectPolicy;
+pub(crate) mod attach_tokens;
+pub(crate) mod membership;
 pub(crate) mod requests;
 pub(crate) mod responses;
 pub(crate) mod revfs_correlation;
 pub(crate) mod server_address;
 pub(crate) mod server_host;
 pub(crate) mod session_route;
+pub(crate) mod session_subscribers;
 pub(crate) mod session_wait;
 
 pub type RatchetType = StackedRatchet;
@@ -235,7 +238,12 @@ pub struct Connection<R: Ratchet> {
     pub sink_to_server: AsyncSink<R>,
     pub client_server_remote: ClientServerRemote<R>,
     pub peers: HashMap<u64, PeerConnection<R>>,
-    pub(crate) associated_localhost_connection: Arc<AtomicUuid>,
+    /// Every localhost connection attached to this session, primary first.
+    /// See kernel/session_subscribers.rs.
+    pub(crate) subscribers: SessionSubscribers,
+    /// Proofs a password attach handed out, for re-attaching without it.
+    /// See kernel/attach_tokens.rs.
+    pub(crate) attach_tokens: attach_tokens::AttachTokens,
     pub c2s_file_transfer_handlers: HashMap<ObjectId, Option<ObjectTransferHandler>>,
     /// Group channels this session is a member of. Not a plain HashMap: the
     /// map was insert-only, so entries outlived the membership they described
@@ -281,7 +289,7 @@ pub struct PeerConnection<R: Ratchet> {
     /// May be None for acceptor-side connections where we only have the channel.
     remote: Option<PeerRemote<R>>,
     handler_map: HashMap<ObjectId, Option<ObjectTransferHandler>>,
-    associated_localhost_connection: Arc<AtomicUuid>,
+    subscribers: SessionSubscribers,
     /// Where this peer's UDP transport currently lives. The SDK delivers the
     /// channel at most once per peer connection, so media sessions borrow the
     /// halves through this state machine and return them on close — consuming
@@ -323,7 +331,7 @@ impl<R: Ratchet> Connection<R> {
     fn new(
         sink: PeerChannelSendHalf<R>,
         client_server_remote: ClientServerRemote<R>,
-        associated_tcp_connection: Arc<AtomicUuid>,
+        subscribers: SessionSubscribers,
         username: String,
         server_address: String,
         server_host: Option<String>,
@@ -334,7 +342,8 @@ impl<R: Ratchet> Connection<R> {
             peers: HashMap::new(),
             sink_to_server: Arc::new(tokio::sync::Mutex::new(sink)),
             client_server_remote,
-            associated_localhost_connection: associated_tcp_connection,
+            subscribers,
+            attach_tokens: Default::default(),
             c2s_file_transfer_handlers: HashMap::new(),
             username,
             groups: group_channels::GroupChannels::new(),
@@ -410,7 +419,7 @@ impl<R: Ratchet> Connection<R> {
                     sink: Arc::new(tokio::sync::Mutex::new(sink)),
                     remote,
                     handler_map: HashMap::new(),
-                    associated_localhost_connection: self.associated_localhost_connection.clone(),
+                    subscribers: self.subscribers.clone(),
                     udp: UdpState::from_optional_channel(udp_rx),
                     media: None,
                     media_generation: 0,
@@ -688,18 +697,15 @@ fn spawn_tick_updater<R: Ratchet>(
 ) {
     let mut handle_inner = object_transfer_handler.inner;
     if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-        let uuid = connection
-            .associated_localhost_connection
-            .load(Ordering::Relaxed);
         // The REQUEST id may be frozen -- it names the request that started the
-        // transfer and does not change. The ROUTE may not: a reclaim re-points
-        // this session mid-transfer and every remaining tick has to follow it.
-        // See kernel/session_route.rs.
-        let request_id = Some(request_id.unwrap_or(uuid));
-        let route = SessionRoute::new(
-            connection.associated_localhost_connection.clone(),
-            tcp_connection_map,
+        // transfer and does not change. The ROUTE may not: windows attach and
+        // drop mid-transfer and every remaining tick has to reach whoever is
+        // attached. See kernel/session_route.rs.
+        let request_id = Some(
+            request_id
+                .unwrap_or_else(|| connection.subscribers.primary().unwrap_or_else(Uuid::nil)),
         );
+        let route = SessionRoute::new(connection.subscribers.clone(), tcp_connection_map);
         let sender_status_updater = async move {
             while let Some(status) = handle_inner.next().await {
                 let status_message = status.clone();
@@ -711,12 +717,12 @@ fn spawn_tick_updater<R: Ratchet>(
                         request_id,
                     },
                 );
-                match route.send(message) {
-                    Some(target) => {
-                        info!(target: "citadel", "File Transfer Status Tick Sent to {target:?}: {status:?}")
-                    }
-                    None => {
+                match route.send(message).as_slice() {
+                    [] => {
                         warn!(target: "citadel", "No localhost connection owns CID {implicated_cid} - File Transfer Status Tick dropped")
+                    }
+                    targets => {
+                        info!(target: "citadel", "File Transfer Status Tick Sent to {targets:?}: {status:?}")
                     }
                 }
 

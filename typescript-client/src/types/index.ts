@@ -7,6 +7,7 @@
 
 export * from './AccountInformation.js';
 export * from './Accounts.js';
+export * from './AttachProof.js';
 export * from './BatchedResponseData.js';
 export * from './ConfigCommand.js';
 export * from './ConnectFailure.js';
@@ -116,7 +117,10 @@ export * from './ServerReconnectFailed.js';
 export * from './ServerReconnected.js';
 export * from './ServiceConnectionAccepted.js';
 export * from './SessionAlreadyActive.js';
+export * from './SessionAttached.js';
 export * from './SessionInformation.js';
+export * from './SessionRole.js';
+export * from './SessionRoleNotification.js';
 export * from './SignedOutSession.js';
 export * from './TurnPolicy.js';
 

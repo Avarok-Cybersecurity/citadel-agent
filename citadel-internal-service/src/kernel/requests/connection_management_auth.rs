@@ -33,13 +33,24 @@ use uuid::Uuid;
 
 /// What the connection map says about a session, reduced to what authorization
 /// needs to decide.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionOwner {
-    /// The owning localhost connection is still connected.
-    Live(Uuid),
-    /// The owning connection is gone. The session is reclaimable by anyone —
+    /// These attached connections are still connected (never empty).
+    Live(Vec<Uuid>),
+    /// No attached connection is. The session is reclaimable by anyone —
     /// this is the case the reload-and-reclaim flow depends on.
     Orphaned,
+}
+
+impl SessionOwner {
+    /// `Live` with the given members, or `Orphaned` if none of them is live.
+    pub fn from_live_members(members: Vec<Uuid>) -> Self {
+        if members.is_empty() {
+            SessionOwner::Orphaned
+        } else {
+            SessionOwner::Live(members)
+        }
+    }
 }
 
 /// The decision. `Refuse` carries the message sent back to the caller.
@@ -64,7 +75,7 @@ impl Authorization {
 fn owner_or_orphan(owner: SessionOwner, caller: Uuid, session_cid: u64) -> Authorization {
     match owner {
         SessionOwner::Orphaned => Authorization::Allow,
-        SessionOwner::Live(held_by) if held_by == caller => Authorization::Allow,
+        SessionOwner::Live(attached) if attached.contains(&caller) => Authorization::Allow,
         SessionOwner::Live(_) => Authorization::Refuse(format!(
             "Session {session_cid} is in use by another connection"
         )),
@@ -110,13 +121,13 @@ mod tests {
     /// reason this is not simply "orphaned only".
     #[test]
     fn a_connection_may_reassert_a_session_it_already_holds() {
-        assert!(may_claim(SessionOwner::Live(caller()), caller(), 7).is_allowed());
+        assert!(may_claim(SessionOwner::Live(vec![caller()]), caller(), 7).is_allowed());
     }
 
     /// C1. The whole point.
     #[test]
     fn a_live_session_held_elsewhere_may_not_be_claimed() {
-        let decision = may_claim(SessionOwner::Live(stranger()), caller(), 7);
+        let decision = may_claim(SessionOwner::Live(vec![stranger()]), caller(), 7);
         assert_eq!(
             decision,
             Authorization::Refuse("Session 7 is in use by another connection".to_string())
@@ -129,7 +140,8 @@ mod tests {
     /// that branch and reported to the user as success.
     #[test]
     fn the_refusal_is_distinguishable_from_the_not_orphaned_message() {
-        let Authorization::Refuse(message) = may_claim(SessionOwner::Live(stranger()), caller(), 7)
+        let Authorization::Refuse(message) =
+            may_claim(SessionOwner::Live(vec![stranger()]), caller(), 7)
         else {
             panic!("expected a refusal");
         };
@@ -139,20 +151,28 @@ mod tests {
     /// H1, first half.
     #[test]
     fn a_live_session_held_elsewhere_may_not_be_disconnected() {
-        assert!(!may_disconnect(SessionOwner::Live(stranger()), caller(), 7).is_allowed());
+        assert!(!may_disconnect(SessionOwner::Live(vec![stranger()]), caller(), 7).is_allowed());
     }
 
     /// H1, second half. `ReleaseSession` means "this tab is done with it", so
     /// releasing a session another tab is using is never legitimate.
     #[test]
     fn a_live_session_held_elsewhere_may_not_be_released() {
-        assert!(!may_release(SessionOwner::Live(stranger()), caller(), 7).is_allowed());
+        assert!(!may_release(SessionOwner::Live(vec![stranger()]), caller(), 7).is_allowed());
+    }
+
+    /// Any attached window counts as holding it, not only the primary.
+    #[test]
+    fn a_secondary_window_holds_the_session_too() {
+        let owner = SessionOwner::Live(vec![stranger(), caller()]);
+        assert!(may_claim(owner.clone(), caller(), 7).is_allowed());
+        assert!(may_release(owner, caller(), 7).is_allowed());
     }
 
     /// Teardown releases the sessions this connection owns.
     #[test]
     fn a_connection_may_release_its_own_session() {
-        assert!(may_release(SessionOwner::Live(caller()), caller(), 7).is_allowed());
+        assert!(may_release(SessionOwner::Live(vec![caller()]), caller(), 7).is_allowed());
     }
 
     /// The bulk `DisconnectOrphan { session_cid: None }` branch already filters
@@ -171,6 +191,6 @@ mod tests {
     /// `Live(nil)` precisely so that coincidence cannot arise.
     #[test]
     fn the_orphan_marker_is_never_mistaken_for_a_holder() {
-        assert!(!may_claim(SessionOwner::Live(Uuid::nil()), caller(), 7).is_allowed());
+        assert!(!may_claim(SessionOwner::Live(vec![Uuid::nil()]), caller(), 7).is_allowed());
     }
 }

@@ -2,6 +2,7 @@
 pub mod coturn;
 pub mod group;
 pub mod group_rejoin;
+pub mod multi_window;
 pub mod turn_harness;
 
 use citadel_internal_service::kernel::CitadelWorkspaceService;

@@ -38,6 +38,9 @@ uuid = { workspace = true, features = [
     "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
 ]}
 bytes = { workspace = true }
+# OS randomness for session attach tokens (kernel/attach_tokens.rs). Already in
+# the tree through the SDK; declared for direct use.
+getrandom = "0.3"
 async-recursion = { workspace = true }
 # Optional: native file picker dialog (requires desktop environment)
 rfd = { workspace = true, optional = true }

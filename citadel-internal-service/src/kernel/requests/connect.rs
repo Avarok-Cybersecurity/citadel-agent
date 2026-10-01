@@ -23,13 +23,14 @@
 use crate::kernel::reconnect::sign_in::{self, SignIn};
 use crate::kernel::reconnect::LinkState;
 use crate::kernel::requests::HandledRequestResult;
+use crate::kernel::session_route::SessionRoute;
+use crate::kernel::session_subscribers::SessionSubscribers;
 use crate::kernel::{create_client_server_remote, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    AtomicUuid, ConnectFailure, InternalServiceRequest, InternalServiceResponse,
+    ConnectFailure, InternalServiceRequest, InternalServiceResponse,
 };
 use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt, Ratchet};
-use std::sync::Arc;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
@@ -173,13 +174,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
             SignIn::AlreadyActive => {
                 citadel_sdk::logging::info!(target: "citadel", "[Connect] Session {} already active for user {} - returning SessionAlreadyActive", cid, username);
-                {
-                    let lock = this.server_connection_map.read();
-                    if let Some(conn) = lock.get(&cid) {
-                        conn.associated_localhost_connection
-                            .store(uuid, std::sync::atomic::Ordering::Relaxed);
-                    }
-                }
+                // Today's live takeover, kept for UIs that predate AttachSession:
+                // the caller becomes the only subscriber, and whoever it displaced
+                // is told (kernel/session_subscribers.rs).
+                crate::kernel::membership::take_over(this, cid, uuid);
                 // Lets the frontend handle it gracefully (e.g. redirect to the workspace).
                 let response = InternalServiceResponse::SessionAlreadyActive(
                     citadel_internal_service_types::SessionAlreadyActive {
@@ -398,10 +396,11 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             )
             .await;
 
+            let subscribers = SessionSubscribers::new(uuid);
             let connection_struct = Connection::new(
                 sink,
                 client_server_remote,
-                Arc::new(AtomicUuid::new(uuid)),
+                subscribers.clone(),
                 username,
                 server_address,
                 server_host,
@@ -424,12 +423,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             );
 
             crate::kernel::c2s_reader::spawn(
-                this.server_connection_map.clone(),
-                this.tx_to_localhost_clients.clone(),
+                SessionRoute::new(subscribers, this.tx_to_localhost_clients.clone()),
                 cid,
                 stream,
                 request_id,
-                uuid,
             );
 
             cleanup_username(this, &username_for_cleanup);

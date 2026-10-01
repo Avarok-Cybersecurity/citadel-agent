@@ -13,8 +13,8 @@
 //!
 //! The stale uuid is real: a reload, a tab close or a reconnect mints a new
 //! localhost connection while the session and its CID persist. But the session
-//! records its current one in `associated_localhost_connection`, an `AtomicUuid`
-//! updated on reconnect — so the answer is to re-resolve through the CID, and to
+//! records the connections attached to it right now (`Connection::subscribers`,
+//! kernel/session_subscribers.rs) — so the answer is to re-resolve through the CID, and to
 //! drop with a warning when even that finds nothing. That is what
 //! `send_response_to_tcp_client` in kernel/mod.rs already does; this file was the
 //! only remaining exception.
@@ -22,8 +22,9 @@
 //! Asserted against the source because the behaviour lives at the service's
 //! fan-out boundary: reproducing it needs two authenticated accounts on one
 //! running internal service, which the unit suite has no way to stand up. The
-//! limit is real and stated: this pins that no broadcast loop exists, not that
-//! every delivery reaches the right tab.
+//! limit is real and stated: this pins that no broadcast loop exists. Delivery
+//! to every window of the session, and to no other connection, is asserted
+//! behaviourally in multi_window_fan_out.rs and multi_window_attach.rs.
 
 const PEER_EVENT: &str = include_str!("../src/kernel/responses/peer_event.rs");
 
@@ -70,8 +71,8 @@ fn the_recorded_uuid_is_re_resolved_through_the_session() {
          peer notifications"
     );
     assert!(
-        code.contains("associated_localhost_connection"),
-        "the session's live localhost connection is no longer read"
+        code.contains("subscribers_of(this, session_cid)"),
+        "the session's live subscriber set is no longer read at send time"
     );
 
     // Every call site must go through it. Three: PeerSignal::Disconnect,

@@ -1,14 +1,14 @@
 //! What the UI is told about a reconnect, and the give-up that removes the session.
 
 use super::{LinkState, LOG_TARGET};
-use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
+use crate::kernel::session_route::SessionRoute;
+use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     DisconnectNotification, InternalServiceResponse, ServerReconnectFailed,
 };
-use citadel_sdk::logging::warn;
+use citadel_sdk::logging::{info, warn};
 use citadel_sdk::prelude::{NetworkError, Ratchet};
-use std::sync::atomic::Ordering;
 
 /// The session is gone after all: say why, then what a removal always said.
 pub(super) fn fail<T: IOInterface + Sync, R: Ratchet>(
@@ -44,9 +44,10 @@ pub(super) fn fail<T: IOInterface + Sync, R: Ratchet>(
         return;
     };
     this.prune_cid_scoped_state(cid, None);
-    let tcp_uuid = removed
-        .associated_localhost_connection
-        .load(Ordering::Relaxed);
+    let route = SessionRoute::new(
+        removed.subscribers.clone(),
+        this.tx_to_localhost_clients.clone(),
+    );
     drop(removed);
     warn!(target: LOG_TARGET, "[Reconnect] gave up on {cid}: {reason}");
     for response in [
@@ -61,8 +62,9 @@ pub(super) fn fail<T: IOInterface + Sync, R: Ratchet>(
             request_id: None,
         }),
     ] {
-        let sent = send_response_to_tcp_client(&this.tx_to_localhost_clients, response, tcp_uuid);
-        logged(cid, "reporting the give-up", sent);
+        if route.send(response).is_empty() {
+            info!(target: LOG_TARGET, "[Reconnect] {cid}: no window attached to hear the give-up");
+        }
     }
 }
 
@@ -71,17 +73,11 @@ pub(super) fn notify<T: IOInterface + Sync, R: Ratchet>(
     cid: u64,
     response: InternalServiceResponse,
 ) -> Result<(), NetworkError> {
-    let tcp_uuid = {
-        let lock = this.server_connection_map.read();
-        lock.get(&cid)
-            .map(|conn| conn.associated_localhost_connection.load(Ordering::Relaxed))
-    };
-    match tcp_uuid {
-        Some(tcp_uuid) => {
-            send_response_to_tcp_client(&this.tx_to_localhost_clients, response, tcp_uuid)
-        }
-        None => Ok(()),
+    // Every attached window hears the link's state; nobody attached is not an error.
+    if let Some(subscribers) = crate::kernel::membership::subscribers_of(this, cid) {
+        SessionRoute::new(subscribers, this.tx_to_localhost_clients.clone()).send(response);
     }
+    Ok(())
 }
 
 /// Nothing is left to hand these errors to; they are recorded, not dropped.

@@ -75,7 +75,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         // other two froze the uuid at spawn. One implementation now, so a
         // fourth caller cannot get it wrong: kernel/session_route.rs.
         let route = SessionRoute::new(
-            connection.associated_localhost_connection.clone(),
+            connection.subscribers.clone(),
             this.tx_to_localhost_clients.clone(),
         );
 
@@ -99,13 +99,13 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         request_id: None,
                     });
 
-                // Send only to the one client that owns this session. An
+                // Send only to the clients attached to this session. An
                 // earlier version broadcast to every live TCP entry as a
                 // workaround for stale-uuid delivery, and that leaked P2P
                 // message content to any other session multiplexed through the
                 // same internal-service process. If nobody owns it, ILM is the
                 // layer that retries.
-                if route.send(notification).is_none() {
+                if route.send(notification).is_empty() {
                     info!(target: "citadel", "[PeerChannelCreated] No localhost connection owns CID {session_cid}; relying on ILM redelivery");
                 }
             }
@@ -127,7 +127,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     request_id: None,
                 },
             ))
-            .is_none()
+            .is_empty()
         {
             warn!(target: "citadel", "[PeerChannelCreated] No localhost connection owns CID {session_cid} - PeerConnectSuccess dropped");
         }

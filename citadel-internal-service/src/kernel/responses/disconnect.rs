@@ -20,8 +20,9 @@
 use crate::kernel::reconnect::policy::SERVER_HOLDS_SESSION;
 use crate::kernel::reconnect::task::{self, Began};
 use crate::kernel::reconnect::LOG_TARGET;
-use crate::kernel::requests::peer::{cleanup_state, DisconnectedConnection};
-use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
+use crate::kernel::requests::peer::cleanup_state;
+use crate::kernel::session_route::SessionRoute;
+use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{DisconnectNotification, InternalServiceResponse};
 use citadel_sdk::prelude::{ClientConnectionType, Disconnect, NetworkError, Ratchet};
@@ -114,17 +115,19 @@ fn remove<T: IOInterface + Sync, R: Ratchet>(
     let Some(disconnected) = cleanup_state(&this.server_connection_map, cid, None) else {
         return Ok(());
     };
-    let tcp_uuid = match &disconnected {
-        DisconnectedConnection::C2S { tcp_uuid, .. } => *tcp_uuid,
-        DisconnectedConnection::P2P { tcp_uuid, .. } => *tcp_uuid,
-    };
+    let route = SessionRoute::new(
+        disconnected.subscribers().clone(),
+        this.tx_to_localhost_clients.clone(),
+    );
     drop(disconnected);
     let response = InternalServiceResponse::DisconnectNotification(DisconnectNotification {
         cid,
         peer_cid: None,
         request_id: None,
     });
-    send_response_to_tcp_client(&this.tx_to_localhost_clients, response, tcp_uuid)
+    // Every window attached to the session hears it ended.
+    route.send(response);
+    Ok(())
 }
 
 #[cfg(test)]

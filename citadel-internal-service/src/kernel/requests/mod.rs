@@ -30,6 +30,7 @@ mod message;
 mod register;
 
 mod connection_management;
+mod connection_management_attach;
 pub(crate) mod connection_management_auth;
 mod connection_management_claim;
 mod connection_management_claim_sdk;
@@ -122,19 +123,18 @@ where
     // write or wipe its persistent store. `gate_decision` derives that from the
     // command itself.
     if let Some(cid) = command.session_cid() {
-        let owner = {
+        // Whether the caller is attached: any window of the session may act on
+        // it, the primary or not (kernel/session_subscribers.rs).
+        let attached = {
             let map = this.server_connection_map.read();
-            map.get(&cid).map(|conn| {
-                conn.associated_localhost_connection
-                    .load(std::sync::atomic::Ordering::Relaxed)
-            })
+            map.get(&cid).map(|conn| conn.subscribers.contains(uuid))
         };
         // The decision itself is a pure function of (command, owner, caller),
         // and it is taken there rather than here so it can be tested without a
         // running service. It was inline, and a control that restored the
         // silent `return None` passed every test in this file: the tests
         // covered the response BUILDER, which nothing was obliged to call.
-        match gate_decision(&command, owner, uuid) {
+        match gate_decision(&command, attached) {
             GateDecision::Proceed => {}
             GateDecision::Refuse { reason } => {
                 // Name the request type: "something was refused" is not
@@ -470,14 +470,15 @@ pub(crate) fn spawn_group_channel_receiver(
                             message,
                             InternalServiceResponse::GroupMessageNotification(_)
                         );
-                        match route.send(message) {
-                            Some(target) if is_message => {
-                                info!(target:"citadel","[GROUP-RECV] Delivered a group message for CID {implicated_cid} to {target}");
-                            }
-                            Some(_) => {}
-                            None => {
+                        let delivered = route.send(message);
+                        match delivered.as_slice() {
+                            [] => {
                                 info!(target:"citadel","No localhost connection owns CID {implicated_cid} - group broadcast dropped");
                             }
+                            targets if is_message => {
+                                info!(target:"citadel","[GROUP-RECV] Delivered a group message for CID {implicated_cid} to {targets:?}");
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -548,8 +549,7 @@ pub(crate) enum GateDecision {
 /// session it does not know at all.
 pub(crate) fn gate_decision(
     command: &InternalServiceRequest,
-    owner: Option<Uuid>,
-    caller: Uuid,
+    caller_attached: Option<bool>,
 ) -> GateDecision {
     // Derived here rather than passed in: a caller that computes it separately
     // can pass one that disagrees with the command, and then the decision is
@@ -572,13 +572,13 @@ pub(crate) fn gate_decision(
     }
 
     let requires_ownership = requires_owned_session(command);
-    match owner {
-        // Known but held by somebody else. Refused whatever it asks for: the
-        // gate's original purpose.
-        Some(owner) if owner != caller => GateDecision::Refuse {
+    match caller_attached {
+        // Known but the caller is not attached to it. Refused whatever it asks
+        // for: the gate's original purpose.
+        Some(false) => GateDecision::Refuse {
             reason: "the connection does not own it",
         },
-        Some(_) => GateDecision::Proceed,
+        Some(true) => GateDecision::Proceed,
         // Not in the map at all. Reads may proceed -- the handler fails them
         // honestly -- but a write or a wipe must not, or any connection could
         // clear the store of an account that merely happens to be disconnected.
@@ -1155,12 +1155,11 @@ mod ownership_gate_tests {
     fn a_refused_sign_out_is_answered_rather_than_dropped() {
         let request_id = Uuid::new_v4();
         let mine = Uuid::new_v4();
-        let theirs = Uuid::new_v4();
 
         for command in refused_when_owned_elsewhere(request_id, 7) {
             assert!(
                 matches!(
-                    gate_decision(&command, Some(theirs), mine),
+                    gate_decision(&command, Some(false)),
                     GateDecision::Refuse { .. }
                 ),
                 "{command:?}"
@@ -1291,10 +1290,9 @@ mod ownership_gate_tests {
     #[test]
     fn a_refused_request_never_decides_to_proceed() {
         let mine = Uuid::new_v4();
-        let theirs = Uuid::new_v4();
         for command in gated_requests(Uuid::new_v4(), 7) {
             // No mapped session: refused, and the refusal is answerable.
-            let unmapped = gate_decision(&command, None, mine);
+            let unmapped = gate_decision(&command, None);
             assert!(
                 matches!(unmapped, GateDecision::Refuse { .. }),
                 "{command:?}"
@@ -1302,14 +1300,11 @@ mod ownership_gate_tests {
             assert!(refusal_response(&command, mine).is_some());
             // Mapped to somebody else: refused too.
             assert!(matches!(
-                gate_decision(&command, Some(theirs), mine),
+                gate_decision(&command, Some(false)),
                 GateDecision::Refuse { .. }
             ));
             // Mapped to the caller: allowed through.
-            assert_eq!(
-                gate_decision(&command, Some(mine), mine),
-                GateDecision::Proceed
-            );
+            assert_eq!(gate_decision(&command, Some(true)), GateDecision::Proceed);
         }
     }
 
@@ -1321,27 +1316,20 @@ mod ownership_gate_tests {
     /// auto-reconnect preference could never be saved at all.
     #[test]
     fn cid_zero_is_not_a_session_anyone_owns() {
-        let mine = Uuid::new_v4();
-        let theirs = Uuid::new_v4();
         for command in gated_requests(Uuid::new_v4(), 0) {
-            assert_eq!(gate_decision(&command, None, mine), GateDecision::Proceed);
+            assert_eq!(gate_decision(&command, None), GateDecision::Proceed);
             // Not even when the map happens to hold something under 0: there is
             // no account there to protect.
-            assert_eq!(
-                gate_decision(&command, Some(theirs), mine),
-                GateDecision::Proceed
-            );
+            assert_eq!(gate_decision(&command, Some(false)), GateDecision::Proceed);
         }
     }
 
     /// A real session is still protected.
     #[test]
     fn a_real_session_is_still_refused_to_a_stranger() {
-        let mine = Uuid::new_v4();
-        let theirs = Uuid::new_v4();
         for command in gated_requests(Uuid::new_v4(), 7) {
             assert!(matches!(
-                gate_decision(&command, Some(theirs), mine),
+                gate_decision(&command, Some(false)),
                 GateDecision::Refuse { .. }
             ));
         }
@@ -1371,7 +1359,7 @@ mod ownership_gate_tests {
             key: "credentials".into(),
         };
         assert!(matches!(
-            gate_decision(&read, None, Uuid::new_v4()),
+            gate_decision(&read, None),
             GateDecision::Refuse { .. }
         ));
     }
@@ -1390,7 +1378,7 @@ mod ownership_gate_tests {
             cid: 1,
         };
         assert!(matches!(
-            gate_decision(&dereg, None, Uuid::new_v4()),
+            gate_decision(&dereg, None),
             GateDecision::Refuse { .. }
         ));
         assert!(refusal_response(&dereg, Uuid::new_v4()).is_some());
@@ -1403,16 +1391,12 @@ mod ownership_gate_tests {
     /// would still pass.
     #[test]
     fn an_owned_session_still_allows_a_read() {
-        let mine = Uuid::new_v4();
         let read = InternalServiceRequest::LocalDBGetKV {
             request_id: Uuid::new_v4(),
             cid: 1,
             peer_cid: None,
             key: "inbound_messages-1".into(),
         };
-        assert_eq!(
-            gate_decision(&read, Some(mine), mine),
-            GateDecision::Proceed
-        );
+        assert_eq!(gate_decision(&read, Some(true)), GateDecision::Proceed);
     }
 }

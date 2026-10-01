@@ -8,7 +8,7 @@
 //! notifications; `GetSessions` will hand over every one of them.
 //!
 //! These tests assert the CONSEQUENCE, not the refusal message. A claim
-//! re-points `associated_localhost_connection`, which is the field
+//! re-points the session's subscriber set (`Connection::subscribers`), which is the field
 //! `send_response_for_session` routes by — so the thing to prove is that the
 //! victim's own stream still receives its session's notifications afterwards.
 //! Asserting only "a failure came back" would pass against a handler that
@@ -90,7 +90,7 @@ mod tests {
         }
 
         // The consequence. A PeerRegister addressed to the victim's CID is
-        // delivered through `associated_localhost_connection` — the exact field
+        // delivered through the session's subscriber set (`Connection::subscribers`) — the exact field
         // a successful claim overwrites. If the claim had landed, this arrives
         // on the thief's stream and never on the victim's.
         thief.0.send(InternalServiceRequest::PeerRegister {
@@ -184,7 +184,7 @@ mod tests {
     /// at the claimer — so with two released sessions on one service, claiming
     /// one adopted the other.
     ///
-    /// `associated_localhost_connection` is the field `send_response_for_session`
+    /// the session's subscriber set (`Connection::subscribers`) is the field `send_response_for_session`
     /// routes by AND the field the ownership gate reads, so the consequence is
     /// both halves at once: the claimer receives the other account's
     /// notifications, and that account is refused its own session as "not

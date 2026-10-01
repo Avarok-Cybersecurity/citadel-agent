@@ -9,7 +9,7 @@ use citadel_sdk::prelude::Ratchet;
 use futures::StreamExt;
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+
 use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
@@ -107,6 +107,14 @@ pub trait IOInterfaceExt: IOInterface {
 
             tcp_connection_map.write().remove(&conn_id);
             retire_media_lane(&media_lanes, &conn_id);
+            // It leaves every session it was attached to, and only it: a session
+            // keeps its other windows, and a primary that left is replaced by the
+            // longest-attached one (kernel/membership.rs).
+            crate::kernel::membership::detach_everywhere(
+                &server_connection_map,
+                &tcp_connection_map,
+                conn_id,
+            );
 
             // ALWAYS preserve sessions when TCP drops.
             //
@@ -132,9 +140,7 @@ pub trait IOInterfaceExt: IOInterface {
                     .collect();
                 let preserved: Vec<(u64, String)> = lock
                     .iter()
-                    .filter(|(_, conn)| {
-                        conn.associated_localhost_connection.load(Ordering::Relaxed) == conn_id
-                    })
+                    .filter(|(_, conn)| conn.subscribers.last_holder() == Some(conn_id))
                     .map(|(cid, conn)| (*cid, conn.username.clone()))
                     .collect();
                 (preserved.len(), all, preserved)
@@ -142,7 +148,7 @@ pub trait IOInterfaceExt: IOInterface {
 
             info!(target: "citadel", "[TCP_DISCONNECT] Connection {conn_id:?} closed. Preserving all sessions.");
             info!(target: "citadel", "[TCP_DISCONNECT] Total sessions in map: {:?}", all_sessions);
-            info!(target: "citadel", "[TCP_DISCONNECT] Sessions associated with THIS connection ({conn_id:?}): {:?}", preserved_sessions_info);
+            info!(target: "citadel", "[TCP_DISCONNECT] Sessions this connection was the last to hold ({conn_id:?}): {:?}", preserved_sessions_info);
             info!(target: "citadel", "[TCP_DISCONNECT] Preserved {} sessions for reconnection", preserved_session_count);
 
             // Clean up the orphan_sessions entry if it exists (no longer used for decisions)

@@ -8,7 +8,6 @@ use citadel_internal_service_types::{
 use citadel_sdk::logging::{debug, info, tracing};
 use citadel_sdk::prelude::{Ratchet, TargetLockedRemote};
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -67,13 +66,11 @@ fn build_response_from_internal_state<T: IOInterface, R: Ratchet>(
     info!(target: "citadel", "GetSessions: Found {} total sessions in server_connection_map", lock.len());
 
     for (cid, connection) in lock.iter() {
-        let conn_id = connection
-            .associated_localhost_connection
-            .load(Ordering::Relaxed);
+        let conn_id = connection.subscribers.members();
         // debug!, not info!: this is one line per session per poll, and the
         // messenger polls at 1Hz, so it is O(sessions^2) lines/sec on a fully
         // idle system -- 17% of the whole internal-service log.
-        debug!(target: "citadel", "GetSessions: Session {} for user {} associated with connection {}", cid, connection.username, conn_id);
+        debug!(target: "citadel", "GetSessions: Session {} for user {} attached to connections {:?}", cid, connection.username, conn_id);
 
         let mut session = SessionInformation {
             cid: *cid,

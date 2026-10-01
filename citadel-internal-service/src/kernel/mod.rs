@@ -39,6 +39,7 @@ pub(crate) mod c2s_reader;
 pub(crate) mod credential_fingerprint;
 pub(crate) mod ext;
 pub(crate) mod group_channels;
+pub(crate) mod ilm;
 pub(crate) mod media;
 pub(crate) mod peer_path;
 pub(crate) mod pending_group_invites;
@@ -48,6 +49,7 @@ pub(crate) mod reconnect;
 use reconnect::policy::ReconnectPolicy;
 pub(crate) mod attach_tokens;
 pub(crate) mod membership;
+mod membership_hosting;
 pub(crate) mod requests;
 pub(crate) mod responses;
 pub(crate) mod revfs_correlation;
@@ -98,6 +100,11 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) reconnect_policy: ReconnectPolicy,
     /// Sessions a reconnect gave up on, until they sign in again (reconnect/signed_out.rs).
     pub(crate) signed_out: reconnect::signed_out::SignedOut,
+    /// The ILM the agent hosts per account, for clients that declared
+    /// `agent_ilm` (kernel/ilm).
+    pub(crate) ilm_hosts: Arc<ilm::IlmRegistry>,
+    /// What each localhost connection's client declared it can do.
+    pub(crate) client_capabilities: Arc<RwLock<HashMap<Uuid, ClientCapabilities>>>,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -115,6 +122,8 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             connecting_usernames: self.connecting_usernames.clone(),
             reconnect_policy: self.reconnect_policy,
             signed_out: self.signed_out.clone(),
+            ilm_hosts: self.ilm_hosts.clone(),
+            client_capabilities: self.client_capabilities.clone(),
             io: self.io.clone(),
         }
     }
@@ -136,6 +145,8 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             connecting_usernames: Arc::new(Mutex::new(HashSet::new())),
             reconnect_policy,
             signed_out: Default::default(),
+            ilm_hosts: Default::default(),
+            client_capabilities: Default::default(),
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -547,6 +558,7 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
                     media_lanes.clone(),
                     server_connection_map.clone(),
                     self.orphan_sessions.clone(),
+                    self.client_capabilities.clone(),
                 );
             }
             Ok(())

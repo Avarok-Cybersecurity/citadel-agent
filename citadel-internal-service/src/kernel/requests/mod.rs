@@ -28,6 +28,7 @@ mod get_sessions;
 mod media;
 mod message;
 mod register;
+mod send_reliable;
 
 mod connection_management;
 mod connection_management_attach;
@@ -163,6 +164,9 @@ where
         InternalServiceRequest::Connect { .. } => connect::handle(this, uuid, command).await,
         InternalServiceRequest::Register { .. } => register::handle(this, uuid, command).await,
         InternalServiceRequest::Message { .. } => message::handle(this, uuid, command).await,
+        InternalServiceRequest::SendReliable { .. } => {
+            send_reliable::handle(this, uuid, command).await
+        }
 
         InternalServiceRequest::MediaOpen { .. } => media::handle_open(this, uuid, command).await,
         InternalServiceRequest::MediaSend { .. } => media::handle_send(this, uuid, command).await,
@@ -332,6 +336,69 @@ where
             })
         }
     }
+}
+
+/// A LocalDB request answered for the agent itself -- the account ILM it
+/// hosts (kernel/ilm) -- without the ownership gate, which exists to keep one
+/// connection out of another's session and has no connection to judge here.
+pub(crate) async fn answer_local_db<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    request: InternalServiceRequest,
+) -> InternalServiceResponse {
+    let request_id = request.request_id().copied();
+    let answered = match request {
+        InternalServiceRequest::LocalDBGetKV { .. } => {
+            local_db::get_kv::handle(this, Uuid::nil(), request).await
+        }
+        InternalServiceRequest::LocalDBSetKV { .. } => {
+            local_db::set_kv::handle(this, Uuid::nil(), request).await
+        }
+        InternalServiceRequest::LocalDBDeleteKV { .. } => {
+            local_db::delete_kv::handle(this, Uuid::nil(), request).await
+        }
+        InternalServiceRequest::Batched {
+            request_id,
+            commands,
+        } => {
+            let mut results = Vec::with_capacity(commands.len());
+            for command in commands {
+                results.push(Box::pin(answer_local_db(this, command)).await);
+            }
+            return InternalServiceResponse::BatchedResponse(BatchedResponseData {
+                cid: 0,
+                request_id: Some(request_id),
+                results,
+            });
+        }
+        other => {
+            return InternalServiceResponse::LocalDBGetKVFailure(LocalDBGetKVFailure {
+                cid: other.session_cid().unwrap_or(0),
+                peer_cid: None,
+                message: "not a request the agent's own ILM makes".to_string(),
+                request_id,
+            })
+        }
+    };
+    match answered {
+        Some(result) => result.response,
+        None => InternalServiceResponse::LocalDBGetKVFailure(LocalDBGetKVFailure {
+            cid: 0,
+            peer_cid: None,
+            message: "the LocalDB handler gave no answer".to_string(),
+            request_id,
+        }),
+    }
+}
+
+/// `Message`'s handler, for the agent's own ILM frames.
+pub(crate) async fn send_message<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    uuid: Uuid,
+    request: InternalServiceRequest,
+) -> Option<InternalServiceResponse> {
+    message::handle(this, uuid, request)
+        .await
+        .map(|result| result.response)
 }
 
 /// `route`, not a `Uuid`: this task outlives any single localhost connection.
@@ -816,6 +883,9 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::Message {
+            request_id, cid, ..
+        }
+        | InternalServiceRequest::SendReliable {
             request_id, cid, ..
         } => InternalServiceResponse::MessageSendFailure(MessageSendFailure {
             cid: *cid,

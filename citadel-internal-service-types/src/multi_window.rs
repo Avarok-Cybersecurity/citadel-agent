@@ -82,6 +82,47 @@ pub struct SessionAttached {
     pub request_id: Option<Uuid>,
 }
 
+/// What a connection's client can do, declared once per connection.
+///
+/// A client that declares `agent_ilm` never runs an ILM of its own for a
+/// session: it sends reliable messages with `SendReliable` and the agent hosts
+/// the session's ILM. A client that declares nothing is treated as one that
+/// predates this (citadel-workspace `docs/plans/multi-window-sessions.md`).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct ClientCapabilities {
+    pub agent_ilm: bool,
+}
+
+/// The answer to `DeclareCapabilities`: what this agent offers.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct AgentCapabilities {
+    /// Always 0: capabilities belong to the agent, not to a session.
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    /// The agent hosts each session's ILM for a client that declared it.
+    pub agent_ilm: bool,
+    /// A session may be attached to several connections (`AttachSession`).
+    pub multi_window: bool,
+    pub request_id: Option<Uuid>,
+}
+
+/// A `SendReliable` was accepted by the session's ILM: it is stored and will be
+/// retransmitted until the peer acknowledges it. Not "delivered".
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct SendReliableAccepted {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub peer_cid: u64,
+    pub request_id: Option<Uuid>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -83,6 +83,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
         // Spawn a task to read incoming messages from the peer
         let stream_route = route.clone();
+        let ilm = this.ilm_hosts.clone();
         tokio::spawn(async move {
             let route = stream_route;
             info!(target: "citadel", "[P2P-RECV-CHANNEL] *** Starting P2P read stream for LOCAL_CID={} from PEER={} ***", session_cid, peer_cid);
@@ -91,13 +92,18 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             while let Some(message) = stream.next().await {
                 info!(target: "citadel", "[PeerChannelCreated] Received P2P message! session={}, peer_cid={}, msg_len={}", session_cid, peer_cid, message.len());
 
-                let notification =
-                    InternalServiceResponse::MessageNotification(MessageNotification {
-                        message: message.into_buffer().into(),
-                        cid: session_cid,
-                        peer_cid,
-                        request_id: None,
-                    });
+                let arrived = MessageNotification {
+                    message: message.into_buffer().into(),
+                    cid: session_cid,
+                    peer_cid,
+                    request_id: None,
+                };
+                // An account the agent hosts ILM for takes its frames here; the
+                // windows hear what ILM delivers (kernel/ilm).
+                let Err(raw) = ilm.feed(arrived) else {
+                    continue;
+                };
+                let notification = InternalServiceResponse::MessageNotification(raw);
 
                 // Send only to the clients attached to this session. An
                 // earlier version broadcast to every live TCP entry as a

@@ -63,7 +63,7 @@ fn link_of<T: IOInterface, R: Ratchet>(
         .map(|conn| conn.link)
 }
 
-pub(super) async fn claim_session<T: IOInterface, R: Ratchet>(
+pub(super) async fn claim_session<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     conn_id: Uuid,
     request_id: Uuid,
@@ -106,74 +106,87 @@ pub(super) async fn claim_session<T: IOInterface, R: Ratchet>(
     // Step 3 await (see `decide_claim`). `owner_of` cannot be reused for
     // this: it takes and releases its own locks, which is exactly the
     // check-then-act split being closed.
-    let server_connection_map = this.server_connection_map.write();
+    // Under the map's write lock, released before anything below awaits.
+    let (sessions_to_update, updated_count) = {
+        let server_connection_map = this.server_connection_map.write();
 
-    let Some(subscribers) = server_connection_map
-        .get(&session_cid)
-        .map(|connection| connection.subscribers.clone())
-    else {
-        // Removed during the await (logout or deregister landed first).
-        return Some(refusal(
-            session_cid,
-            request_id,
-            conn_id,
-            format!("Session {} not found", session_cid),
-        ));
-    };
-    // Same lock order as DisconnectOrphan: connection map, then client map —
-    // never the reverse, so no inversion deadlock.
-    let owner_now = live_owner(this, subscribers.members());
-    if let Err(error) = decide_claim(owner_now.clone(), only_if_orphaned, conn_id, session_cid) {
-        return Some(refusal(session_cid, request_id, conn_id, error));
-    }
-
-    // An orphan is adopted together with every other orphan the SAME dropped
-    // socket held: sessions that shared one browser socket belong together, so
-    // a reload reclaims all of them at once. `last_holder` is that socket; it is
-    // `None` after a release ("nobody's"), which is a property, not an identity
-    // -- sweeping by it once adopted every released session on the machine,
-    // other accounts' included.
-    //
-    // A member re-asserting a live session it is attached to changes nothing,
-    // and in particular does not throw the session's other windows out.
-    let sessions_to_update: Vec<(u64, crate::kernel::session_subscribers::SessionSubscribers)> =
-        match (owner_now, subscribers.last_holder()) {
-            (SessionOwner::Orphaned, Some(old_socket)) => server_connection_map
-                .iter()
-                .filter(|(_, conn)| {
-                    conn.subscribers.last_holder() == Some(old_socket)
-                        && conn.subscribers.primary().is_none()
-                })
-                .map(|(cid, conn)| (*cid, conn.subscribers.clone()))
-                .collect(),
-            _ => vec![(session_cid, subscribers)],
+        let Some(subscribers) = server_connection_map
+            .get(&session_cid)
+            .map(|connection| connection.subscribers.clone())
+        else {
+            // Removed during the await (logout or deregister landed first).
+            return Some(refusal(
+                session_cid,
+                request_id,
+                conn_id,
+                format!("Session {} not found", session_cid),
+            ));
         };
+        // Same lock order as DisconnectOrphan: connection map, then client map —
+        // never the reverse, so no inversion deadlock.
+        let owner_now = live_owner(this, subscribers.members());
+        if let Err(error) = decide_claim(owner_now.clone(), only_if_orphaned, conn_id, session_cid)
+        {
+            return Some(refusal(session_cid, request_id, conn_id, error));
+        }
 
-    let updated_count = sessions_to_update.len();
+        // An orphan is adopted together with every other orphan the SAME dropped
+        // socket held: sessions that shared one browser socket belong together, so
+        // a reload reclaims all of them at once. `last_holder` is that socket; it is
+        // `None` after a release ("nobody's"), which is a property, not an identity
+        // -- sweeping by it once adopted every released session on the machine,
+        // other accounts' included.
+        //
+        // A member re-asserting a live session it is attached to changes nothing,
+        // and in particular does not throw the session's other windows out.
+        let sessions_to_update: Vec<(u64, crate::kernel::session_subscribers::SessionSubscribers)> =
+            match (owner_now, subscribers.last_holder()) {
+                (SessionOwner::Orphaned, Some(old_socket)) => server_connection_map
+                    .iter()
+                    .filter(|(_, conn)| {
+                        conn.subscribers.last_holder() == Some(old_socket)
+                            && conn.subscribers.primary().is_none()
+                    })
+                    .map(|(cid, conn)| (*cid, conn.subscribers.clone()))
+                    .collect(),
+                _ => vec![(session_cid, subscribers)],
+            };
 
-    // NOTE: We do NOT clear peer connections - the SDK P2P connections are still
-    // active even though the TCP connection to internal service was dropped.
-    // The AsyncSink channels in PeerConnection are SDK-layer, not TCP-layer.
-    for (cid, subs) in &sessions_to_update {
-        crate::kernel::membership::take_over_in(&this.tx_to_localhost_clients, *cid, subs, conn_id);
-        if let Some(conn) = server_connection_map.get(cid) {
-            let peer_count = conn.peers.len();
-            if peer_count > 0 {
-                info!(target: "citadel", "ClaimSession: Session {} has {} existing peer connections (preserved)", cid, peer_count);
+        let updated_count = sessions_to_update.len();
+
+        // NOTE: We do NOT clear peer connections - the SDK P2P connections are still
+        // active even though the TCP connection to internal service was dropped.
+        // The AsyncSink channels in PeerConnection are SDK-layer, not TCP-layer.
+        for (cid, subs) in &sessions_to_update {
+            crate::kernel::membership::take_over_in(
+                &this.tx_to_localhost_clients,
+                *cid,
+                subs,
+                conn_id,
+            );
+            if let Some(conn) = server_connection_map.get(cid) {
+                let peer_count = conn.peers.len();
+                if peer_count > 0 {
+                    info!(target: "citadel", "ClaimSession: Session {} has {} existing peer connections (preserved)", cid, peer_count);
+                }
             }
         }
-    }
 
-    info!(target: "citadel", "ClaimSession: connection {:?} now holds {} session(s)", conn_id, updated_count);
+        info!(target: "citadel", "ClaimSession: connection {:?} now holds {} session(s)", conn_id, updated_count);
 
-    // Add this connection to orphan mode to preserve it when the new connection drops
-    this.orphan_sessions.write().insert(conn_id, true);
-    drop(server_connection_map);
+        // Add this connection to orphan mode to preserve it when the new connection drops
+        this.orphan_sessions.write().insert(conn_id, true);
+
+        (sessions_to_update, updated_count)
+    };
 
     // The reconnect's own notices went to the connection that is gone; the claimer
     // hears the link is down here, and "reconnected" or "failed" follows to it.
     if reconnecting {
         tell_the_claimer_it_is_reconnecting(this, session_cid, conn_id);
+    }
+    for (cid, _) in &sessions_to_update {
+        this.host_ilm_for(*cid, conn_id).await;
     }
 
     Some(HandledRequestResult {

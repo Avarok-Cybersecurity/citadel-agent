@@ -183,19 +183,24 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     }
 
                     let read_route = path_route.clone();
+                    let ilm = this.ilm_hosts.clone();
 
                     let connection_read_stream = async move {
                         info!(target:"citadel","[P2P-RECV-CONNECT] *** Starting P2P read stream for LOCAL_CID={cid} from PEER={peer_cid} ***");
                         info!(target:"citadel","[P2P-RECV-CONNECT] This stream will receive messages SENT BY peer {peer_cid}");
                         while let Some(message) = stream.next().await {
                             info!(target:"citadel","[P2P-RECV] Received P2P message! cid={cid}, peer_cid={peer_cid}, msg_len={}", message.len());
-                            let message =
-                                InternalServiceResponse::MessageNotification(MessageNotification {
-                                    message: message.into_buffer().into(),
-                                    cid,
-                                    peer_cid,
-                                    request_id: Some(request_id),
-                                });
+                            let arrived = MessageNotification {
+                                message: message.into_buffer().into(),
+                                cid,
+                                peer_cid,
+                                request_id: Some(request_id),
+                            };
+                            // A hosted account's ILM frames go to its ILM (kernel/ilm).
+                            let Err(raw) = ilm.feed(arrived) else {
+                                continue;
+                            };
+                            let message = InternalServiceResponse::MessageNotification(raw);
 
                             // To every connection attached to the session, and to
                             // nobody else. This once fell back to broadcasting to

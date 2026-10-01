@@ -37,7 +37,7 @@ use uuid::Uuid;
 pub(crate) const WRONG_PASSWORD: &str = "The password does not match this session";
 pub(crate) const TOKEN_REFUSED: &str = "This browser's session token is not valid any more";
 
-pub(super) async fn attach_session<T: IOInterface, R: Ratchet>(
+pub(super) async fn attach_session<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     conn_id: Uuid,
     request_id: Uuid,
@@ -127,6 +127,7 @@ pub(super) async fn attach_session<T: IOInterface, R: Ratchet>(
             &displaced,
         );
     }
+    this.host_ilm_for(session_cid, conn_id).await;
     let role = if subscribers.primary() == Some(conn_id) {
         SessionRole::Primary
     } else {

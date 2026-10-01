@@ -2,7 +2,7 @@ use crate::kernel::media::{MediaLaneRx, MediaLaneTx};
 use crate::kernel::{send_to_kernel, sink_send_payload, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    InternalServicePayload, InternalServiceResponse, ServiceConnectionAccepted,
+    ClientCapabilities, InternalServicePayload, InternalServiceResponse, ServiceConnectionAccepted,
 };
 use citadel_sdk::logging::{debug, error, info, warn};
 use citadel_sdk::prelude::Ratchet;
@@ -30,6 +30,7 @@ pub trait IOInterfaceExt: IOInterface {
         media_lanes: Arc<RwLock<HashMap<Uuid, MediaLaneTx>>>,
         server_connection_map: Arc<RwLock<HashMap<u64, Connection<R>>>>,
         orphan_sessions: Arc<RwLock<HashMap<Uuid, bool>>>,
+        client_capabilities: Arc<RwLock<HashMap<Uuid, ClientCapabilities>>>,
     ) {
         tokio::task::spawn(async move {
             let write_task = async {
@@ -110,6 +111,7 @@ pub trait IOInterfaceExt: IOInterface {
             // It leaves every session it was attached to, and only it: a session
             // keeps its other windows, and a primary that left is replaced by the
             // longest-attached one (kernel/membership.rs).
+            client_capabilities.write().remove(&conn_id);
             crate::kernel::membership::detach_everywhere(
                 &server_connection_map,
                 &tcp_connection_map,

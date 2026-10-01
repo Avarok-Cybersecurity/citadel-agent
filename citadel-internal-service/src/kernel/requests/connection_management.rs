@@ -64,7 +64,7 @@ pub(super) fn refusal(
     }
 }
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     conn_id: Uuid,
     command: InternalServiceRequest,
@@ -114,6 +114,29 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 
             ConfigCommand::DisconnectOrphan { session_cid } => {
                 return disconnect_orphan(this, conn_id, request_id, session_cid).await
+            }
+
+            ConfigCommand::DeclareCapabilities { capabilities } => {
+                this.client_capabilities
+                    .write()
+                    .insert(conn_id, capabilities);
+                // Sessions this connection already holds are hosted from now on.
+                let held: Vec<u64> = this
+                    .server_connection_map
+                    .read()
+                    .iter()
+                    .filter(|(_, conn)| conn.subscribers.contains(conn_id))
+                    .map(|(cid, _)| *cid)
+                    .collect();
+                for cid in held {
+                    this.host_ilm_for(cid, conn_id).await;
+                }
+                InternalServiceResponse::AgentCapabilities(AgentCapabilities {
+                    cid: 0,
+                    agent_ilm: true,
+                    multi_window: true,
+                    request_id: Some(request_id),
+                })
             }
 
             ConfigCommand::AttachSession { session_cid, proof } => {

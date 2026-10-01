@@ -21,7 +21,10 @@ mod multi_window;
 mod server_link;
 mod turn;
 pub use group_drop::GroupMessageDroppedNotification;
-pub use multi_window::{AttachProof, SessionAttached, SessionRole, SessionRoleNotification};
+pub use multi_window::{
+    AgentCapabilities, AttachProof, ClientCapabilities, SendReliableAccepted, SessionAttached,
+    SessionRole, SessionRoleNotification,
+};
 pub use server_link::{
     ServerConnectionLost, ServerReconnectFailed, ServerReconnected, SignedOutSession,
 };
@@ -1448,6 +1451,8 @@ pub enum InternalServiceResponse {
     ServerReconnectFailed(ServerReconnectFailed),
     SessionAttached(SessionAttached),
     SessionRoleNotification(SessionRoleNotification),
+    AgentCapabilities(AgentCapabilities),
+    SendReliableAccepted(SendReliableAccepted),
     /// Results from a batched request, in the same order as input commands
     BatchedResponse(BatchedResponseData),
 }
@@ -1872,6 +1877,22 @@ pub enum InternalServiceRequest {
         request_id: Uuid,
         management_command: ConfigCommand,
     },
+    /// Send `message` to `peer_cid` through the ILM the agent hosts for `cid`.
+    /// Answered with `SendReliableAccepted` once ILM has it, or `MessageSendFailure`.
+    SendReliable {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[debug(with = plaintext_debug_fmt)]
+        message: Vec<u8>,
+        #[cfg_attr(feature = "typescript", ts(type = "SecurityLevel"))]
+        security_level: SecurityLevel,
+        /// "json", "text", "yjs-update", "opaque", "cbor-command", or none.
+        compression_hint: Option<String>,
+    },
     /// Execute multiple requests in parallel, returning results in the same order as input.
     /// This enables single-roundtrip batch operations for efficiency.
     Batched {
@@ -1943,6 +1964,10 @@ pub enum ConfigCommand {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         session_cid: u64,
         proof: AttachProof,
+    },
+    /// Say what this connection's client can do; answered with `AgentCapabilities`.
+    DeclareCapabilities {
+        capabilities: ClientCapabilities,
     },
 }
 
@@ -2079,6 +2104,7 @@ impl InternalServiceRequest {
             Self::GroupListGroupsFor { cid, .. } => Some(*cid),
             Self::GroupListJoined { cid, .. } => Some(*cid),
             Self::GroupRequestJoin { cid, .. } => Some(*cid),
+            Self::SendReliable { cid, .. } => Some(*cid),
             // Exhaustive on purpose: no `_` arm.
             //
             // The catch-all made this gate fail OPEN by omission — a variant

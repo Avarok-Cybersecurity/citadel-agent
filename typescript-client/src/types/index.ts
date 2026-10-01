@@ -7,8 +7,10 @@
 
 export * from './AccountInformation.js';
 export * from './Accounts.js';
+export * from './AgentCapabilities.js';
 export * from './AttachProof.js';
 export * from './BatchedResponseData.js';
+export * from './ClientCapabilities.js';
 export * from './ConfigCommand.js';
 export * from './ConnectFailure.js';
 export * from './ConnectSuccess.js';
@@ -112,6 +114,7 @@ export * from './RegisterFailure.js';
 export * from './RegisterSuccess.js';
 export * from './SendFileRequestFailure.js';
 export * from './SendFileRequestSuccess.js';
+export * from './SendReliableAccepted.js';
 export * from './ServerConnectionLost.js';
 export * from './ServerReconnectFailed.js';
 export * from './ServerReconnected.js';

@@ -41,6 +41,10 @@ bytes = { workspace = true }
 # OS randomness for session attach tokens (kernel/attach_tokens.rs). Already in
 # the tree through the SDK; declared for direct use.
 getrandom = "0.3"
+# The account ILM the agent hosts (kernel/ilm): the same crate the browser's
+# messenger runs, so frames and stored state are identical.
+intersession-layer-messaging = { workspace = true }
+async-trait = { workspace = true }
 async-recursion = { workspace = true }
 # Optional: native file picker dialog (requires desktop environment)
 rfd = { workspace = true, optional = true }
@@ -54,5 +58,7 @@ parking_lot = { workspace = true }
 libc = "0.2"
 
 [dev-dependencies]
+# A replica of the legacy wire enum, to prove an older peer can read every frame.
+serde = { workspace = true }
 citadel_sdk = { workspace = true, features=["multi-threaded", "localhost-testing"] }
 citadel-internal-service-test-common = { workspace = true }

@@ -178,6 +178,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 // the caller becomes the only subscriber, and whoever it displaced
                 // is told (kernel/session_subscribers.rs).
                 crate::kernel::membership::take_over(this, cid, uuid);
+                this.host_ilm_for(cid, uuid).await;
                 // Lets the frontend handle it gracefully (e.g. redirect to the workspace).
                 let response = InternalServiceResponse::SessionAlreadyActive(
                     citadel_internal_service_types::SessionAlreadyActive {
@@ -429,6 +430,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 request_id,
             );
 
+            this.host_ilm_for(cid, uuid).await;
             cleanup_username(this, &username_for_cleanup);
             Some(HandledRequestResult { response, uuid })
         }

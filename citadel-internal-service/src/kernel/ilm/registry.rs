@@ -153,6 +153,16 @@ impl IlmRegistry {
         }
     }
 
+    /// Every account the agent hosts right now.
+    pub(crate) fn hosted(&self) -> Vec<u64> {
+        self.hosts
+            .lock()
+            .iter()
+            .filter(|(_, slot)| matches!(slot, Slot::Running(_)))
+            .map(|(cid, _)| *cid)
+            .collect()
+    }
+
     #[cfg(test)]
     pub(crate) fn is_hosted(&self, cid: u64) -> bool {
         self.hosts.lock().contains_key(&cid)

@@ -1,7 +1,6 @@
 //! The agent's side of [`HostIo`].
 
 use super::HostIo;
-use crate::kernel::session_route::SessionRoute;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -48,12 +47,14 @@ where
             .unwrap_or_default()
     }
 
-    fn deliver(&self, cid: u64, notification: MessageNotification) -> bool {
-        let Some(subscribers) = crate::kernel::membership::subscribers_of(self, cid) else {
-            return false;
-        };
-        !SessionRoute::new(subscribers, self.tx_to_localhost_clients.clone())
-            .send(InternalServiceResponse::MessageNotification(notification))
-            .is_empty()
+    /// A hosted account's delivered messages go to its conversation store,
+    /// which stores, acknowledges and announces them -- with or without a
+    /// window open (kernel/conversations).
+    fn deliver(&self, cid: u64, notification: MessageNotification) -> BoxFuture<'static, bool> {
+        let this = self.clone();
+        Box::pin(async move {
+            debug_assert_eq!(notification.cid, cid);
+            this.conversations.delivered(&this, notification).await
+        })
     }
 }

@@ -16,10 +16,21 @@ use uuid::Uuid;
 #[cfg(feature = "typescript")]
 use ts_rs::TS;
 
+mod conversation;
+mod conversation_api;
 mod group_drop;
 mod multi_window;
 mod server_link;
 mod turn;
+pub use conversation::{
+    Attachment, ConversationMessage, ConversationMetadata, ConversationPage, MessagePatch,
+    MessageStatus, MessageType, PageTimestamps, Reaction, TransferMode, TransferState,
+};
+pub use conversation_api::{
+    AccountPreferences, AccountPreferencesResponse, ConversationEvent, ConversationEventKind,
+    ConversationFailure, ConversationListResponse, ConversationPageResponse, ConversationUpdated,
+    NotificationPreview, PeerRetention, Retention,
+};
 pub use group_drop::GroupMessageDroppedNotification;
 pub use multi_window::{
     AgentCapabilities, AttachProof, ClientCapabilities, SendReliableAccepted, SessionAttached,
@@ -1453,6 +1464,12 @@ pub enum InternalServiceResponse {
     SessionRoleNotification(SessionRoleNotification),
     AgentCapabilities(AgentCapabilities),
     SendReliableAccepted(SendReliableAccepted),
+    ConversationEvent(Box<ConversationEvent>),
+    ConversationUpdated(Box<ConversationUpdated>),
+    ConversationFailure(ConversationFailure),
+    ConversationListResponse(Box<ConversationListResponse>),
+    ConversationPageResponse(Box<ConversationPageResponse>),
+    AccountPreferencesResponse(Box<AccountPreferencesResponse>),
     /// Results from a batched request, in the same order as input commands
     BatchedResponse(BatchedResponseData),
 }
@@ -1877,6 +1894,125 @@ pub enum InternalServiceRequest {
         request_id: Uuid,
         management_command: ConfigCommand,
     },
+    /// Send a chat message: the agent numbers it, stores it as pending, sends
+    /// it through the account's ILM and stores the outcome.
+    ConversationSend {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        #[debug(with = plaintext_debug_fmt)]
+        content: String,
+        message_type: MessageType,
+        reply_to: Option<String>,
+        mentions: Option<Vec<String>>,
+        attachments: Option<Vec<Attachment>>,
+        document_id: Option<String>,
+        document_title: Option<String>,
+        #[cfg_attr(feature = "typescript", ts(type = "SecurityLevel"))]
+        security_level: SecurityLevel,
+    },
+    /// Send a failed message again, with its original id, index and time.
+    ConversationResend {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        message_id: String,
+    },
+    ConversationEdit {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        message_id: String,
+        #[debug(with = plaintext_debug_fmt)]
+        contents: String,
+    },
+    ConversationDelete {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        message_id: String,
+    },
+    ConversationReact {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        message_id: String,
+        emoji: String,
+        active: bool,
+    },
+    /// Everything the peer sent is read: statuses, unread count, and read
+    /// receipts if the account sends them.
+    ConversationMarkRead {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+    },
+    /// File a message a window authored without sending it through the agent
+    /// (a file offer, a system notice).
+    ConversationRecord {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        message: Box<ConversationMessage>,
+    },
+    ConversationPatch {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        message_id: String,
+        patch: Box<MessagePatch>,
+    },
+    /// Delete the conversation's history. `include_unattributed` also removes a
+    /// record that predates ownership stamps (an explicit "Clear Chat History").
+    ConversationClear {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        include_unattributed: bool,
+    },
+    ConversationList {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+    },
+    /// One page of a conversation and its metadata; `page: None` is the newest.
+    ConversationPage {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        page: Option<u32>,
+    },
+    SetAccountPreferences {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        preferences: Box<AccountPreferences>,
+    },
+    GetAccountPreferences {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+    },
     /// Send `message` to `peer_cid` through the ILM the agent hosts for `cid`.
     /// Answered with `SendReliableAccepted` once ILM has it, or `MessageSendFailure`.
     SendReliable {
@@ -2105,6 +2241,19 @@ impl InternalServiceRequest {
             Self::GroupListJoined { cid, .. } => Some(*cid),
             Self::GroupRequestJoin { cid, .. } => Some(*cid),
             Self::SendReliable { cid, .. } => Some(*cid),
+            Self::ConversationSend { cid, .. }
+            | Self::ConversationResend { cid, .. }
+            | Self::ConversationEdit { cid, .. }
+            | Self::ConversationDelete { cid, .. }
+            | Self::ConversationReact { cid, .. }
+            | Self::ConversationMarkRead { cid, .. }
+            | Self::ConversationRecord { cid, .. }
+            | Self::ConversationPatch { cid, .. }
+            | Self::ConversationClear { cid, .. }
+            | Self::ConversationList { cid, .. }
+            | Self::ConversationPage { cid, .. }
+            | Self::SetAccountPreferences { cid, .. }
+            | Self::GetAccountPreferences { cid, .. } => Some(*cid),
             // Exhaustive on purpose: no `_` arm.
             //
             // The catch-all made this gate fail OPEN by omission — a variant

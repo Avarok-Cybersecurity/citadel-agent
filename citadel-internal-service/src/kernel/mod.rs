@@ -36,6 +36,8 @@ use tokio::sync::oneshot::Receiver as OneshotReceiver;
 use uuid::Uuid;
 
 pub(crate) mod c2s_reader;
+pub(crate) mod conversations;
+mod conversations_io;
 pub(crate) mod credential_fingerprint;
 pub(crate) mod ext;
 pub(crate) mod group_channels;
@@ -103,6 +105,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     /// The ILM the agent hosts per account, for clients that declared
     /// `agent_ilm` (kernel/ilm).
     pub(crate) ilm_hosts: Arc<ilm::IlmRegistry>,
+    /// The single writer of hosted accounts' conversations (kernel/conversations).
+    pub(crate) conversations: Arc<conversations::Engine>,
     /// What each localhost connection's client declared it can do.
     pub(crate) client_capabilities: Arc<RwLock<HashMap<Uuid, ClientCapabilities>>>,
     io: Arc<RwLock<Option<T>>>,
@@ -123,6 +127,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             reconnect_policy: self.reconnect_policy,
             signed_out: self.signed_out.clone(),
             ilm_hosts: self.ilm_hosts.clone(),
+            conversations: self.conversations.clone(),
             client_capabilities: self.client_capabilities.clone(),
             io: self.io.clone(),
         }
@@ -146,6 +151,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             reconnect_policy,
             signed_out: Default::default(),
             ilm_hosts: Default::default(),
+            conversations: Default::default(),
             client_capabilities: Default::default(),
             io: Arc::new(RwLock::new(Some(io))),
         }
@@ -614,9 +620,12 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
             Ok(())
         };
 
+        let sweeper = conversations::retention::sweeper(self.clone());
+
         let res = tokio::select! {
             res0 = listener_task => res0,
             res1 = inbound_command_task => res1,
+            () = sweeper => Ok(()),
         };
 
         warn!(target: "citadel", "Shutting down service because a critical task finished. {res:?}");

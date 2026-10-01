@@ -21,6 +21,7 @@ pub(crate) struct HandledRequestResult {
 
 mod connect;
 pub(crate) mod connect_mode;
+mod conversation;
 mod deregister;
 mod disconnect;
 mod get_account_information;
@@ -166,6 +167,21 @@ where
         InternalServiceRequest::Message { .. } => message::handle(this, uuid, command).await,
         InternalServiceRequest::SendReliable { .. } => {
             send_reliable::handle(this, uuid, command).await
+        }
+        InternalServiceRequest::ConversationSend { .. }
+        | InternalServiceRequest::ConversationResend { .. }
+        | InternalServiceRequest::ConversationEdit { .. }
+        | InternalServiceRequest::ConversationDelete { .. }
+        | InternalServiceRequest::ConversationReact { .. }
+        | InternalServiceRequest::ConversationMarkRead { .. }
+        | InternalServiceRequest::ConversationRecord { .. }
+        | InternalServiceRequest::ConversationPatch { .. }
+        | InternalServiceRequest::ConversationClear { .. }
+        | InternalServiceRequest::ConversationList { .. }
+        | InternalServiceRequest::ConversationPage { .. }
+        | InternalServiceRequest::SetAccountPreferences { .. }
+        | InternalServiceRequest::GetAccountPreferences { .. } => {
+            conversation::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::MediaOpen { .. } => media::handle_open(this, uuid, command).await,
@@ -355,6 +371,9 @@ pub(crate) async fn answer_local_db<T: IOInterface, R: Ratchet>(
         }
         InternalServiceRequest::LocalDBDeleteKV { .. } => {
             local_db::delete_kv::handle(this, Uuid::nil(), request).await
+        }
+        InternalServiceRequest::LocalDBGetAllKV { .. } => {
+            local_db::get_all_kv::handle(this, Uuid::nil(), request).await
         }
         InternalServiceRequest::Batched {
             request_id,
@@ -882,6 +901,47 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
             message: REFUSED.to_string(),
             request_id: Some(*request_id),
         }),
+        InternalServiceRequest::ConversationSend {
+            request_id, cid, ..
+        }
+        | InternalServiceRequest::ConversationResend {
+            request_id, cid, ..
+        }
+        | InternalServiceRequest::ConversationEdit {
+            request_id, cid, ..
+        }
+        | InternalServiceRequest::ConversationDelete {
+            request_id, cid, ..
+        }
+        | InternalServiceRequest::ConversationReact {
+            request_id, cid, ..
+        }
+        | InternalServiceRequest::ConversationMarkRead {
+            request_id, cid, ..
+        }
+        | InternalServiceRequest::ConversationRecord {
+            request_id, cid, ..
+        }
+        | InternalServiceRequest::ConversationPatch {
+            request_id, cid, ..
+        }
+        | InternalServiceRequest::ConversationClear {
+            request_id, cid, ..
+        }
+        | InternalServiceRequest::ConversationList { request_id, cid }
+        | InternalServiceRequest::ConversationPage {
+            request_id, cid, ..
+        }
+        | InternalServiceRequest::SetAccountPreferences {
+            request_id, cid, ..
+        }
+        | InternalServiceRequest::GetAccountPreferences { request_id, cid } => {
+            InternalServiceResponse::ConversationFailure(ConversationFailure {
+                cid: *cid,
+                message: REFUSED.to_string(),
+                request_id: Some(*request_id),
+            })
+        }
         InternalServiceRequest::Message {
             request_id, cid, ..
         }
@@ -993,6 +1053,22 @@ pub(crate) fn requires_owned_session(command: &InternalServiceRequest) -> bool {
             // somebody else, never against one held by nobody.
             | InternalServiceRequest::LocalDBGetKV { .. }
             | InternalServiceRequest::Deregister { .. }
+            // The conversation store answers by CID from the agent's own store,
+            // not through `propose_target`, so an account that is signed out
+            // would otherwise hand its history to any connection naming it.
+            | InternalServiceRequest::ConversationSend { .. }
+            | InternalServiceRequest::ConversationResend { .. }
+            | InternalServiceRequest::ConversationEdit { .. }
+            | InternalServiceRequest::ConversationDelete { .. }
+            | InternalServiceRequest::ConversationReact { .. }
+            | InternalServiceRequest::ConversationMarkRead { .. }
+            | InternalServiceRequest::ConversationRecord { .. }
+            | InternalServiceRequest::ConversationPatch { .. }
+            | InternalServiceRequest::ConversationClear { .. }
+            | InternalServiceRequest::ConversationList { .. }
+            | InternalServiceRequest::ConversationPage { .. }
+            | InternalServiceRequest::SetAccountPreferences { .. }
+            | InternalServiceRequest::GetAccountPreferences { .. }
     )
 }
 

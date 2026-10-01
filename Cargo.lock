@@ -677,6 +677,7 @@ dependencies = [
  "parking_lot",
  "rfd",
  "serde",
+ "serde_json",
  "tokio 1.50.0",
  "uuid",
 ]

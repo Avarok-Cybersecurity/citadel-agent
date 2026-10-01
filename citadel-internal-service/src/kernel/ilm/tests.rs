@@ -132,9 +132,11 @@ impl HostIo for FakeAgent {
         vec![self.peer]
     }
 
-    fn deliver(&self, cid: u64, notification: MessageNotification) -> bool {
+    fn deliver(&self, cid: u64, notification: MessageNotification) -> BoxFuture<'static, bool> {
         assert_eq!(cid, self.cid);
-        self.accepts.load(Ordering::SeqCst) && self.delivered.send(notification).is_ok()
+        let taken =
+            self.accepts.load(Ordering::SeqCst) && self.delivered.send(notification).is_ok();
+        Box::pin(async move { taken })
     }
 }
 

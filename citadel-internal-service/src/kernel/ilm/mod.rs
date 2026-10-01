@@ -49,5 +49,5 @@ pub(crate) trait HostIo: Send + Sync + 'static {
     fn connected_peers(&self, cid: u64) -> Vec<u64>;
     /// Hand a delivered message on. `false` means nobody took it, and ILM keeps
     /// it to deliver again.
-    fn deliver(&self, cid: u64, notification: MessageNotification) -> bool;
+    fn deliver(&self, cid: u64, notification: MessageNotification) -> BoxFuture<'static, bool>;
 }

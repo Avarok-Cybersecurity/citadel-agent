@@ -26,7 +26,7 @@ impl LocalDelivery<WrappedMessage> for AgentDelivery {
         else {
             return Err(DeliveryError::BadInput);
         };
-        if self.io.deliver(self.cid, notification) {
+        if self.io.deliver(self.cid, notification).await {
             Ok(())
         } else {
             Err(DeliveryError::NoReceiver)

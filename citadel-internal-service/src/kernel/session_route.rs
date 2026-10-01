@@ -18,10 +18,10 @@
 //! uuid through the CID on every notification. It was never propagated to these
 //! two. This is that resolution, extracted so there is one of it.
 
-use citadel_internal_service_types::{AtomicUuid, InternalServiceResponse};
+use crate::kernel::session_subscribers::SessionSubscribers;
+use citadel_internal_service_types::InternalServiceResponse;
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
@@ -35,18 +35,13 @@ type Clients = Arc<RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>
 /// would be the bug this type exists to remove.
 #[derive(Clone)]
 pub(crate) struct SessionRoute {
-    owner: Arc<AtomicUuid>,
+    owner: Arc<SessionSubscribers>,
     clients: Clients,
 }
 
 impl SessionRoute {
-    pub(crate) fn new(owner: Arc<AtomicUuid>, clients: Clients) -> Self {
+    pub(crate) fn new(owner: Arc<SessionSubscribers>, clients: Clients) -> Self {
         Self { owner, clients }
-    }
-
-    /// The connection that owns this session at this instant.
-    pub(crate) fn current_owner(&self) -> Uuid {
-        self.owner.load(Ordering::Relaxed)
     }
 
     /// Deliver, or report that nobody is listening.
@@ -56,11 +51,33 @@ impl SessionRoute {
     /// notification nobody is listening for is lost, but one sent to everybody
     /// is a disclosure — the same rule `send_response_for_session` follows.
     pub(crate) fn send(&self, response: InternalServiceResponse) -> Option<Uuid> {
-        let target = self.current_owner();
-        // Cloned out of the map before sending, so the lock is not held across
-        // the send.
-        let sender = { self.clients.read().get(&target).cloned() };
-        sender?.send(response).ok().map(|()| target)
+        // Every subscriber of the session: the owner, then any readers (see
+        // kernel/session_subscribers.rs). With no readers this is exactly the
+        // old single-owner send. Senders are cloned out of the map first, so
+        // the lock is not held across the sends.
+        let targets: Vec<(Uuid, UnboundedSender<InternalServiceResponse>)> = {
+            let clients = self.clients.read();
+            self.owner
+                .all()
+                .into_iter()
+                .filter_map(|uuid| clients.get(&uuid).cloned().map(|tx| (uuid, tx)))
+                .collect()
+        };
+        let mut targets = targets.into_iter();
+        let (first_uuid, first_tx) = targets.next()?;
+        let mut delivered: Option<Uuid> = None;
+        // Readers get copies; the owner, first, gets the original.
+        for (uuid, tx) in targets {
+            // A reader whose connection just closed: ext.rs removes it from the
+            // session; nothing else is owed to it.
+            if tx.send(response.clone()).is_err() {
+                citadel_sdk::logging::debug!(target: "citadel", "reader {uuid} closed before a notification reached it");
+            }
+        }
+        if first_tx.send(response).is_ok() {
+            delivered = Some(first_uuid);
+        }
+        delivered
     }
 }
 
@@ -68,6 +85,7 @@ impl SessionRoute {
 mod tests {
     use super::*;
     use citadel_internal_service_types::MessageSendSuccess;
+    use std::sync::atomic::Ordering;
     use tokio::sync::mpsc::unbounded_channel;
 
     fn notification() -> InternalServiceResponse {
@@ -79,11 +97,39 @@ mod tests {
     }
 
     #[test]
+    fn a_notification_reaches_every_subscriber_of_the_session() {
+        // docs/plans/multi-browser-cid.md: the same account open in two browsers
+        // must see the same thing, so a notification goes to the owner AND each
+        // reader -- and to nobody else.
+        let (owner, reader, stranger) =
+            (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let (owner_tx, mut owner_rx) = unbounded_channel();
+        let (reader_tx, mut reader_rx) = unbounded_channel();
+        let (stranger_tx, mut stranger_rx) = unbounded_channel();
+        let clients: Clients = Arc::new(RwLock::new(HashMap::from([
+            (owner, owner_tx),
+            (reader, reader_tx),
+            (stranger, stranger_tx),
+        ])));
+        let subscribers = Arc::new(SessionSubscribers::new(owner));
+        subscribers.add_reader(reader);
+        let route = SessionRoute::new(subscribers, clients);
+
+        assert_eq!(route.send(notification()), Some(owner));
+        assert!(owner_rx.try_recv().is_ok(), "the owner received nothing");
+        assert!(reader_rx.try_recv().is_ok(), "the reader received nothing");
+        assert!(
+            stranger_rx.try_recv().is_err(),
+            "a connection outside the session received it"
+        );
+    }
+
+    #[test]
     fn a_notification_reaches_the_current_owner() {
         let first = Uuid::from_u128(1);
         let (tx, mut rx) = unbounded_channel();
         let clients: Clients = Arc::new(RwLock::new(HashMap::from([(first, tx)])));
-        let route = SessionRoute::new(Arc::new(AtomicUuid::new(first)), clients);
+        let route = SessionRoute::new(Arc::new(SessionSubscribers::new(first)), clients);
 
         assert_eq!(route.send(notification()), Some(first));
         assert!(rx.try_recv().is_ok());
@@ -101,7 +147,7 @@ mod tests {
             (first, first_tx),
             (second, second_tx),
         ])));
-        let owner = Arc::new(AtomicUuid::new(first));
+        let owner = Arc::new(SessionSubscribers::new(first));
         let route = SessionRoute::new(owner.clone(), clients);
 
         assert_eq!(route.send(notification()), Some(first));
@@ -135,7 +181,7 @@ mod tests {
         let absent = Uuid::from_u128(9);
         let (tx, mut rx) = unbounded_channel();
         let clients: Clients = Arc::new(RwLock::new(HashMap::from([(present, tx)])));
-        let route = SessionRoute::new(Arc::new(AtomicUuid::new(absent)), clients);
+        let route = SessionRoute::new(Arc::new(SessionSubscribers::new(absent)), clients);
 
         assert_eq!(route.send(notification()), None);
         assert!(
@@ -152,7 +198,7 @@ mod tests {
         let (tx, rx) = unbounded_channel::<InternalServiceResponse>();
         drop(rx);
         let clients: Clients = Arc::new(RwLock::new(HashMap::from([(owner_id, tx)])));
-        let route = SessionRoute::new(Arc::new(AtomicUuid::new(owner_id)), clients);
+        let route = SessionRoute::new(Arc::new(SessionSubscribers::new(owner_id)), clients);
 
         assert_eq!(route.send(notification()), None);
     }

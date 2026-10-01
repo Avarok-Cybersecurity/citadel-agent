@@ -121,10 +121,10 @@ where
     if let Some(cid) = command.session_cid() {
         let owner = {
             let map = this.server_connection_map.read();
-            map.get(&cid).map(|conn| {
-                conn.associated_localhost_connection
-                    .load(std::sync::atomic::Ordering::Relaxed)
-            })
+            // A reader of the session passes as its owner; see
+            // kernel/session_subscribers.rs (no readers exist yet).
+            map.get(&cid)
+                .map(|conn| conn.associated_localhost_connection.owner_for(uuid))
         };
         // The decision itself is a pure function of (command, owner, caller),
         // and it is taken there rather than here so it can be tested without a

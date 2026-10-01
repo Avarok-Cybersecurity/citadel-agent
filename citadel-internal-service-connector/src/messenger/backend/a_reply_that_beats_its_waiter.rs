@@ -46,16 +46,16 @@ fn reply_to(frame: OutboundFrame<WrappedMessage>) -> InternalServiceResponse {
 #[citadel_io::tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_instant_reply_is_not_lost() {
     let (tx, mut rx) = citadel_io::tokio::sync::mpsc::unbounded_channel();
-    let backend = CitadelWorkspaceBackend {
-        cid: CID,
-        expected_requests: Arc::new(DashMap::new()),
-        bypass_ism_outbound_tx: Some(BypasserTx {
-            tx,
-            stream_key: StreamKey::bypass_ism(),
-        }),
-        outbound_gate: Arc::new(Mutex::new(())),
-        inbound_gate: Arc::new(Mutex::new(())),
-    };
+    let backend = CitadelWorkspaceBackend::with_channel(
+        CID,
+        RequestChannel::new(
+            CID,
+            crate::messenger::BypasserTx {
+                tx,
+                stream_key: StreamKey::bypass_ism(),
+            },
+        ),
+    );
     let stop = Arc::new(AtomicBool::new(false));
     let responder = {
         let backend = backend.clone();

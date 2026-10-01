@@ -51,6 +51,7 @@ use uuid::Uuid;
 use wasm_bindgen_futures;
 
 pub mod backend;
+pub mod backend_channel;
 pub mod backend_map;
 pub mod wire;
 

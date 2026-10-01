@@ -1,24 +1,29 @@
+pub use crate::messenger::backend_channel::{BackendChannel, RequestChannel};
 use crate::messenger::backend_map::{mutate, MapStore, State};
-use crate::messenger::{sleep_internal, BypasserTx, MessengerTx, WrappedMessage};
+use crate::messenger::{sleep_internal, MessengerTx, WrappedMessage};
 use async_trait::async_trait;
 use citadel_internal_service_types::{
     BatchedResponseData, InternalServiceRequest, InternalServiceResponse, KEY_NOT_FOUND,
 };
 use citadel_io::tokio::sync::Mutex;
-use dashmap::mapref::entry::Entry;
-use dashmap::DashMap;
 use intersession_layer_messaging::{Backend, BackendError};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
+/// ILM's storage for one account, over the agent's LocalDB.
+///
+/// The I/O is `channel`: the browser's [`RequestChannel`] sends LocalDB requests
+/// over its socket to the agent and waits for the replies; the agent's own
+/// channel (citadel-internal-service `kernel/ilm`) answers them in-process.
+/// Everything else here -- the keys, the map serialisation, the read and write
+/// outcomes, the gates -- is one implementation for both, so an account's state
+/// written by a browser is read back by the agent byte for byte.
 #[derive(Clone)]
-pub struct CitadelWorkspaceBackend {
+pub struct CitadelWorkspaceBackend<C: BackendChannel = RequestChannel> {
     pub cid: u64,
-    expected_requests:
-        Arc<DashMap<Uuid, citadel_io::tokio::sync::oneshot::Sender<InternalServiceResponse>>>,
-    bypass_ism_outbound_tx: Option<BypasserTx>,
+    channel: C,
     // Each map is one serialized blob under one key, so every mutation is a
     // read-whole/modify/write-whole. Two of them interleaving lose one of the
     // two changes -- and the lost one was reported `Ok`. Held across read AND
@@ -84,88 +89,23 @@ pub(crate) fn read_outcome(
     }
 }
 
-impl CitadelWorkspaceBackend {
-    /// Send `request` and wait for the reply carrying `request_id`.
-    ///
-    /// The reply slot is registered BEFORE the request leaves. It used to be
-    /// registered after, and the agent is local: a reply inspected in between
-    /// matched nothing, was passed on as uncaught, and its waiter timed out five
-    /// seconds later on an answer that had already arrived (see the
-    /// `a_reply_that_beats_its_waiter` test).
-    ///
-    /// There is no deadline, on purpose. The agent is local, the connection is
-    /// reliable and ordered, and the agent answers every LocalDB and Batched
-    /// request it receives (a refusal is an answer). So an unanswered request
-    /// means one thing — the connection is gone — and that is reported, at
-    /// once, by the messenger calling [`CitadelBackendExt::abandon_all_requests`]
-    /// when its connection ends. Everything else is lateness.
-    ///
-    /// It had a five-second deadline, and a stalled agent (a debug binary
-    /// symbolising a backtrace, a rekey's keygen, a loaded machine) turned
-    /// lateness into failure: the write was reported as "may not be stored"
-    /// while it was in fact stored, and the reply that confirmed it matched no
-    /// waiter and was passed on to the application as unsolicited. The browser
-    /// runs this same code over its WebSocket, with the same deadline (wasmtimer
-    /// on wasm32), so a slow agent failed browser sends exactly the same way.
-    ///
-    /// Cancellation-safe without a guard: if this future is dropped, the slot
-    /// stays until its reply arrives, and `inspect_received_payload` still
-    /// consumes that reply as the backend's own rather than forwarding it. The
-    /// slot cannot outlive the connection, which is the only thing that could
-    /// stop the reply from coming.
+impl<C: BackendChannel> CitadelWorkspaceBackend<C> {
+    /// A backend for `cid` whose LocalDB requests go through `channel`.
+    pub fn with_channel(cid: u64, channel: C) -> Self {
+        Self {
+            cid,
+            channel,
+            outbound_gate: Arc::new(Mutex::new(())),
+            inbound_gate: Arc::new(Mutex::new(())),
+        }
+    }
+
     async fn request(
         &self,
         request: InternalServiceRequest,
         request_id: Uuid,
     ) -> Result<InternalServiceResponse, BackendError<WrappedMessage>> {
-        let (tx, rx) = citadel_io::tokio::sync::oneshot::channel();
-        match self.expected_requests.entry(request_id) {
-            // Displacing a waiter would drop its sender, which now reads as
-            // "connection lost", and hand this request's reply to nobody.
-            Entry::Occupied(_) => {
-                return Err(BackendError::StorageError(format!(
-                    "request_id {request_id} is already awaiting a reply"
-                )))
-            }
-            Entry::Vacant(slot) => {
-                slot.insert(tx);
-            }
-        }
-        if let Err(err) = self.send_to_network(request).await {
-            // Nothing will ever answer a request that never left.
-            self.expected_requests.remove(&request_id);
-            return Err(err);
-        }
-        rx.await.map_err(|_| {
-            BackendError::StorageError(format!(
-                "The connection to the agent closed before it answered request_id {request_id} \
-                 (CID {}); whether it was applied is unknown",
-                self.cid
-            ))
-        })
-    }
-
-    /// Sends a message to the network layer
-    pub async fn send_to_network(
-        &self,
-        request: InternalServiceRequest,
-    ) -> Result<(), BackendError<WrappedMessage>> {
-        citadel_logging::info!(target: "citadel", "[BACKEND-NETWORK] send_to_network called for CID {} with request: {:?}", self.cid, std::any::type_name_of_val(&request));
-        // Send the message to the network layer
-        if let Some(tx) = &self.bypass_ism_outbound_tx {
-            tx.send(request).await.map_err(|err| {
-                citadel_logging::error!(target: "citadel", "[BACKEND-NETWORK] Failed to send bypass message: {}", err);
-                BackendError::StorageError(format!("Failed to send bypass message: {err}"))
-            })?;
-            citadel_logging::info!(target: "citadel", "[BACKEND-NETWORK] Successfully sent to bypass channel");
-        } else {
-            citadel_logging::error!(target: "citadel", "[BACKEND-NETWORK] bypass_ism_outbound_tx is None!");
-            return Err(BackendError::StorageError(
-                "Failed to send bypass message: bypass_ism_outbound_tx is None".to_string(),
-            ));
-        }
-
-        Ok(())
+        self.channel.request(request, request_id).await
     }
 
     /// Generic function to get a map (inbound or outbound)
@@ -288,11 +228,6 @@ impl CitadelWorkspaceBackend {
     // now the only way to write either map, so a future caller cannot
     // reconstruct the unsynchronised sequence without noticing.
 
-    pub fn add_expected_request(&self, request_id: Uuid) {
-        let (tx, _rx) = citadel_io::tokio::sync::oneshot::channel();
-        self.expected_requests.insert(request_id, tx);
-    }
-
     /// Sends multiple requests in a single batch and waits for all responses.
     /// This is more efficient than sequential requests as it:
     /// 1. Uses a single network roundtrip
@@ -389,7 +324,7 @@ impl CitadelWorkspaceBackend {
 /// existing generic map functions, named separately so the serialisation can be
 /// tested against a fake instead of a running agent.
 #[async_trait]
-impl MapStore for CitadelWorkspaceBackend {
+impl<C: BackendChannel> MapStore for CitadelWorkspaceBackend<C> {
     async fn read_map(&self, prefix: &str) -> Result<State, BackendError<WrappedMessage>> {
         self.get_map(prefix).await
     }
@@ -405,7 +340,7 @@ impl MapStore for CitadelWorkspaceBackend {
 }
 
 #[async_trait]
-impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
+impl<C: BackendChannel> Backend<WrappedMessage> for CitadelWorkspaceBackend<C> {
     async fn store_outbound(
         &self,
         message: WrappedMessage,
@@ -647,7 +582,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         keys: &[&str],
     ) -> Result<Vec<Option<Vec<u8>>>, BackendError<WrappedMessage>> {
         // Delegate to the inherent method that uses batched network requests
-        CitadelWorkspaceBackend::load_values_batched(self, keys).await
+        CitadelWorkspaceBackend::<C>::load_values_batched(self, keys).await
     }
 
     /// One round trip for the whole set, mirroring `load_values_batched`.
@@ -727,18 +662,15 @@ pub trait CitadelBackendExt: Backend<WrappedMessage> + Clone + Send + Sync + 'st
 }
 
 #[async_trait]
-impl CitadelBackendExt for CitadelWorkspaceBackend {
+impl CitadelBackendExt for CitadelWorkspaceBackend<RequestChannel> {
     async fn new(
         cid: u64,
         handle: &MessengerTx<Self>,
     ) -> Result<Self, BackendError<WrappedMessage>> {
-        Ok(Self {
+        Ok(Self::with_channel(
             cid,
-            expected_requests: Arc::new(DashMap::new()),
-            bypass_ism_outbound_tx: Some(handle.bypass_ism_outbound_tx.clone()),
-            outbound_gate: Arc::new(Mutex::new(())),
-            inbound_gate: Arc::new(Mutex::new(())),
-        })
+            RequestChannel::new(cid, handle.bypass_ism_outbound_tx.clone()),
+        ))
     }
 
     async fn inspect_received_payload(
@@ -746,24 +678,15 @@ impl CitadelBackendExt for CitadelWorkspaceBackend {
         response: InternalServiceResponse,
     ) -> Result<Option<InternalServiceResponse>, BackendError<WrappedMessage>> {
         citadel_logging::debug!(target: "citadel", "Inspecting received payload: {:?}", response);
-
-        if let Some(id) = response.request_id() {
-            if let Some(tx) = self.expected_requests.remove(id) {
-                let _ = tx.1.send(response.clone());
-                return Ok(None);
-            }
-        }
-
-        Ok(Some(response))
+        Ok(self.channel.claim_reply(response))
     }
 
     fn abandon_request(&self, request_id: &Uuid) {
-        // Dropping the sender wakes the waiter with the connection-lost error.
-        self.expected_requests.remove(request_id);
+        self.channel.abandon(request_id);
     }
 
     fn abandon_all_requests(&self) {
-        self.expected_requests.clear();
+        self.channel.abandon_all();
     }
 }
 
@@ -887,3 +810,6 @@ mod response_classification {
         assert_eq!(KEY_NOT_FOUND, "Key not found");
     }
 }
+
+#[cfg(test)]
+mod through_any_channel;

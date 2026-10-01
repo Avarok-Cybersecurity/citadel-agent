@@ -1,5 +1,4 @@
 use crate::kernel::requests::HandledRequestResult;
-use crate::kernel::session_route::SessionRoute;
 use crate::kernel::session_subscribers::SessionSubscribers;
 use crate::kernel::{CitadelWorkspaceService, Connection, PeerConnection};
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -52,15 +51,6 @@ pub enum DisconnectedConnection<R: Ratchet> {
         peer_cid: u64,
         subscribers: SessionSubscribers,
     },
-}
-
-impl<R: Ratchet> DisconnectedConnection<R> {
-    /// The connections attached to the session when this was removed.
-    pub fn subscribers(&self) -> &SessionSubscribers {
-        match self {
-            Self::C2S { subscribers, .. } | Self::P2P { subscribers, .. } => subscribers,
-        }
-    }
 }
 
 /// Disconnects a peer or C2S connection at the SDK/protocol layer.
@@ -413,21 +403,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         }
     };
 
-    // STEP 3: Every OTHER window attached to the session is told it ended. The
-    // requester gets the response below; the entry is already out of the map, so
-    // the session is gone for all of them whatever the SDK said.
-    let others = SessionRoute::new(
-        disconnected.subscribers().clone(),
-        this.tx_to_localhost_clients.clone(),
-    )
-    .send_to_others(
-        uuid,
-        InternalServiceResponse::DisconnectNotification(DisconnectNotification {
-            cid,
-            peer_cid,
-            request_id: None,
-        }),
-    );
+    // STEP 3: Every OTHER window is told it ended (disconnect_others.rs).
+    let others = disconnected.tell_others(&this.tx_to_localhost_clients, uuid, cid, peer_cid);
 
     // STEP 4: Enum drops here (end of scope) - RAII cleanup is now safe since SDK disconnect completed
     drop(disconnected);

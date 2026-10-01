@@ -117,26 +117,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
 
             ConfigCommand::DeclareCapabilities { capabilities } => {
-                this.client_capabilities
-                    .write()
-                    .insert(conn_id, capabilities);
-                // Sessions this connection already holds are hosted from now on.
-                let held: Vec<u64> = this
-                    .server_connection_map
-                    .read()
-                    .iter()
-                    .filter(|(_, conn)| conn.subscribers.contains(conn_id))
-                    .map(|(cid, _)| *cid)
-                    .collect();
-                for cid in held {
-                    this.host_ilm_for(cid, conn_id).await;
-                }
-                InternalServiceResponse::AgentCapabilities(AgentCapabilities {
-                    cid: 0,
-                    agent_ilm: true,
-                    multi_window: true,
-                    request_id: Some(request_id),
-                })
+                this.declare(conn_id, capabilities, request_id).await
             }
 
             ConfigCommand::AttachSession { session_cid, proof } => {

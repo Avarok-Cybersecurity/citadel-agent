@@ -24,7 +24,6 @@ use crate::kernel::reconnect::sign_in::{self, SignIn};
 use crate::kernel::reconnect::LinkState;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::session_route::SessionRoute;
-use crate::kernel::session_subscribers::SessionSubscribers;
 use crate::kernel::{create_client_server_remote, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -157,16 +156,9 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
         };
 
-        // A page older than agent hosting may not take a hosted session
-        // (kernel/migration_guard.rs); a wrong password is refused below as before.
-        if authorized && this.refuses_older_page(cid, uuid) {
+        if let Some(refused) = this.refuse_older_connect(authorized, cid, uuid, request_id) {
             cleanup_username(this, &username);
-            let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
-                cid,
-                message: crate::kernel::migration_guard::OLDER_PAGE.to_string(),
-                request_id: Some(request_id),
-            });
-            return Some(HandledRequestResult { response, uuid });
+            return Some(refused);
         }
         match sign_in::on_sign_in(tracked, authorized) {
             SignIn::Refuse => {
@@ -185,9 +177,6 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
             SignIn::AlreadyActive => {
                 citadel_sdk::logging::info!(target: "citadel", "[Connect] Session {} already active for user {} - returning SessionAlreadyActive", cid, username);
-                // Today's live takeover, kept for UIs that predate AttachSession:
-                // the caller becomes the only subscriber, and whoever it displaced
-                // is told (kernel/session_subscribers.rs).
                 crate::kernel::membership::take_over(this, cid, uuid);
                 this.host_ilm_for(cid, uuid).await;
                 // Lets the frontend handle it gracefully (e.g. redirect to the workspace).
@@ -408,7 +397,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             )
             .await;
 
-            let subscribers = SessionSubscribers::new(uuid);
+            let subscribers = crate::kernel::session_subscribers::SessionSubscribers::new(uuid);
             let connection_struct = Connection::new(
                 sink,
                 client_server_remote,

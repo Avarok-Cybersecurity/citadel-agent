@@ -1,8 +1,12 @@
-//! Starting the agent-hosted ILM when a client that asked for it joins a session.
+//! What a client declares it can do, and starting the agent-hosted ILM when a
+//! client that asked for it joins a session.
 
 use crate::kernel::ilm::HostIo;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
+use citadel_internal_service_types::{
+    AgentCapabilities, ClientCapabilities, InternalServiceResponse,
+};
 use citadel_sdk::logging::warn;
 use citadel_sdk::prelude::Ratchet;
 use std::sync::Arc;
@@ -19,6 +23,35 @@ where
             .read()
             .get(&connection)
             .is_some_and(|capabilities| capabilities.agent_ilm)
+    }
+
+    /// `connection`'s client says what it can do; answered with what the agent does.
+    pub(crate) async fn declare(
+        &self,
+        connection: Uuid,
+        capabilities: ClientCapabilities,
+        request_id: Uuid,
+    ) -> InternalServiceResponse {
+        self.client_capabilities
+            .write()
+            .insert(connection, capabilities);
+        // Sessions this connection already holds are hosted from now on.
+        let held: Vec<u64> = self
+            .server_connection_map
+            .read()
+            .iter()
+            .filter(|(_, conn)| conn.subscribers.contains(connection))
+            .map(|(cid, _)| *cid)
+            .collect();
+        for cid in held {
+            self.host_ilm_for(cid, connection).await;
+        }
+        InternalServiceResponse::AgentCapabilities(AgentCapabilities {
+            cid: 0,
+            agent_ilm: true,
+            multi_window: true,
+            request_id: Some(request_id),
+        })
     }
 
     /// `connection` has just become a subscriber of `cid`. If its client hosts

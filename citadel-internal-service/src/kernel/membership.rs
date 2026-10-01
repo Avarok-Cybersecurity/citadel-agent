@@ -7,6 +7,7 @@
 use crate::kernel::session_route::{announce_roles, Clients};
 use crate::kernel::session_subscribers::SessionSubscribers;
 use crate::kernel::{CitadelWorkspaceService, Connection};
+use citadel_internal_service_types::ClientCapabilities;
 use citadel_sdk::prelude::Ratchet;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -25,7 +26,8 @@ pub(crate) fn subscribers_of<T, R: Ratchet>(
 }
 
 /// Make `caller` the only subscriber -- today's takeover and orphan claim --
-/// telling each displaced connection it is detached. A caller already attached
+/// telling each displaced connection it is detached. A live `Connect` takes
+/// over this way, for UIs that predate `AttachSession`. A caller already attached
 /// displaces nobody. `false` if there is no such session.
 pub(crate) fn take_over<T, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
@@ -53,6 +55,19 @@ pub(crate) fn take_over_in(
 
 /// A connection closed: it leaves every session it was attached to, and only
 /// it. Each session that still has members hears the new roles.
+/// A localhost connection is gone. It leaves every session it was attached to,
+/// and only it: a session keeps its other windows, and a primary that left is
+/// replaced by the longest-attached one.
+pub(crate) fn connection_closed<R: Ratchet>(
+    capabilities: &RwLock<HashMap<Uuid, ClientCapabilities>>,
+    sessions: &Arc<RwLock<HashMap<u64, Connection<R>>>>,
+    clients: &Clients,
+    connection: Uuid,
+) {
+    capabilities.write().remove(&connection);
+    detach_everywhere(sessions, clients, connection);
+}
+
 pub(crate) fn detach_everywhere<R: Ratchet>(
     sessions: &Arc<RwLock<HashMap<u64, Connection<R>>>>,
     clients: &Clients,

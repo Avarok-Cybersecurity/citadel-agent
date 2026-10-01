@@ -102,7 +102,15 @@ fn every_gated_request_is_named_in_refusal_response() {
         .expect("refusal_response exists");
     let body = &refusal[start..];
     let end = body.find("\n}").expect("refusal_response ends");
-    let body = &body[..end];
+    let mut body = body[..end].to_string();
+    // The conversation requests' refusals are built in their own module, which
+    // refusal_response hands them to; their names are read from there.
+    if body.contains("conversation::refusal(") {
+        body += &read_to_string(
+            repo_root().join("citadel-internal-service/src/kernel/requests/conversation.rs"),
+        )
+        .expect("requests/conversation.rs");
+    }
 
     let missing: Vec<&String> = gated
         .iter()

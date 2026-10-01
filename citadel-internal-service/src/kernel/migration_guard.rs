@@ -9,11 +9,14 @@
 //! agent starts hosting it. A page that declared is unaffected; so is any
 //! account the agent does not host, which keeps today's behaviour exactly.
 
+use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::session_route::announce_roles;
 use crate::kernel::store_keys::conversation_owner;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
-use citadel_internal_service_types::InternalServiceRequest;
+use citadel_internal_service_types::{
+    ConnectFailure, InternalServiceRequest, InternalServiceResponse,
+};
 use citadel_sdk::logging::warn;
 use citadel_sdk::prelude::Ratchet;
 use uuid::Uuid;
@@ -31,6 +34,29 @@ impl<T: IOInterface + Sync, R: Ratchet> CitadelWorkspaceService<T, R> {
             warn!(target: "citadel", "[MIGRATION] connection {connection} predates agent hosting; refused session {cid}");
         }
         refused
+    }
+
+    /// A sign-in that proved the password, from an older page, to a hosted
+    /// session: answered, and refused. A wrong password is refused as before.
+    pub(crate) fn refuse_older_connect(
+        &self,
+        authorized: bool,
+        cid: u64,
+        connection: Uuid,
+        request_id: Uuid,
+    ) -> Option<HandledRequestResult> {
+        if !authorized || !self.refuses_older_page(cid, connection) {
+            return None;
+        }
+        let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+            cid,
+            message: OLDER_PAGE.to_string(),
+            request_id: Some(request_id),
+        });
+        Some(HandledRequestResult {
+            response,
+            uuid: connection,
+        })
     }
 
     /// The agent has just started hosting `cid`: any member that has not

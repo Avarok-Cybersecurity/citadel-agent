@@ -1,20 +1,19 @@
 use crate::kernel::media::{MediaLaneRx, MediaLaneTx};
+use crate::kernel::membership::connection_closed;
 use crate::kernel::{send_to_kernel, sink_send_payload, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    ClientCapabilities, InternalServicePayload, InternalServiceResponse, ServiceConnectionAccepted,
+    ClientCapabilities, InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
+    ServiceConnectionAccepted,
 };
 use citadel_sdk::logging::{debug, error, info, warn};
 use citadel_sdk::prelude::Ratchet;
 use futures::StreamExt;
 use parking_lot::RwLock;
 use std::collections::HashMap;
-
 use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
-
-use citadel_internal_service_types::InternalServiceRequest;
 
 pub trait IOInterfaceExt: IOInterface {
     #[allow(clippy::too_many_arguments)]
@@ -30,16 +29,11 @@ pub trait IOInterfaceExt: IOInterface {
         media_lanes: Arc<RwLock<HashMap<Uuid, MediaLaneTx>>>,
         server_connection_map: Arc<RwLock<HashMap<u64, Connection<R>>>>,
         orphan_sessions: Arc<RwLock<HashMap<Uuid, bool>>>,
-        client_capabilities: Arc<RwLock<HashMap<Uuid, ClientCapabilities>>>,
+        capabilities: Arc<RwLock<HashMap<Uuid, ClientCapabilities>>>,
     ) {
         tokio::task::spawn(async move {
             let write_task = async {
-                let response =
-                    InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
-                        cid: 0,
-                        request_id: Some(conn_id),
-                        agent_ilm: true,
-                    });
+                let response = ServiceConnectionAccepted::greeting(conn_id);
 
                 if let Err(err) = sink_send_payload::<Self>(response, &mut sink).await {
                     error!(target: "citadel", "Failed to send to client: {err:?}");
@@ -109,15 +103,8 @@ pub trait IOInterfaceExt: IOInterface {
 
             tcp_connection_map.write().remove(&conn_id);
             retire_media_lane(&media_lanes, &conn_id);
-            // It leaves every session it was attached to, and only it: a session
-            // keeps its other windows, and a primary that left is replaced by the
-            // longest-attached one (kernel/membership.rs).
-            client_capabilities.write().remove(&conn_id);
-            crate::kernel::membership::detach_everywhere(
-                &server_connection_map,
-                &tcp_connection_map,
-                conn_id,
-            );
+            let (sessions, clients) = (&server_connection_map, &tcp_connection_map);
+            connection_closed(&capabilities, sessions, clients, conn_id);
 
             // ALWAYS preserve sessions when TCP drops.
             //

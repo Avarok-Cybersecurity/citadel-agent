@@ -40,6 +40,7 @@ impl Engine {
                         message: None,
                         message_id: None,
                         metadata: None,
+                        request_id: None,
                     };
                     self.announce(io, cid, peer, change).await;
                 }

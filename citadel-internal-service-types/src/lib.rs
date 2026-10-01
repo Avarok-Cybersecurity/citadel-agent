@@ -222,6 +222,13 @@ pub struct ServiceConnectionAccepted {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
     pub request_id: Option<Uuid>,
+    /// This agent hosts a session's ILM and conversations for a connection that
+    /// declares `agent_ilm` (multi-window, 0.8.6). Said in the greeting, the
+    /// first thing on every socket, so a client knows at once whether to
+    /// declare: an older agent does not answer a declaration at all. Its
+    /// greeting has no such field, which is what `false` means here.
+    #[serde(default)]
+    pub agent_ilm: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

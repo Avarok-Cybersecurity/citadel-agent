@@ -11,6 +11,7 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::OwnedMutexGuard;
+use uuid::Uuid;
 
 /// How much of a message an event carries for a notification to show.
 const PREVIEW_CHARS: usize = 100;
@@ -30,6 +31,8 @@ pub(crate) struct Change {
     pub message: Option<ConversationMessage>,
     pub message_id: Option<String>,
     pub metadata: Option<ConversationMetadata>,
+    /// The request that caused it, for the window that asked (its send's bubble).
+    pub request_id: Option<Uuid>,
 }
 
 impl Change {
@@ -39,6 +42,7 @@ impl Change {
             message_id: Some(message.id.clone()),
             message: Some(message),
             metadata: None,
+            request_id: None,
         }
     }
 }
@@ -93,7 +97,7 @@ impl Engine {
             metadata,
             account_username: io.account_username(cid),
             preview,
-            request_id: None,
+            request_id: change.request_id,
         };
         io.publish(
             cid,

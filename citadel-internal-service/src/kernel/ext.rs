@@ -38,6 +38,7 @@ pub trait IOInterfaceExt: IOInterface {
                     InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
                         cid: 0,
                         request_id: Some(conn_id),
+                        agent_ilm: true,
                     });
 
                 if let Err(err) = sink_send_payload::<Self>(response, &mut sink).await {

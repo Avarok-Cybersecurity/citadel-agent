@@ -58,6 +58,7 @@ impl Engine {
                     attachments,
                     document_id,
                     document_title,
+                    request_id: Some(request_id),
                 };
                 updated(
                     cid,
@@ -192,6 +193,7 @@ impl Engine {
                     message: None,
                     message_id: None,
                     metadata: None,
+                    request_id: None,
                 };
                 self.announce(io, cid, peer_cid, change).await;
                 updated(cid, peer_cid, request_id, None)

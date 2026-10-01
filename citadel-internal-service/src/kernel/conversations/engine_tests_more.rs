@@ -1,6 +1,7 @@
 use super::super::command::{self, Envelope, Inbound};
 use super::super::engine::{store, Engine};
 use super::super::engine_fake::*;
+use super::super::outbound::Outgoing;
 use citadel_internal_service_types::MessageType;
 use std::sync::Arc;
 
@@ -135,5 +136,35 @@ async fn a_forged_sender_is_replaced_by_the_transport_peer() {
     assert_eq!(
         (page.messages[i].sender_cid, page.messages[i].recipient_cid),
         (PEER, ME)
+    );
+}
+
+/// The window that sent learns which bubble is its own from the Appended event,
+/// before the send's answer (which waits for ILM): its composer clears on that.
+#[tokio::test]
+async fn a_sends_appended_event_names_the_request() {
+    use citadel_internal_service_types::{ConversationEventKind, InternalServiceResponse};
+    let agent = FakeAgent::with_window();
+    let request = uuid::Uuid::new_v4();
+    let out = Outgoing {
+        request_id: Some(request),
+        ..outgoing("mine")
+    };
+    Engine::default().send(&agent, ME, PEER, out).await.unwrap();
+    let named: Vec<_> = agent
+        .published
+        .lock()
+        .iter()
+        .filter_map(|r| match r {
+            InternalServiceResponse::ConversationEvent(e) => Some((e.kind, e.request_id)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        named,
+        vec![
+            (ConversationEventKind::Appended, Some(request)),
+            (ConversationEventKind::Updated, None)
+        ]
     );
 }

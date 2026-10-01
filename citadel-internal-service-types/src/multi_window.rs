@@ -148,4 +148,17 @@ mod tests {
         let password = AttachProof::Password(crate::SecBuffer::from(b"hunter2".to_vec()));
         assert!(!format!("{password:?}").contains("hunter2"));
     }
+
+    /// A browser reads the greeting to decide whether to declare. An older
+    /// agent's greeting has no `agent_ilm`, and must read as "does not host",
+    /// or the browser would wait on a declaration that agent never answers.
+    #[test]
+    fn an_older_agents_greeting_offers_no_hosting() {
+        let older: crate::ServiceConnectionAccepted =
+            serde_json::from_str(r#"{"cid":0,"request_id":null}"#).unwrap();
+        assert!(!older.agent_ilm);
+        let newer: crate::ServiceConnectionAccepted =
+            serde_json::from_str(r#"{"cid":0,"request_id":null,"agent_ilm":true}"#).unwrap();
+        assert!(newer.agent_ilm);
+    }
 }

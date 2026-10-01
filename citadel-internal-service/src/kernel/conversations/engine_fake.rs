@@ -164,6 +164,7 @@ pub(super) fn outgoing(text: &str) -> Outgoing {
         attachments: None,
         document_id: None,
         document_title: None,
+        request_id: None,
     }
 }
 

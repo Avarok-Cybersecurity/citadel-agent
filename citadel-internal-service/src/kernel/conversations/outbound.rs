@@ -13,6 +13,7 @@ use super::store_mutations::{Revised, Revision};
 use citadel_internal_service_types::{
     Attachment, ConversationEventKind, ConversationMessage, MessageStatus, MessageType,
 };
+use uuid::Uuid;
 
 /// What `ConversationSend` carries, minus the addressing.
 pub(crate) struct Outgoing {
@@ -23,6 +24,8 @@ pub(crate) struct Outgoing {
     pub attachments: Option<Vec<Attachment>>,
     pub document_id: Option<String>,
     pub document_title: Option<String>,
+    /// Echoed on the Appended event, so the asking window knows its bubble.
+    pub request_id: Option<Uuid>,
 }
 
 pub(crate) type Outcome = Result<Option<ConversationMessage>, String>;
@@ -67,6 +70,7 @@ impl Engine {
         {
             let mut change = Change::message(ConversationEventKind::Appended, message.clone());
             change.metadata = Some(metadata);
+            change.request_id = out.request_id;
             self.announce(io, cid, peer, change).await;
         }
         self.transmit(io, cid, peer, &message, &envelope).await

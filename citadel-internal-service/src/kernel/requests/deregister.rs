@@ -1,5 +1,6 @@
 use crate::kernel::reconnect::LinkState;
 use crate::kernel::requests::HandledRequestResult;
+use crate::kernel::session_route::SessionRoute;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -92,9 +93,18 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             // takes the session out of the map whatever the protocol decides,
             // so a REFUSED deregistration left a live SDK session with no entry
             // representing it: gone from the UI, still connected, unreachable.
-            this.server_connection_map.write().remove(&cid);
+            let removed = this.server_connection_map.write().remove(&cid);
             this.prune_cid_scoped_state(cid, None);
             info!(target: "citadel", "Deregister successful for CID {cid}");
+            // Every other window of the account is told it is gone, as a logout tells them.
+            if let Some(conn) = removed {
+                let gone = InternalServiceResponse::DeregisterSuccess(DeregisterSuccess {
+                    cid,
+                    request_id: None,
+                });
+                SessionRoute::new(conn.subscribers, this.tx_to_localhost_clients.clone())
+                    .send_to_others(uuid, gone);
+            }
             Some(HandledRequestResult {
                 response: InternalServiceResponse::DeregisterSuccess(DeregisterSuccess {
                     cid,

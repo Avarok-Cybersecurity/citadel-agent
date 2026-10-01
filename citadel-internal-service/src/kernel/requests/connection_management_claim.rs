@@ -88,6 +88,10 @@ pub(super) async fn claim_session<T: IOInterface + Sync, R: Ratchet>(
     if let Err(error) = decide_claim(owner, only_if_orphaned, conn_id, session_cid) {
         return Some(refusal(session_cid, request_id, conn_id, error));
     }
+    if this.refuses_older_page(session_cid, conn_id) {
+        let error = crate::kernel::migration_guard::OLDER_PAGE.to_string();
+        return Some(refusal(session_cid, request_id, conn_id, error));
+    }
 
     // Steps 3-4: a session the agent is reconnecting has no SDK session yet, and is
     // held, not dead; any other must be live in the SDK (connection_management_claim_sdk.rs).

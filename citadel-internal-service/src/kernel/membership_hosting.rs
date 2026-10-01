@@ -31,8 +31,9 @@ where
             return;
         }
         let io: Arc<dyn HostIo> = Arc::new(self.clone());
-        if let Err(err) = self.ilm_hosts.ensure(cid, io).await {
-            warn!(target: "citadel", "[ILM-HOST] {cid}: not hosted: {err}");
+        match self.ilm_hosts.ensure(cid, io).await {
+            Ok(_) => self.displace_older_pages(cid),
+            Err(err) => warn!(target: "citadel", "[ILM-HOST] {cid}: not hosted: {err}"),
         }
     }
 }

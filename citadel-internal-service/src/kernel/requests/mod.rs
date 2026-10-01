@@ -155,6 +155,12 @@ where
         }
     }
 
+    // The agent is the only writer of a hosted account's conversations.
+    if this.writes_hosted_conversation(&command) {
+        log::warn!(target: "citadel", "Refusing a conversation-record write from connection {uuid}: the agent hosts that account");
+        return refusal_response(&command, uuid);
+    }
+
     match &command {
         InternalServiceRequest::GetAccountInformation { .. } => {
             get_account_information::handle(this, uuid, command).await

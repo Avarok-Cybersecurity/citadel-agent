@@ -52,6 +52,7 @@ use reconnect::policy::ReconnectPolicy;
 pub(crate) mod attach_tokens;
 pub(crate) mod membership;
 mod membership_hosting;
+mod migration_guard;
 pub(crate) mod requests;
 pub(crate) mod responses;
 pub(crate) mod revfs_correlation;
@@ -60,6 +61,7 @@ pub(crate) mod server_host;
 pub(crate) mod session_route;
 pub(crate) mod session_subscribers;
 pub(crate) mod session_wait;
+pub(crate) mod store_keys;
 
 pub type RatchetType = StackedRatchet;
 

@@ -163,3 +163,28 @@ pub async fn quiet(
     }
     seen
 }
+
+/// The username the agent at `addr` holds `cid` under, asked as any page would.
+pub async fn username_of(addr: SocketAddr, cid: u64) -> String {
+    let mut window = crate::open_localhost_connection(addr)
+        .await
+        .expect("a window");
+    let request_id = Uuid::new_v4();
+    window
+        .0
+        .send(InternalServiceRequest::GetSessions { request_id })
+        .expect("open");
+    match recv_until(&mut window.1, "sessions", |r| {
+        r.request_id() == Some(&request_id)
+    })
+    .await
+    {
+        InternalServiceResponse::GetSessionsResponse(sessions) => sessions
+            .sessions
+            .into_iter()
+            .find(|s| s.cid == cid)
+            .map(|s| s.username)
+            .expect("the session is listed"),
+        other => panic!("no session list: {other:?}"),
+    }
+}

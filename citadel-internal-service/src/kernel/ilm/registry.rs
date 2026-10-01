@@ -163,7 +163,6 @@ impl IlmRegistry {
             .collect()
     }
 
-    #[cfg(test)]
     pub(crate) fn is_hosted(&self, cid: u64) -> bool {
         self.hosts.lock().contains_key(&cid)
     }

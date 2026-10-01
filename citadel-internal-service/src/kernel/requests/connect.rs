@@ -157,6 +157,17 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
         };
 
+        // A page older than agent hosting may not take a hosted session
+        // (kernel/migration_guard.rs); a wrong password is refused below as before.
+        if authorized && this.refuses_older_page(cid, uuid) {
+            cleanup_username(this, &username);
+            let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                cid,
+                message: crate::kernel::migration_guard::OLDER_PAGE.to_string(),
+                request_id: Some(request_id),
+            });
+            return Some(HandledRequestResult { response, uuid });
+        }
         match sign_in::on_sign_in(tracked, authorized) {
             SignIn::Refuse => {
                 citadel_sdk::logging::warn!(target: "citadel", "[Connect] REFUSED reuse of session {} for user {}: the password does not match the one that opened it", cid, username);

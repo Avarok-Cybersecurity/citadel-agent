@@ -12,3 +12,13 @@ mod raise;
 
 pub(crate) use hub::NoticeHub;
 pub use hub::NoticeToken;
+
+impl<T, R: citadel_sdk::prelude::Ratchet> crate::kernel::CitadelWorkspaceService<T, R> {
+    /// Open the notice plane to the native app that started the agent with
+    /// `token`. Without it, no connection can subscribe.
+    pub fn with_notice_token(mut self, token: NoticeToken) -> Self {
+        let clients = self.tx_to_localhost_clients.clone();
+        self.notices = std::sync::Arc::new(NoticeHub::new(Some(token), clients, Vec::new()));
+        self
+    }
+}

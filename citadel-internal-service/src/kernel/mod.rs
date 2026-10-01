@@ -166,17 +166,6 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
         }
     }
 
-    /// Open the notice plane to the native app that started the agent with
-    /// `token` (kernel/notices). Without it, no connection can subscribe.
-    pub fn with_notice_token(mut self, token: notices::NoticeToken) -> Self {
-        self.notices = Arc::new(notices::NoticeHub::new(
-            Some(token),
-            self.tx_to_localhost_clients.clone(),
-            Vec::new(),
-        ));
-        self
-    }
-
     pub fn remote(&self) -> &NodeRemote<R> {
         self.remote.as_ref().expect("Kernel not loaded")
     }

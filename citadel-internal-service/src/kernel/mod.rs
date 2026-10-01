@@ -3,6 +3,7 @@ use crate::kernel::media::{
     media_lane, MediaLaneTx, PeerMediaSession, UdpState, MEDIA_LANE_CAPACITY,
 };
 use crate::kernel::requests::{handle_request, HandledRequestResult};
+use crate::kernel::session_route::Clients;
 use crate::kernel::session_subscribers::SessionSubscribers;
 use citadel_internal_service_connector::connector::{
     InternalServiceConnector, WrappedSink, WrappedStream,
@@ -51,6 +52,7 @@ pub(crate) mod attach_tokens;
 pub(crate) mod membership;
 mod membership_hosting;
 mod migration_guard;
+pub mod notices;
 pub(crate) mod requests;
 pub(crate) mod responses;
 pub(crate) mod revfs_correlation;
@@ -111,6 +113,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) conversations: Arc<conversations::Engine>,
     /// What each localhost connection's client declared it can do.
     pub(crate) client_capabilities: Arc<RwLock<HashMap<Uuid, ClientCapabilities>>>,
+    /// Native notices and the menu-bar app's account rows (kernel/notices).
+    pub(crate) notices: Arc<notices::NoticeHub>,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -131,6 +135,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             ilm_hosts: self.ilm_hosts.clone(),
             conversations: self.conversations.clone(),
             client_capabilities: self.client_capabilities.clone(),
+            notices: self.notices.clone(),
             io: self.io.clone(),
         }
     }
@@ -140,10 +145,12 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
     /// `reconnect_policy` is how a session its server dropped is brought back; the
     /// agent's is `SERVER_RECONNECT`. Required, so every caller states it.
     pub fn new(io: T, reconnect_policy: ReconnectPolicy) -> Self {
+        let clients: Clients = Arc::new(RwLock::new(Default::default()));
         CitadelWorkspaceService {
             remote: None,
             server_connection_map: Arc::new(RwLock::new(Default::default())),
-            tx_to_localhost_clients: Arc::new(RwLock::new(Default::default())),
+            notices: Arc::new(notices::NoticeHub::new(None, clients.clone(), Vec::new())),
+            tx_to_localhost_clients: clients,
             media_lanes: Arc::new(RwLock::new(Default::default())),
             orphan_sessions: Arc::new(RwLock::new(Default::default())),
             pending_peer_connect_signals: Arc::new(RwLock::new(Default::default())),
@@ -157,6 +164,17 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             client_capabilities: Default::default(),
             io: Arc::new(RwLock::new(Some(io))),
         }
+    }
+
+    /// Open the notice plane to the native app that started the agent with
+    /// `token` (kernel/notices). Without it, no connection can subscribe.
+    pub fn with_notice_token(mut self, token: notices::NoticeToken) -> Self {
+        self.notices = Arc::new(notices::NoticeHub::new(
+            Some(token),
+            self.tx_to_localhost_clients.clone(),
+            Vec::new(),
+        ));
+        self
     }
 
     pub fn remote(&self) -> &NodeRemote<R> {

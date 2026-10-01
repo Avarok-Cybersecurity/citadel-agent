@@ -116,6 +116,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 return disconnect_orphan(this, conn_id, request_id, session_cid).await
             }
 
+            focus @ ConfigCommand::ReportFocus { .. } => {
+                return super::notices::report_focus(this, conn_id, request_id, focus);
+            }
+
             ConfigCommand::DeclareCapabilities { capabilities } => {
                 this.declare(conn_id, capabilities, request_id).await
             }

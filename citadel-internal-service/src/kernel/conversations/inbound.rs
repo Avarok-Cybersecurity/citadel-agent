@@ -10,9 +10,10 @@ use super::engine::{preferences, store, Change, Engine};
 use super::envelope::{raw_envelope, received};
 use super::io::ConversationIo;
 use super::store_mutations::{Revised, Revision};
+use crate::kernel::notices::decide::NoticeSource;
 use citadel_internal_service_types::{
     ConversationEventKind, ConversationMessage, InternalServiceResponse, MessageNotification,
-    MessageStatus, Reaction,
+    MessageStatus, MessageType, Reaction,
 };
 use citadel_sdk::logging::warn;
 
@@ -27,6 +28,16 @@ impl Engine {
             }
             // Of use now or never.
             Some(Inbound::Ephemeral) => {
+                if command::is_call_invite(&n.message) {
+                    let peer_username = io.peer_username(cid, peer);
+                    io.raise_notice(
+                        cid,
+                        NoticeSource::IncomingCall {
+                            peer,
+                            peer_username,
+                        },
+                    );
+                }
                 io.publish(cid, InternalServiceResponse::MessageNotification(n));
                 true
             }
@@ -88,6 +99,7 @@ impl Engine {
         message: ConversationMessage,
     ) -> bool {
         let username = io.peer_username(cid, peer);
+        let username_for_notice = username.clone();
         let appended = {
             let _held = self.lock(cid, peer).await;
             let s = store(io, cid);
@@ -114,6 +126,18 @@ impl Engine {
                     warn!(target: "citadel", "[CONVERSATIONS] {cid}: delivery receipt to {peer} not sent: {e}");
                 }
                 if let Some(metadata) = added {
+                    if matches!(
+                        message.message_type,
+                        MessageType::Text | MessageType::Markdown
+                    ) {
+                        let text = message.content.clone();
+                        let source = NoticeSource::Message {
+                            peer,
+                            peer_username: username_for_notice,
+                            text,
+                        };
+                        io.raise_notice(cid, source);
+                    }
                     let mut change = Change::message(ConversationEventKind::Appended, message);
                     change.metadata = Some(metadata);
                     self.announce(io, cid, peer, change).await;

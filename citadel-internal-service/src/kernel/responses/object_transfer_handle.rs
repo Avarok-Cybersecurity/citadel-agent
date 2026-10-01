@@ -28,7 +28,7 @@ pub(crate) fn deliver_offer_to_localhost_client(
     !crate::kernel::session_route::deliver(clients, targets, response).is_empty()
 }
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     object_transfer_handle: ObjectTransferHandle,
 ) -> Result<(), NetworkError> {
@@ -170,11 +170,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 // survives TCP drops. When delivery fails, reclaim the entry
                 // and decline the transfer so the remote sender gets a
                 // rejection instead of waiting forever.
-                if !deliver_offer_to_localhost_client(
-                    &this.tx_to_localhost_clients,
-                    response,
-                    &attached,
-                ) {
+                this.notice_for(&response);
+                let clients = &this.tx_to_localhost_clients;
+                if !deliver_offer_to_localhost_client(clients, response, &attached) {
                     warn!(target: "citadel", "[ObjectTransferHandle] FileTransferRequestNotification for cid={implicated_cid}, peer_cid={peer_cid}, object_id={object_id:?} was undeliverable (no attached localhost connection among {attached:?} is live) - reclaiming and declining the pending offer");
                     let reclaimed = this
                         .server_connection_map

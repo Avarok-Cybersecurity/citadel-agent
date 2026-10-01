@@ -29,6 +29,7 @@ mod get_account_information;
 mod get_sessions;
 mod media;
 mod message;
+mod notices;
 mod register;
 mod send_reliable;
 pub(crate) use agent_own::{answer_local_db, send_message};
@@ -173,6 +174,10 @@ where
         InternalServiceRequest::Connect { .. } => connect::handle(this, uuid, command).await,
         InternalServiceRequest::Register { .. } => register::handle(this, uuid, command).await,
         InternalServiceRequest::Message { .. } => message::handle(this, uuid, command).await,
+        InternalServiceRequest::NoticeSubscribe { .. }
+        | InternalServiceRequest::NoticeSetMuted { .. } => {
+            notices::handle(this, uuid, command).await
+        }
         InternalServiceRequest::SendReliable { .. } => {
             send_reliable::handle(this, uuid, command).await
         }

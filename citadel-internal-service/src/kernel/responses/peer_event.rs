@@ -43,12 +43,13 @@ mod tests;
 /// `removed` is the subscriber set of an entry that has just left the map (a P2P
 /// disconnect cleans up before it notifies); otherwise the live set is used.
 /// Nobody attached is a drop with a warning, as everywhere else.
-async fn send_response_for_session<T: IOInterface, R: Ratchet>(
+async fn send_response_for_session<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     response: InternalServiceResponse,
     session_cid: u64,
     removed: Option<SessionSubscribers>,
 ) -> Result<(), NetworkError> {
+    this.notice_for(&response);
     let subscribers = crate::kernel::membership::subscribers_of(this, session_cid).or(removed);
     let delivered = subscribers
         .map(|subs| SessionRoute::new(subs, this.tx_to_localhost_clients.clone()).send(response))
@@ -59,7 +60,7 @@ async fn send_response_for_session<T: IOInterface, R: Ratchet>(
     Ok(())
 }
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     event: PeerEvent,
 ) -> Result<(), NetworkError> {

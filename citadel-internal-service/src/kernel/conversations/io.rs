@@ -3,6 +3,7 @@
 //! implementation is in kernel/ilm/io.rs; tests use a double.
 
 use super::kv::ConversationKv;
+use crate::kernel::notices::decide::NoticeSource;
 use citadel_internal_service_types::InternalServiceResponse;
 use futures::future::BoxFuture;
 
@@ -24,4 +25,8 @@ pub(crate) trait ConversationIo: Send + Sync {
     fn peer_username(&self, cid: u64, peer: u64) -> Option<String>;
     /// Is `peer` someone this account has registered or is connected to?
     fn knows_peer(&self, cid: u64, peer: u64) -> BoxFuture<'static, bool>;
+    /// Something happened the user may need telling about (kernel/notices).
+    fn raise_notice(&self, cid: u64, source: NoticeSource);
+    /// A conversation changed: the account rows' unread counts may have.
+    fn rows_changed(&self);
 }

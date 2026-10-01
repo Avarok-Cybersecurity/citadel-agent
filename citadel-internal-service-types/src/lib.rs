@@ -24,6 +24,7 @@ mod group_responses_more;
 pub use group_responses::*;
 pub use group_responses_more::*;
 mod multi_window;
+mod notices;
 mod server_link;
 mod turn;
 pub use conversation::{
@@ -40,6 +41,7 @@ pub use multi_window::{
     AgentCapabilities, AttachProof, ClientCapabilities, SendReliableAccepted, SessionAttached,
     SessionRole, SessionRoleNotification,
 };
+pub use notices::{AccountRow, NativeNotice, NoticeFailure, NoticeKind, NoticeRows, NoticeTarget};
 pub use server_link::{
     ServerConnectionLost, ServerReconnectFailed, ServerReconnected, SignedOutSession,
 };
@@ -1059,6 +1061,9 @@ pub enum InternalServiceResponse {
     ConversationListResponse(Box<ConversationListResponse>),
     ConversationPageResponse(Box<ConversationPageResponse>),
     AccountPreferencesResponse(Box<AccountPreferencesResponse>),
+    NativeNotice(Box<NativeNotice>),
+    NoticeRows(NoticeRows),
+    NoticeFailure(NoticeFailure),
     /// Results from a batched request, in the same order as input commands
     BatchedResponse(BatchedResponseData),
 }
@@ -1602,6 +1607,23 @@ pub enum InternalServiceRequest {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
     },
+    /// Hear every signed-in account's native notices and rows (the menu-bar
+    /// app). `token` is the one the app gave the agent at launch; answered
+    /// with `NoticeRows`, or `NoticeFailure`.
+    NoticeSubscribe {
+        request_id: Uuid,
+        #[debug(with = plaintext_debug_fmt)]
+        token: String,
+    },
+    /// Mute or unmute an account's native notices, from the menu-bar app.
+    NoticeSetMuted {
+        request_id: Uuid,
+        #[debug(with = plaintext_debug_fmt)]
+        token: String,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        muted: bool,
+    },
     /// Send `message` to `peer_cid` through the ILM the agent hosts for `cid`.
     /// Answered with `SendReliableAccepted` once ILM has it, or `MessageSendFailure`.
     SendReliable {
@@ -1689,6 +1711,16 @@ pub enum ConfigCommand {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         session_cid: u64,
         proof: AttachProof,
+    },
+    /// This window has the account (and, with `peer_cid`, that conversation)
+    /// in front of the user, or no longer does. Native notices for what it
+    /// shows are held back while it does.
+    ReportFocus {
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        session_cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint | null"))]
+        peer_cid: Option<u64>,
+        focused: bool,
     },
     /// Say what this connection's client can do; answered with `AgentCapabilities`.
     DeclareCapabilities {
@@ -1859,12 +1891,17 @@ impl InternalServiceRequest {
             //                            requests/connection_management_auth.rs.
             //   GetSessions /
             //   GetAccountInformation  — enumerate what this agent holds.
+            //   NoticeSubscribe /
+            //   NoticeSetMuted         — the native app's plane, gated by its
+            //                            launch token (kernel/notices).
             Self::Connect { .. }
             | Self::Register { .. }
             | Self::Batched { .. }
             | Self::ConnectionManagement { .. }
             | Self::GetSessions { .. }
-            | Self::GetAccountInformation { .. } => None,
+            | Self::GetAccountInformation { .. }
+            | Self::NoticeSubscribe { .. }
+            | Self::NoticeSetMuted { .. } => None,
         }
     }
 }

@@ -6,6 +6,14 @@ pub mod group_rejoin;
 pub mod multi_window;
 mod ports;
 pub use ports::get_free_port;
+
+/// The launch token every test agent's notice plane admits (kernel/notices).
+pub const TEST_NOTICE_TOKEN: &str = "test-notice-token-for-the-menu-bar-app";
+
+fn test_notice_token() -> citadel_internal_service::kernel::notices::NoticeToken {
+    citadel_internal_service::kernel::notices::NoticeToken::new(TEST_NOTICE_TOKEN.to_string())
+        .expect("a non-empty token")
+}
 pub mod turn_harness;
 
 use citadel_internal_service::kernel::CitadelWorkspaceService;
@@ -226,7 +234,8 @@ pub async fn services_connected_to_one_server<R: Ratchet>(
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
         )
-        .await?;
+        .await?
+        .with_notice_token(test_notice_token());
         let internal_service = test_stun_servers()
             .apply(&mut NodeBuilder::default())
             .with_backend(test_backend())

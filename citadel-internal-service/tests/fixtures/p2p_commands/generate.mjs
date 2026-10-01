@@ -102,6 +102,16 @@ const fixtures = {
     type: 'CallSignal',
     payload: { kind: 'CallEnd', call_id: 'call-1', reason: 'hangup' },
   },
+  // A ring, as websocket-call-transport.ts sends it: what raises a native call notice.
+  'call-invite': {
+    type: 'CallSignal',
+    payload: {
+      kind: 'CallInvite', call_id: 'call-2',
+      media: { audio: true, video: true, screen: false },
+      codecs: { audio: ['opus'], video: [{ codec: 'vp8', hardware: false, maxHeight: 720 }] },
+      media_wire_version: 1, video_send_codec: 'vp8',
+    },
+  },
   'negative-and-small': {
     type: 'MessageAck',
     payload: { ack_type: 'read', message_id: '', timestamp: -5, error: undefined },

@@ -35,3 +35,6 @@ mod engine_fake;
 #[cfg(test)]
 #[path = "engine_tests.rs"]
 mod engine_tests;
+#[cfg(test)]
+#[path = "engine_tests_notices.rs"]
+mod engine_tests_notices;

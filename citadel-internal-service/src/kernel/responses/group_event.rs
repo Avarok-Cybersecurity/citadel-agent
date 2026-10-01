@@ -28,7 +28,7 @@ pub(crate) fn message_dropped(
     })
 }
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     group_event: GroupEvent,
 ) -> Result<(), NetworkError> {
@@ -236,12 +236,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         match response {
             Some(internal_service_response) => {
                 if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-                    let route = SessionRoute::new(
-                        connection.subscribers.clone(),
-                        tcp_connection_map.clone(),
-                    );
+                    let subscribers = connection.subscribers.clone();
                     drop(server_connection_map);
-                    route.send(internal_service_response);
+                    this.notice_for(&internal_service_response);
+                    SessionRoute::new(subscribers, tcp_connection_map.clone())
+                        .send(internal_service_response);
                 }
             }
             None => {

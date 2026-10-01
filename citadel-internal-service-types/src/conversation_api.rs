@@ -58,7 +58,9 @@ impl AccountPreferences {
         send_read_receipts: true,
         accept_requests_from_strangers: true,
         notify_on_screenshot: false,
-        notification_preview: NotificationPreview::Text,
+        // Privacy first: a lock screen shows who wrote, not what, until the
+        // user turns previews on for the account.
+        notification_preview: NotificationPreview::SenderOnly,
         retention: Vec::new(),
     };
 

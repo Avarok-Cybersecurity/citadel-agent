@@ -6,6 +6,7 @@ use super::engine::store;
 use super::io::ConversationIo;
 use super::kv::{ConversationKv, KvResult, MemoryKv};
 use super::outbound::Outgoing;
+use crate::kernel::notices::decide::NoticeSource;
 use citadel_internal_service_types::{
     ConversationEventKind, InternalServiceResponse, MessageNotification, MessageStatus, MessageType,
 };
@@ -20,6 +21,7 @@ pub(super) const PEER: u64 = 2002;
 pub(super) struct FakeAgent {
     pub kv: YieldingKv,
     pub published: Mutex<Vec<InternalServiceResponse>>,
+    pub notices: Mutex<Vec<NoticeSource>>,
     pub sent: Mutex<Vec<Vec<u8>>>,
     pub windows: AtomicBool,
     pub link_down: AtomicBool,
@@ -98,6 +100,10 @@ impl ConversationIo for FakeAgent {
         let known = self.known.load(Ordering::SeqCst);
         Box::pin(async move { known })
     }
+    fn raise_notice(&self, _cid: u64, source: NoticeSource) {
+        self.notices.lock().push(source);
+    }
+    fn rows_changed(&self) {}
 }
 
 impl FakeAgent {

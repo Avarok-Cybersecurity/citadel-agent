@@ -114,4 +114,10 @@ impl<T: IOInterface + Sync, R: Ratchet> ConversationIo for CitadelWorkspaceServi
             }
         })
     }
+    fn raise_notice(&self, cid: u64, source: crate::kernel::notices::decide::NoticeSource) {
+        CitadelWorkspaceService::raise_notice(self, cid, source)
+    }
+    fn rows_changed(&self) {
+        CitadelWorkspaceService::rows_changed(self)
+    }
 }

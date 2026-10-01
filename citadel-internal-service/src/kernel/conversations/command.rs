@@ -141,6 +141,19 @@ fn attachment(v: &Value) -> Option<Attachment> {
     })
 }
 
+/// Whether these bytes are a peer ringing this account: a `CallInvite`.
+pub(crate) fn is_call_invite(bytes: &[u8]) -> bool {
+    let Ok(command) = Value::decode(bytes) else {
+        return false;
+    };
+    command.get("type").and_then(Value::as_str) == Some("CallSignal")
+        && command
+            .get("payload")
+            .and_then(|p| p.get("kind"))
+            .and_then(Value::as_str)
+            == Some("CallInvite")
+}
+
 /// Read one arriving P2P payload. `None` is bytes that are not a P2P command
 /// at all; they belong to a window.
 pub(crate) fn read(bytes: &[u8]) -> Option<Inbound> {

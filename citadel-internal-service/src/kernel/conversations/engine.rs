@@ -103,6 +103,7 @@ impl Engine {
             cid,
             InternalServiceResponse::ConversationEvent(Box::new(event)),
         );
+        io.rows_changed();
     }
 }
 

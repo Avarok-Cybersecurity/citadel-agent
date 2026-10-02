@@ -9,7 +9,6 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::*;
 use citadel_sdk::logging::{info, warn};
 use citadel_sdk::prelude::*;
-use std::sync::atomic::Ordering;
 use uuid::Uuid;
 
 /// What the connection map says about `session_cid`, or `None` if there is no
@@ -23,20 +22,26 @@ pub(super) fn owner_of<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     session_cid: u64,
 ) -> Option<SessionOwner> {
-    let owner_uuid = {
+    let members = {
         let map = this.server_connection_map.read();
         map.get(&session_cid)
-            .map(|conn| conn.associated_localhost_connection.load(Ordering::Relaxed))?
+            .map(|conn| conn.subscribers.members())?
     };
-    let live = this
-        .tx_to_localhost_clients
-        .read()
-        .contains_key(&owner_uuid);
-    Some(if live {
-        SessionOwner::Live(owner_uuid)
-    } else {
-        SessionOwner::Orphaned
-    })
+    Some(live_owner(this, members))
+}
+
+/// The members still in `tx_to_localhost_clients`, as a `SessionOwner`.
+pub(super) fn live_owner<T, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    members: Vec<Uuid>,
+) -> SessionOwner {
+    let clients = this.tx_to_localhost_clients.read();
+    SessionOwner::from_live_members(
+        members
+            .into_iter()
+            .filter(|member| clients.contains_key(member))
+            .collect(),
+    )
 }
 
 /// Turn a refusal into the response the caller gets.
@@ -59,7 +64,7 @@ pub(super) fn refusal(
     }
 }
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     conn_id: Uuid,
     command: InternalServiceRequest,
@@ -111,29 +116,40 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 return disconnect_orphan(this, conn_id, request_id, session_cid).await
             }
 
-            ConfigCommand::ReleaseSession { session_cid } => {
-                // Mark the session as "released" - simulate orphan by setting associated_tcp_connection
-                // to a UUID that's not in tcp_connection_map, making it appear orphaned.
-                // The session stays in server_connection_map and becomes immediately claimable.
+            focus @ ConfigCommand::ReportFocus { .. } => {
+                return super::notices::report_focus(this, conn_id, request_id, focus);
+            }
 
-                // Releasing means "this tab is done with it". Releasing a
-                // session another connection is actively using marked it
-                // reclaimable out from under its owner.
+            ConfigCommand::DeclareCapabilities { capabilities } => {
+                this.declare(conn_id, capabilities, request_id).await
+            }
+
+            ConfigCommand::AttachSession { session_cid, proof } => {
+                return crate::kernel::requests::connection_management_attach::attach_session(
+                    this,
+                    conn_id,
+                    request_id,
+                    session_cid,
+                    proof,
+                )
+                .await
+            }
+
+            ConfigCommand::ReleaseSession { session_cid } => {
+                // "This window is done with it": it leaves the session, and only
+                // it. Other windows keep it; with none left it is orphaned and
+                // immediately claimable. Releasing a session only OTHER
+                // connections hold is refused -- it used to mark somebody
+                // else's live session reclaimable out from under them.
                 if let Some(owner) = owner_of(this, session_cid) {
                     if let Authorization::Refuse(error) = may_release(owner, conn_id, session_cid) {
                         return Some(refusal(session_cid, request_id, conn_id, error));
                     }
                 }
 
-                let server_connection_map = this.server_connection_map.read();
-                if let Some(connection) = server_connection_map.get(&session_cid) {
-                    // Use nil UUID to mark as orphaned - this UUID won't exist in tcp_connection_map
-                    let orphan_marker = Uuid::nil();
-                    connection
-                        .associated_localhost_connection
-                        .store(orphan_marker, Ordering::Relaxed);
-
-                    info!(target: "citadel", "ReleaseSession: Session {} marked as orphaned (released by tab)", session_cid);
+                if crate::kernel::membership::subscribers_of(this, session_cid).is_some() {
+                    crate::kernel::membership::release(this, session_cid, conn_id);
+                    info!(target: "citadel", "ReleaseSession: connection {} released session {}", conn_id, session_cid);
 
                     InternalServiceResponse::ConnectionManagementSuccess(
                         ConnectionManagementSuccess {
@@ -205,19 +221,9 @@ async fn disconnect_orphan<T: IOInterface, R: Ratchet>(
         let mut server_connection_map = this.server_connection_map.write();
 
         if let Some(session_cid) = session_cid {
-            let owner = {
-                let tcp_connection_map = this.tx_to_localhost_clients.read();
-                server_connection_map.get(&session_cid).map(|connection| {
-                    let uuid = connection
-                        .associated_localhost_connection
-                        .load(Ordering::Relaxed);
-                    if tcp_connection_map.contains_key(&uuid) {
-                        SessionOwner::Live(uuid)
-                    } else {
-                        SessionOwner::Orphaned
-                    }
-                })
-            };
+            let owner = server_connection_map
+                .get(&session_cid)
+                .map(|connection| live_owner(this, connection.subscribers.members()));
             if let Some(owner) = owner {
                 if let Authorization::Refuse(error) = may_disconnect(owner, conn_id, session_cid) {
                     drop(server_connection_map);
@@ -233,13 +239,11 @@ async fn disconnect_orphan<T: IOInterface, R: Ratchet>(
                     // is connection map then CID-scoped maps, which is the order
                     // every other site takes and the only order any site takes.
                     this.prune_cid_scoped_state(session_cid, None);
-                    let tcp_uuid = connection
-                        .associated_localhost_connection
-                        .load(Ordering::Relaxed);
+                    let subscribers = connection.subscribers.clone();
                     removed.push(DisconnectedConnection::C2S {
                         connection: Box::new(connection),
                         cid: session_cid,
-                        tcp_uuid,
+                        subscribers,
                     });
                 }
                 None => {
@@ -257,31 +261,23 @@ async fn disconnect_orphan<T: IOInterface, R: Ratchet>(
                 }
             }
         } else {
-            let orphaned_sessions: Vec<u64> = {
-                let tcp_connection_map = this.tx_to_localhost_clients.read();
-                server_connection_map
-                    .iter()
-                    .filter(|(_, connection)| {
-                        let conn_id = connection
-                            .associated_localhost_connection
-                            .load(Ordering::Relaxed);
-                        !tcp_connection_map.contains_key(&conn_id)
-                    })
-                    .map(|(cid, _)| *cid)
-                    .collect()
-            };
+            let orphaned_sessions: Vec<u64> = server_connection_map
+                .iter()
+                .filter(|(_, connection)| {
+                    live_owner(this, connection.subscribers.members()) == SessionOwner::Orphaned
+                })
+                .map(|(cid, _)| *cid)
+                .collect();
 
             for cid in orphaned_sessions {
                 if let Some(connection) = server_connection_map.remove(&cid) {
                     // Beside the removal — see the single-session branch above.
                     this.prune_cid_scoped_state(cid, None);
-                    let tcp_uuid = connection
-                        .associated_localhost_connection
-                        .load(Ordering::Relaxed);
+                    let subscribers = connection.subscribers.clone();
                     removed.push(DisconnectedConnection::C2S {
                         connection: Box::new(connection),
                         cid,
-                        tcp_uuid,
+                        subscribers,
                     });
                 }
             }

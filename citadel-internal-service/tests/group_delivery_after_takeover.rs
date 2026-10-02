@@ -9,7 +9,7 @@
 //! re-pointed the session here).
 //!
 //! These pass on the tree they were written against: the Connect re-points the
-//! session's shared `associated_localhost_connection` and the group receiver's
+//! session's shared the session's subscriber set (`Connection::subscribers`) and the group receiver's
 //! `SessionRoute` resolves through it on every send. They go red if the route
 //! is frozen at spawn (checked by making `SessionRoute::new` copy the uuid into
 //! a fresh atomic), which is the regression they guard.

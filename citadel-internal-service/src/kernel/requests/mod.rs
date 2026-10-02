@@ -19,17 +19,23 @@ pub(crate) struct HandledRequestResult {
     pub uuid: Uuid,
 }
 
+mod agent_own;
 mod connect;
 pub(crate) mod connect_mode;
+mod conversation;
 mod deregister;
 mod disconnect;
 mod get_account_information;
 mod get_sessions;
 mod media;
 mod message;
+mod notices;
 mod register;
+mod send_reliable;
+pub(crate) use agent_own::{answer_local_db, send_message};
 
 mod connection_management;
+mod connection_management_attach;
 pub(crate) mod connection_management_auth;
 mod connection_management_claim;
 mod connection_management_claim_sdk;
@@ -122,19 +128,18 @@ where
     // write or wipe its persistent store. `gate_decision` derives that from the
     // command itself.
     if let Some(cid) = command.session_cid() {
-        let owner = {
+        // Whether the caller is attached: any window of the session may act on
+        // it, the primary or not (kernel/session_subscribers.rs).
+        let attached = {
             let map = this.server_connection_map.read();
-            map.get(&cid).map(|conn| {
-                conn.associated_localhost_connection
-                    .load(std::sync::atomic::Ordering::Relaxed)
-            })
+            map.get(&cid).map(|conn| conn.subscribers.contains(uuid))
         };
         // The decision itself is a pure function of (command, owner, caller),
         // and it is taken there rather than here so it can be tested without a
         // running service. It was inline, and a control that restored the
         // silent `return None` passed every test in this file: the tests
         // covered the response BUILDER, which nothing was obliged to call.
-        match gate_decision(&command, owner, uuid) {
+        match gate_decision(&command, attached) {
             GateDecision::Proceed => {}
             GateDecision::Refuse { reason } => {
                 // Name the request type: "something was refused" is not
@@ -153,6 +158,12 @@ where
         }
     }
 
+    // The agent is the only writer of a hosted account's conversations.
+    if this.writes_hosted_conversation(&command) {
+        log::warn!(target: "citadel", "Refusing a conversation-record write from connection {uuid}: the agent hosts that account");
+        return refusal_response(&command, uuid);
+    }
+
     match &command {
         InternalServiceRequest::GetAccountInformation { .. } => {
             get_account_information::handle(this, uuid, command).await
@@ -163,6 +174,28 @@ where
         InternalServiceRequest::Connect { .. } => connect::handle(this, uuid, command).await,
         InternalServiceRequest::Register { .. } => register::handle(this, uuid, command).await,
         InternalServiceRequest::Message { .. } => message::handle(this, uuid, command).await,
+        InternalServiceRequest::NoticeSubscribe { .. }
+        | InternalServiceRequest::NoticeSetMuted { .. } => {
+            notices::handle(this, uuid, command).await
+        }
+        InternalServiceRequest::SendReliable { .. } => {
+            send_reliable::handle(this, uuid, command).await
+        }
+        InternalServiceRequest::ConversationSend { .. }
+        | InternalServiceRequest::ConversationResend { .. }
+        | InternalServiceRequest::ConversationEdit { .. }
+        | InternalServiceRequest::ConversationDelete { .. }
+        | InternalServiceRequest::ConversationReact { .. }
+        | InternalServiceRequest::ConversationMarkRead { .. }
+        | InternalServiceRequest::ConversationRecord { .. }
+        | InternalServiceRequest::ConversationPatch { .. }
+        | InternalServiceRequest::ConversationClear { .. }
+        | InternalServiceRequest::ConversationList { .. }
+        | InternalServiceRequest::ConversationPage { .. }
+        | InternalServiceRequest::SetAccountPreferences { .. }
+        | InternalServiceRequest::GetAccountPreferences { .. } => {
+            conversation::handle(this, uuid, command).await
+        }
 
         InternalServiceRequest::MediaOpen { .. } => media::handle_open(this, uuid, command).await,
         InternalServiceRequest::MediaSend { .. } => media::handle_send(this, uuid, command).await,
@@ -470,14 +503,15 @@ pub(crate) fn spawn_group_channel_receiver(
                             message,
                             InternalServiceResponse::GroupMessageNotification(_)
                         );
-                        match route.send(message) {
-                            Some(target) if is_message => {
-                                info!(target:"citadel","[GROUP-RECV] Delivered a group message for CID {implicated_cid} to {target}");
-                            }
-                            Some(_) => {}
-                            None => {
+                        let delivered = route.send(message);
+                        match delivered.as_slice() {
+                            [] => {
                                 info!(target:"citadel","No localhost connection owns CID {implicated_cid} - group broadcast dropped");
                             }
+                            targets if is_message => {
+                                info!(target:"citadel","[GROUP-RECV] Delivered a group message for CID {implicated_cid} to {targets:?}");
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -548,8 +582,7 @@ pub(crate) enum GateDecision {
 /// session it does not know at all.
 pub(crate) fn gate_decision(
     command: &InternalServiceRequest,
-    owner: Option<Uuid>,
-    caller: Uuid,
+    caller_attached: Option<bool>,
 ) -> GateDecision {
     // Derived here rather than passed in: a caller that computes it separately
     // can pass one that disagrees with the command, and then the decision is
@@ -572,13 +605,13 @@ pub(crate) fn gate_decision(
     }
 
     let requires_ownership = requires_owned_session(command);
-    match owner {
-        // Known but held by somebody else. Refused whatever it asks for: the
-        // gate's original purpose.
-        Some(owner) if owner != caller => GateDecision::Refuse {
+    match caller_attached {
+        // Known but the caller is not attached to it. Refused whatever it asks
+        // for: the gate's original purpose.
+        Some(false) => GateDecision::Refuse {
             reason: "the connection does not own it",
         },
-        Some(_) => GateDecision::Proceed,
+        Some(true) => GateDecision::Proceed,
         // Not in the map at all. Reads may proceed -- the handler fails them
         // honestly -- but a write or a wipe must not, or any connection could
         // clear the store of an account that merely happens to be disconnected.
@@ -621,6 +654,9 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
     /// Same wording for every refusal; see above.
     const REFUSED: &str = "Session unavailable to this connection";
 
+    if let Some(response) = conversation::refusal(command, REFUSED) {
+        return Some(HandledRequestResult { response, uuid });
+    }
     let response = match command {
         InternalServiceRequest::LocalDBSetKV {
             request_id,
@@ -817,6 +853,9 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
         }),
         InternalServiceRequest::Message {
             request_id, cid, ..
+        }
+        | InternalServiceRequest::SendReliable {
+            request_id, cid, ..
         } => InternalServiceResponse::MessageSendFailure(MessageSendFailure {
             cid: *cid,
             message: REFUSED.to_string(),
@@ -922,8 +961,10 @@ pub(crate) fn requires_owned_session(command: &InternalServiceRequest) -> bool {
             // "are gated now" -- it was gated only against a session held by
             // somebody else, never against one held by nobody.
             | InternalServiceRequest::LocalDBGetKV { .. }
-            | InternalServiceRequest::Deregister { .. }
-    )
+            | InternalServiceRequest::Deregister { .. } // The conversation store answers by CID from the agent's own store, not
+                                                        // through `propose_target`, so a signed-out account would otherwise hand
+                                                        // its history to any connection naming it.
+    ) || conversation::is_request(command)
 }
 
 /// One of ILM's seven keys, suffixed with `cid`.
@@ -945,474 +986,4 @@ fn is_ilm_key_for(key: &str, cid: u64) -> bool {
 }
 
 #[cfg(test)]
-mod ownership_gate_tests {
-    use super::{
-        gate_decision, is_exempt_from_ownership_gate, is_ilm_key_for, refusal_response,
-        requires_owned_session, GateDecision, HandledRequestResult,
-    };
-    use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
-    use uuid::Uuid;
-
-    fn get_kv(key: &str) -> InternalServiceRequest {
-        get_kv_for(key, 1)
-    }
-
-    fn get_kv_for(key: &str, cid: u64) -> InternalServiceRequest {
-        InternalServiceRequest::LocalDBGetKV {
-            request_id: Uuid::new_v4(),
-            cid,
-            peer_cid: None,
-            key: key.to_string(),
-        }
-    }
-
-    #[test]
-    fn only_ilm_reads_may_name_a_session_the_connection_does_not_own() {
-        assert!(is_exempt_from_ownership_gate(&get_kv_for("last_sent-1", 1)));
-        // The whole variant used to be exempt, so any key rode through.
-        assert!(!is_exempt_from_ownership_gate(&get_kv("credentials")));
-    }
-
-    #[test]
-    fn an_ilm_key_for_another_account_is_not_exempt() {
-        // The exemption's remaining hole: the key's digits were never compared
-        // to the request's own cid, so `inbound_messages-<victim>` rode through
-        // and handed back that account's stored P2P payloads. A cid is not a
-        // secret; it travels in peer lists and GetSessions responses.
-        assert!(!is_exempt_from_ownership_gate(&get_kv_for(
-            "inbound_messages-999",
-            1
-        )));
-        assert!(is_exempt_from_ownership_gate(&get_kv_for(
-            "inbound_messages-999",
-            999
-        )));
-    }
-
-    #[test]
-    fn the_suffix_is_compared_as_written() {
-        // Compared as a string, not parsed: `007` parses to 7 and is not a key
-        // ILM would ever write, and accepting it would widen the exemption for
-        // nothing.
-        assert!(is_ilm_key_for("last_sent-7", 7));
-        assert!(!is_ilm_key_for("last_sent-007", 7));
-        assert!(!is_ilm_key_for("last_sent-", 7));
-        assert!(!is_ilm_key_for("last_sent-7x", 7));
-        assert!(!is_ilm_key_for("credentials", 7));
-    }
-
-    #[test]
-    fn no_other_request_is_exempt() {
-        let write = InternalServiceRequest::LocalDBSetKV {
-            request_id: Uuid::new_v4(),
-            cid: 1,
-            peer_cid: None,
-            key: "last_sent-123".to_string(),
-            value: vec![],
-        };
-        // An ILM-shaped KEY must not exempt a WRITE.
-        assert!(!is_exempt_from_ownership_gate(&write));
-        assert!(requires_owned_session(&write));
-    }
-
-    #[test]
-    fn every_local_db_write_requires_an_owned_session() {
-        let id = Uuid::new_v4();
-        for command in [
-            InternalServiceRequest::LocalDBSetKV {
-                request_id: id,
-                cid: 1,
-                peer_cid: None,
-                key: "k".into(),
-                value: vec![],
-            },
-            InternalServiceRequest::LocalDBDeleteKV {
-                request_id: id,
-                cid: 1,
-                peer_cid: None,
-                key: "k".into(),
-            },
-            InternalServiceRequest::LocalDBClearAllKV {
-                request_id: id,
-                cid: 1,
-                peer_cid: None,
-            },
-            InternalServiceRequest::LocalDBGetAllKV {
-                request_id: id,
-                cid: 1,
-                peer_cid: None,
-            },
-        ] {
-            assert!(
-                requires_owned_session(&command),
-                "an unmapped cid must not be enough for {command:?}",
-            );
-        }
-    }
-
-    #[test]
-    fn recognises_every_key_ilm_actually_uses() {
-        for key in [
-            "inbound_messages-123",
-            "outbound_messages-123",
-            "last_acked-123",
-            "last_sent-123",
-            "next_unique_id-123",
-            "received_messages-123",
-            "last_received_from-123",
-        ] {
-            assert!(
-                is_ilm_key_for(key, 123),
-                "{key} is a key ILM reads on the happy path"
-            );
-        }
-    }
-
-    #[test]
-    fn refuses_anything_else() {
-        for key in [
-            // The whole point: an arbitrary key used to ride the exemption.
-            "credentials",
-            "session-token",
-            // A prefix match alone is not enough — the tail must be a cid.
-            "last_sent-../credentials",
-            "inbound_messages-abc",
-            "inbound_messages-",
-            // And a lookalike must not pass.
-            "not_last_sent-123",
-        ] {
-            assert!(
-                !is_ilm_key_for(key, 123),
-                "{key} must not ride the ILM exemption"
-            );
-        }
-    }
-
-    /// Every gated variant, with the ids the response must echo back.
-    fn gated_requests(request_id: Uuid, cid: u64) -> Vec<InternalServiceRequest> {
-        vec![
-            InternalServiceRequest::LocalDBSetKV {
-                request_id,
-                cid,
-                peer_cid: None,
-                key: "k".into(),
-                value: vec![],
-            },
-            InternalServiceRequest::LocalDBDeleteKV {
-                request_id,
-                cid,
-                peer_cid: None,
-                key: "k".into(),
-            },
-            InternalServiceRequest::LocalDBClearAllKV {
-                request_id,
-                cid,
-                peer_cid: None,
-            },
-            InternalServiceRequest::LocalDBGetAllKV {
-                request_id,
-                cid,
-                peer_cid: None,
-            },
-        ]
-    }
-
-    /// Requests the gate refuses only when the session belongs to ANOTHER
-    /// connection — as an orphaned session does, which is the whole Previous
-    /// Sessions flow.
-    ///
-    /// `gated_requests` above holds the four LocalDB variants, which are refused
-    /// for an unmapped session as well. These two are not, so they need their
-    /// own list — and because they were in neither, every test here proved the
-    /// builder answers the LocalDB variants and nothing at all about the
-    /// destructive pair the comment on `handle` names by name: "Deregister,
-    /// Disconnect, Message, SendFile ... are gated now".
-    fn refused_when_owned_elsewhere(request_id: Uuid, cid: u64) -> Vec<InternalServiceRequest> {
-        vec![
-            InternalServiceRequest::Disconnect { request_id, cid },
-            InternalServiceRequest::Deregister { request_id, cid },
-        ]
-    }
-
-    /// Signing out of a session another connection holds must be ANSWERED.
-    ///
-    /// The gate refuses `Some(owner) if owner != caller` whatever the request
-    /// is, and an orphaned session's owner is the connection that opened it —
-    /// so signing one out from a new tab, which is the entire Previous Sessions
-    /// flow, lands here. `refusal_response` fell through to `_ => return None`
-    /// for both of these, which sends nothing at all.
-    ///
-    /// Measured in CI: `Failed to disconnect: Error: Disconnect request timed
-    /// out` after the full thirty-second budget, over a sign-out modal that
-    /// spun for all of it, while a `Refusing Disconnect for session …` line sat
-    /// in the server log where no user can see it. The session was still there
-    /// afterwards, and nothing said why.
-    ///
-    /// Not guesswork, which is what the doc above gives as the reason for
-    /// dropping everything else: both have a failure variant the client already
-    /// matches on, by request id.
-    #[test]
-    fn a_refused_sign_out_is_answered_rather_than_dropped() {
-        let request_id = Uuid::new_v4();
-        let mine = Uuid::new_v4();
-        let theirs = Uuid::new_v4();
-
-        for command in refused_when_owned_elsewhere(request_id, 7) {
-            assert!(
-                matches!(
-                    gate_decision(&command, Some(theirs), mine),
-                    GateDecision::Refuse { .. }
-                ),
-                "{command:?}"
-            );
-            let result = refusal_response(&command, mine)
-                .unwrap_or_else(|| panic!("no response for {command:?}"));
-            assert_eq!(result.uuid, mine);
-            let debug = format!("{:?}", result.response);
-            assert!(
-                debug.contains(&request_id.to_string()),
-                "the caller is waiting on this request id: {debug}"
-            );
-            assert!(
-                debug.contains("Session unavailable to this connection"),
-                "every refusal says the same thing: {debug}"
-            );
-        }
-    }
-
-    /// The refusal must ANSWER, carrying the request id the caller is waiting on.
-    ///
-    /// Refusing by `return None` sends nothing, and the browser then waits out
-    /// its own five-second timeout with no idea why. A response without the
-    /// request id is no better: nothing correlates it to the pending call.
-    #[test]
-    fn a_refused_local_db_request_is_answered_with_its_own_request_id() {
-        let request_id = Uuid::new_v4();
-        let uuid = Uuid::new_v4();
-        for command in gated_requests(request_id, 7) {
-            let result = refusal_response(&command, uuid)
-                .unwrap_or_else(|| panic!("no response for {command:?}"));
-            assert_eq!(result.uuid, uuid);
-            let echoed = match &result.response {
-                InternalServiceResponse::LocalDBSetKVFailure(r) => (r.request_id, r.cid),
-                InternalServiceResponse::LocalDBDeleteKVFailure(r) => (r.request_id, r.cid),
-                InternalServiceResponse::LocalDBClearAllKVFailure(r) => (r.request_id, r.cid),
-                InternalServiceResponse::LocalDBGetAllKVFailure(r) => (r.request_id, r.cid),
-                other => panic!("wrong response shape: {other:?}"),
-            };
-            assert_eq!(echoed, (Some(request_id), 7));
-        }
-    }
-
-    /// Both refusal branches must be indistinguishable.
-    ///
-    /// "No such session" and "not yours" are answered identically on purpose:
-    /// answering at all is only safe while it tells a prober nothing a timeout
-    /// did not already tell them.
-    #[test]
-    fn every_refusal_says_the_same_thing() {
-        let messages: Vec<String> = gated_requests(Uuid::new_v4(), 7)
-            .iter()
-            .map(
-                |command| match refusal_response(command, Uuid::new_v4()).unwrap().response {
-                    InternalServiceResponse::LocalDBSetKVFailure(r) => r.message,
-                    InternalServiceResponse::LocalDBDeleteKVFailure(r) => r.message,
-                    InternalServiceResponse::LocalDBClearAllKVFailure(r) => r.message,
-                    InternalServiceResponse::LocalDBGetAllKVFailure(r) => r.message,
-                    other => panic!("wrong response shape: {other:?}"),
-                },
-            )
-            .collect();
-        assert_eq!(
-            messages
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len(),
-            1
-        );
-        // And it must not name which branch refused.
-        assert!(!messages[0].to_lowercase().contains("own"));
-    }
-
-    /// A refused request is answered when it has somewhere to say so.
-    ///
-    /// This asserted that `LocalDBGetKV` gets NO response, quoting the rule that
-    /// "inventing a response shape would be guesswork". That rule is right, and
-    /// it did not apply: `LocalDBGetKVFailure` is a real variant, the handler
-    /// already builds one when `propose_target` fails, and the client matches it
-    /// by request id. Nothing was being invented.
-    ///
-    /// The false premise mattered. Being silent is exactly why the variant could
-    /// not be gated -- gating it would have refused reads into nothing and left
-    /// the browser waiting out its own timeout -- and not being gated is what let
-    /// any connection read a disconnected account's store.
-    ///
-    /// `GroupListGroupsFor` genuinely has no failure variant and stays silent.
-    #[test]
-    fn a_refused_read_is_answered_rather_than_dropped() {
-        let read = InternalServiceRequest::LocalDBGetKV {
-            request_id: Uuid::new_v4(),
-            cid: 1,
-            peer_cid: None,
-            key: "k".into(),
-        };
-        let answer = refusal_response(&read, Uuid::new_v4());
-        assert!(
-            matches!(
-                answer,
-                Some(HandledRequestResult {
-                    response: InternalServiceResponse::LocalDBGetKVFailure(_),
-                    ..
-                })
-            ),
-            "a refused read must answer with its own failure variant"
-        );
-
-        // Still silent, and for the reason that survives scrutiny.
-        let groups = InternalServiceRequest::GroupListGroupsFor {
-            request_id: Uuid::new_v4(),
-            cid: 1,
-            peer_cid: Some(2),
-        };
-        assert!(refusal_response(&groups, Uuid::new_v4()).is_none());
-        // Whatever `requires_owned_session` covers, `refusal_response` must
-        // answer -- otherwise a variant added to the gate silently hangs again.
-        for command in gated_requests(Uuid::new_v4(), 1) {
-            assert!(requires_owned_session(&command));
-            assert!(refusal_response(&command, Uuid::new_v4()).is_some());
-        }
-    }
-
-    /// The DECISION, not just the response builder.
-    ///
-    /// Restoring the silent `return None` at the call site used to pass every
-    /// test here, because they only exercised the thing that builds a refusal
-    /// and nothing obliged the gate to build one.
-    #[test]
-    fn a_refused_request_never_decides_to_proceed() {
-        let mine = Uuid::new_v4();
-        let theirs = Uuid::new_v4();
-        for command in gated_requests(Uuid::new_v4(), 7) {
-            // No mapped session: refused, and the refusal is answerable.
-            let unmapped = gate_decision(&command, None, mine);
-            assert!(
-                matches!(unmapped, GateDecision::Refuse { .. }),
-                "{command:?}"
-            );
-            assert!(refusal_response(&command, mine).is_some());
-            // Mapped to somebody else: refused too.
-            assert!(matches!(
-                gate_decision(&command, Some(theirs), mine),
-                GateDecision::Refuse { .. }
-            ));
-            // Mapped to the caller: allowed through.
-            assert_eq!(
-                gate_decision(&command, Some(mine), mine),
-                GateDecision::Proceed
-            );
-        }
-    }
-
-    /// The agent's own scratch space is not somebody else's session.
-    ///
-    /// CID 0 names no account. The reads already went through -- `LocalDBGetKV`
-    /// needs no ownership, so it reached the handler and answered like any
-    /// other missing key -- while the writes were refused, so the
-    /// auto-reconnect preference could never be saved at all.
-    #[test]
-    fn cid_zero_is_not_a_session_anyone_owns() {
-        let mine = Uuid::new_v4();
-        let theirs = Uuid::new_v4();
-        for command in gated_requests(Uuid::new_v4(), 0) {
-            assert_eq!(gate_decision(&command, None, mine), GateDecision::Proceed);
-            // Not even when the map happens to hold something under 0: there is
-            // no account there to protect.
-            assert_eq!(
-                gate_decision(&command, Some(theirs), mine),
-                GateDecision::Proceed
-            );
-        }
-    }
-
-    /// A real session is still protected.
-    #[test]
-    fn a_real_session_is_still_refused_to_a_stranger() {
-        let mine = Uuid::new_v4();
-        let theirs = Uuid::new_v4();
-        for command in gated_requests(Uuid::new_v4(), 7) {
-            assert!(matches!(
-                gate_decision(&command, Some(theirs), mine),
-                GateDecision::Refuse { .. }
-            ));
-        }
-    }
-
-    /// A read of an unmapped session is REFUSED.
-    ///
-    /// This asserted the opposite, on the reasoning that the gate "was never
-    /// meant to stop the handler from reporting an unknown cid honestly". The
-    /// handler does report an UNKNOWN cid honestly -- `propose_target` fails and
-    /// it answers. But for a cid naming an account that is KNOWN and merely has
-    /// no live session, `propose_target` SUCCEEDS: by its own doc it checks only
-    /// that the cid names a locally-known account. The read then hands that
-    /// account's stored ILM payloads to any connection that can name the cid,
-    /// and a cid is a u64 that travels in peer lists and `GetSessions`
-    /// responses, not a secret.
-    ///
-    /// So the test was pinning the hole rather than the property. The honest
-    /// report the old reasoning wanted is still there -- it is now a refusal
-    /// with a `LocalDBGetKVFailure`, which the client already matches on.
-    #[test]
-    fn an_unmapped_session_refuses_a_read() {
-        let read = InternalServiceRequest::LocalDBGetKV {
-            request_id: Uuid::new_v4(),
-            cid: 1,
-            peer_cid: None,
-            key: "credentials".into(),
-        };
-        assert!(matches!(
-            gate_decision(&read, None, Uuid::new_v4()),
-            GateDecision::Refuse { .. }
-        ));
-    }
-
-    /// Deregistering an unmapped session is refused, and answered.
-    ///
-    /// `deregister::handle` never consults the connection map: it sends
-    /// `DeregisterFromHypernode{cid}` for whatever cid it is given. Ungated for
-    /// an unmapped session, that deletes an account permanently on the word of
-    /// any connection -- the most irreversible operation the agent has, on the
-    /// least evidence.
-    #[test]
-    fn an_unmapped_session_refuses_a_deregister() {
-        let dereg = InternalServiceRequest::Deregister {
-            request_id: Uuid::new_v4(),
-            cid: 1,
-        };
-        assert!(matches!(
-            gate_decision(&dereg, None, Uuid::new_v4()),
-            GateDecision::Refuse { .. }
-        ));
-        assert!(refusal_response(&dereg, Uuid::new_v4()).is_some());
-    }
-
-    /// An owned session still reads, which is the access ILM actually needs.
-    ///
-    /// The control for the two above: if the gate refused reads outright rather
-    /// than only unowned ones, every messenger read would fail and both tests
-    /// would still pass.
-    #[test]
-    fn an_owned_session_still_allows_a_read() {
-        let mine = Uuid::new_v4();
-        let read = InternalServiceRequest::LocalDBGetKV {
-            request_id: Uuid::new_v4(),
-            cid: 1,
-            peer_cid: None,
-            key: "inbound_messages-1".into(),
-        };
-        assert_eq!(
-            gate_decision(&read, Some(mine), mine),
-            GateDecision::Proceed
-        );
-    }
-}
+mod ownership_gate_tests;

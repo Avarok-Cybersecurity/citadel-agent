@@ -1,4 +1,5 @@
-use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
+use crate::kernel::session_route::SessionRoute;
+use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     GroupDisconnectNotification, GroupEndNotification, GroupInviteNotification,
@@ -8,7 +9,6 @@ use citadel_internal_service_types::{
     InternalServiceResponse,
 };
 use citadel_sdk::prelude::{GroupBroadcast, GroupEvent, MessageGroupKey, NetworkError, Ratchet};
-use std::sync::atomic::Ordering;
 
 /// The SDK's `GroupBroadcast::MessageDropped`, for the UI. It reaches the agent by two
 /// paths (the group channel, or a kernel `GroupEvent` when no channel is open), and both
@@ -28,7 +28,7 @@ pub(crate) fn message_dropped(
     })
 }
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     group_event: GroupEvent,
 ) -> Result<(), NetworkError> {
@@ -236,15 +236,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         match response {
             Some(internal_service_response) => {
                 if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-                    let associated_tcp_connection = connection
-                        .associated_localhost_connection
-                        .load(Ordering::Relaxed);
+                    let subscribers = connection.subscribers.clone();
                     drop(server_connection_map);
-                    send_response_to_tcp_client(
-                        tcp_connection_map,
-                        internal_service_response,
-                        associated_tcp_connection,
-                    )?;
+                    this.notice_for(&internal_service_response);
+                    SessionRoute::new(subscribers, tcp_connection_map.clone())
+                        .send(internal_service_response);
                 }
             }
             None => {

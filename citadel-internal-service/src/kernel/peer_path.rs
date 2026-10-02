@@ -42,7 +42,7 @@ impl PathWatch {
                 let Some(notification) = notification(cid, peer_cid, status) else {
                     break;
                 };
-                if route.send(notification).is_none() {
+                if route.send(notification).is_empty() {
                     info!(target: "citadel", "[PeerPath] No localhost connection owns CID {cid}; path change for peer {peer_cid} dropped");
                 }
             }

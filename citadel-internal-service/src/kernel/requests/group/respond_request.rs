@@ -91,7 +91,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                                     );
 
                                     let route = SessionRoute::new(
-                                        connection.associated_localhost_connection.clone(),
+                                        connection.subscribers.clone(),
                                         this.tx_to_localhost_clients.clone(),
                                     );
                                     let departed = connection.groups.departure_flag(&key);

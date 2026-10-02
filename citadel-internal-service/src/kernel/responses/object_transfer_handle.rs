@@ -7,13 +7,12 @@ use citadel_sdk::prelude::{
 };
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 
-/// Sends `response` to the localhost client `tcp_uuid` and reports whether it
-/// was actually handed to a live client.
+/// Sends `response` to every one of `targets` (the session's attached
+/// connections) and reports whether at least one live client got it.
 ///
 /// This exists alongside `send_response_to_tcp_client` because that helper
 /// deliberately treats a missing uuid as Ok(()) (a dropped response must not
@@ -24,15 +23,12 @@ use uuid::Uuid;
 pub(crate) fn deliver_offer_to_localhost_client(
     clients: &Arc<RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
     response: InternalServiceResponse,
-    tcp_uuid: Uuid,
+    targets: &[Uuid],
 ) -> bool {
-    match clients.read().get(&tcp_uuid) {
-        Some(sender) => sender.send(response).is_ok(),
-        None => false,
-    }
+    !crate::kernel::session_route::deliver(clients, targets, response).is_empty()
 }
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     object_transfer_handle: ObjectTransferHandle,
 ) -> Result<(), NetworkError> {
@@ -69,9 +65,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             // write lock right before delivery and reflects any ClaimSession
             // that re-pointed the session — the same pattern peer_channel_
             // created.rs uses for its one-shot PeerConnectSuccess delivery.
-            let current_tcp_uuid = connection
-                .associated_localhost_connection
-                .load(Ordering::Relaxed);
+            let attached = connection.subscribers.members();
 
             if is_revfs_pull {
                 // Reclaim the browser's DownloadFile request_id (registered in
@@ -163,8 +157,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 // other session multiplexed through the same internal
                 // service (one IS process can host sessions for multiple
                 // distinct users). The single-TCP-per-browser architecture
-                // invariant means `associated_localhost_connection` is the
-                // sole authoritative target.
+                // invariant means the session's attached connections are the
+                // sole authoritative targets: every window of this account.
                 //
                 // Delivery has to be CHECKED here, not fire-and-forget:
                 // `send_response_to_tcp_client` maps "uuid not in the live
@@ -176,12 +170,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 // survives TCP drops. When delivery fails, reclaim the entry
                 // and decline the transfer so the remote sender gets a
                 // rejection instead of waiting forever.
-                if !deliver_offer_to_localhost_client(
-                    &this.tx_to_localhost_clients,
-                    response,
-                    current_tcp_uuid,
-                ) {
-                    warn!(target: "citadel", "[ObjectTransferHandle] FileTransferRequestNotification for cid={implicated_cid}, peer_cid={peer_cid}, object_id={object_id:?} was undeliverable (localhost connection {current_tcp_uuid:?} gone) - reclaiming and declining the pending offer");
+                this.notice_for(&response);
+                let clients = &this.tx_to_localhost_clients;
+                if !deliver_offer_to_localhost_client(clients, response, &attached) {
+                    warn!(target: "citadel", "[ObjectTransferHandle] FileTransferRequestNotification for cid={implicated_cid}, peer_cid={peer_cid}, object_id={object_id:?} was undeliverable (no attached localhost connection among {attached:?} is live) - reclaiming and declining the pending offer");
                     let reclaimed = this
                         .server_connection_map
                         .write()
@@ -258,7 +250,7 @@ mod tests {
         // just before was never reclaimed. The helper must report failure.
         let clients = Arc::new(RwLock::new(HashMap::new()));
         assert!(
-            !deliver_offer_to_localhost_client(&clients, arbitrary_response(), Uuid::new_v4()),
+            !deliver_offer_to_localhost_client(&clients, arbitrary_response(), &[Uuid::new_v4()]),
             "a transfer offer aimed at a localhost connection that no longer exists must \
              be reported undeliverable so the caller reclaims the pending-offer entry"
         );
@@ -271,7 +263,7 @@ mod tests {
         drop(rx);
         let clients = Arc::new(RwLock::new(HashMap::from([(uuid, tx)])));
         assert!(
-            !deliver_offer_to_localhost_client(&clients, arbitrary_response(), uuid),
+            !deliver_offer_to_localhost_client(&clients, arbitrary_response(), &[uuid]),
             "a send into a closed client channel must be reported undeliverable"
         );
     }
@@ -284,7 +276,7 @@ mod tests {
         assert!(deliver_offer_to_localhost_client(
             &clients,
             arbitrary_response(),
-            uuid
+            &[uuid]
         ));
         assert!(
             rx.try_recv().is_ok(),

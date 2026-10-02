@@ -16,10 +16,32 @@ use uuid::Uuid;
 #[cfg(feature = "typescript")]
 use ts_rs::TS;
 
+mod conversation;
+mod conversation_api;
 mod group_drop;
+mod group_responses;
+mod group_responses_more;
+pub use group_responses::*;
+pub use group_responses_more::*;
+mod multi_window;
+mod notices;
 mod server_link;
 mod turn;
+pub use conversation::{
+    Attachment, ConversationMessage, ConversationMetadata, ConversationPage, MessagePatch,
+    MessageStatus, MessageType, PageTimestamps, Reaction, TransferMode, TransferState,
+};
+pub use conversation_api::{
+    AccountPreferences, AccountPreferencesResponse, ConversationEvent, ConversationEventKind,
+    ConversationFailure, ConversationListResponse, ConversationPageResponse, ConversationUpdated,
+    NotificationPreview, PeerRetention, Retention,
+};
 pub use group_drop::GroupMessageDroppedNotification;
+pub use multi_window::{
+    AgentCapabilities, AttachProof, ClientCapabilities, SendReliableAccepted, SessionAttached,
+    SessionRole, SessionRoleNotification,
+};
+pub use notices::{AccountRow, NativeNotice, NoticeFailure, NoticeKind, NoticeRows, NoticeTarget};
 pub use server_link::{
     ServerConnectionLost, ServerReconnectFailed, ServerReconnected, SignedOutSession,
 };
@@ -206,6 +228,24 @@ pub struct ServiceConnectionAccepted {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
     pub request_id: Option<Uuid>,
+    /// This agent hosts a session's ILM and conversations for a connection that
+    /// declares `agent_ilm` (multi-window, 0.8.6). Said in the greeting, the
+    /// first thing on every socket, so a client knows at once whether to
+    /// declare: an older agent does not answer a declaration at all. Its
+    /// greeting has no such field, which is what `false` means here.
+    #[serde(default)]
+    pub agent_ilm: bool,
+}
+
+impl ServiceConnectionAccepted {
+    /// What this agent says first on every socket: it hosts (0.8.6).
+    pub fn greeting(connection: Uuid) -> InternalServiceResponse {
+        InternalServiceResponse::ServiceConnectionAccepted(Self {
+            cid: 0,
+            request_id: Some(connection),
+            agent_ilm: true,
+        })
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -681,439 +721,6 @@ pub struct PeerRegisterFailure {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupChannelCreateSuccess {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupChannelCreateFailure {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub message: String,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupBroadcastHandleFailure {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    pub message: String,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupCreateSuccess {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupCreateFailure {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    pub message: String,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupLeaveSuccess {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupLeaveFailure {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    pub message: String,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupEndSuccess {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupEndFailure {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    pub message: String,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupEndNotification {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub success: bool,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupLeaveNotification {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub success: bool,
-    pub message: String,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupMessageNotification {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub peer_cid: u64,
-    // Length only, for the same reason as MessageNotification above: this is a
-    // decrypted body, and a group one reaches more people than a direct one.
-    //
-    // It carried `bytes_debug_fmt`, which samples the first and last five bytes.
-    // That is the right trade for a key or a chunk and the wrong one for a
-    // message: five bytes of a chat line is its opening word.
-    #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
-    #[debug(with = plaintext_debug_fmt)]
-    pub message: Vec<u8>,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupMessageSuccess {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupMessageResponse {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub success: bool,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupMessageFailure {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    pub message: String,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupInviteNotification {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub peer_cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupInviteSuccess {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupInviteFailure {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    pub message: String,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupRespondRequestSuccess {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupRespondRequestFailure {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    pub message: String,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupMembershipResponse {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub success: bool,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupRequestJoinPendingNotification {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub result: Result<(), String>,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupDisconnectNotification {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupKickSuccess {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupKickFailure {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    pub message: String,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupListGroupsSuccess {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "bigint | null"))]
-    pub peer_cid: Option<u64>,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey[] | null"))]
-    pub group_list: Option<Vec<MessageGroupKey>>,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupListGroupsFailure {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    pub message: String,
-    pub request_id: Option<Uuid>,
-}
-
-/// The groups this session is in -- owned or joined -- as the agent holds them.
-///
-/// `GroupListGroupsFor` answers only for groups an owner created, so a member's
-/// new browser had no way to learn the groups it was already in. The session's
-/// live group channels are exactly that set.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupListJoinedSuccess {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey[]"))]
-    pub groups: Vec<MessageGroupKey>,
-    pub request_id: Option<Uuid>,
-    /// Invitations this session has not answered, kept by the agent so one sent while no tab
-    /// was open is still shown. `None` from an older agent, which does not keep them; last and
-    /// defaulted, so that agent's response still parses.
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript", ts(optional))]
-    pub pending_invites: Option<Vec<PendingGroupInvite>>,
-}
-
-/// An invitation to a group, still unanswered: who asked, and which group.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct PendingGroupInvite {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub peer_cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupListJoinedFailure {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    pub message: String,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupListGroupsResponse {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey[] | null"))]
-    pub group_list: Option<Vec<MessageGroupKey>>,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupJoinRequestNotification {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub peer_cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupRequestJoinAcceptResponse {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupRequestJoinDeclineResponse {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupRequestJoinSuccess {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupRequestJoinFailure {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    pub message: String,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupMemberStateChangeNotification {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    #[cfg_attr(feature = "typescript", ts(type = "MemberState"))]
-    pub state: MemberState,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
 pub struct LocalDBGetKVSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
@@ -1444,6 +1051,19 @@ pub enum InternalServiceResponse {
     ServerConnectionLost(ServerConnectionLost),
     ServerReconnected(ServerReconnected),
     ServerReconnectFailed(ServerReconnectFailed),
+    SessionAttached(SessionAttached),
+    SessionRoleNotification(SessionRoleNotification),
+    AgentCapabilities(AgentCapabilities),
+    SendReliableAccepted(SendReliableAccepted),
+    ConversationEvent(Box<ConversationEvent>),
+    ConversationUpdated(Box<ConversationUpdated>),
+    ConversationFailure(ConversationFailure),
+    ConversationListResponse(Box<ConversationListResponse>),
+    ConversationPageResponse(Box<ConversationPageResponse>),
+    AccountPreferencesResponse(Box<AccountPreferencesResponse>),
+    NativeNotice(Box<NativeNotice>),
+    NoticeRows(NoticeRows),
+    NoticeFailure(NoticeFailure),
     /// Results from a batched request, in the same order as input commands
     BatchedResponse(BatchedResponseData),
 }
@@ -1868,6 +1488,158 @@ pub enum InternalServiceRequest {
         request_id: Uuid,
         management_command: ConfigCommand,
     },
+    /// Send a chat message: the agent numbers it, stores it as pending, sends
+    /// it through the account's ILM and stores the outcome.
+    ConversationSend {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        #[debug(with = plaintext_debug_fmt)]
+        content: String,
+        message_type: MessageType,
+        reply_to: Option<String>,
+        mentions: Option<Vec<String>>,
+        attachments: Option<Vec<Attachment>>,
+        document_id: Option<String>,
+        document_title: Option<String>,
+        #[cfg_attr(feature = "typescript", ts(type = "SecurityLevel"))]
+        security_level: SecurityLevel,
+    },
+    /// Send a failed message again, with its original id, index and time.
+    ConversationResend {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        message_id: String,
+    },
+    ConversationEdit {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        message_id: String,
+        #[debug(with = plaintext_debug_fmt)]
+        contents: String,
+    },
+    ConversationDelete {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        message_id: String,
+    },
+    ConversationReact {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        message_id: String,
+        emoji: String,
+        active: bool,
+    },
+    /// Everything the peer sent is read: statuses, unread count, and read
+    /// receipts if the account sends them.
+    ConversationMarkRead {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+    },
+    /// File a message a window authored without sending it through the agent
+    /// (a file offer, a system notice).
+    ConversationRecord {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        message: Box<ConversationMessage>,
+    },
+    ConversationPatch {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        message_id: String,
+        patch: Box<MessagePatch>,
+    },
+    /// Delete the conversation's history. `include_unattributed` also removes a
+    /// record that predates ownership stamps (an explicit "Clear Chat History").
+    ConversationClear {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        include_unattributed: bool,
+    },
+    ConversationList {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+    },
+    /// One page of a conversation and its metadata; `page: None` is the newest.
+    ConversationPage {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        page: Option<u32>,
+    },
+    SetAccountPreferences {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        preferences: Box<AccountPreferences>,
+    },
+    GetAccountPreferences {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+    },
+    /// Hear every signed-in account's native notices and rows (the menu-bar
+    /// app). `token` is the one the app gave the agent at launch; answered
+    /// with `NoticeRows`, or `NoticeFailure`.
+    NoticeSubscribe {
+        request_id: Uuid,
+        #[debug(with = plaintext_debug_fmt)]
+        token: String,
+    },
+    /// Mute or unmute an account's native notices, from the menu-bar app.
+    NoticeSetMuted {
+        request_id: Uuid,
+        #[debug(with = plaintext_debug_fmt)]
+        token: String,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        muted: bool,
+    },
+    /// Send `message` to `peer_cid` through the ILM the agent hosts for `cid`.
+    /// Answered with `SendReliableAccepted` once ILM has it, or `MessageSendFailure`.
+    SendReliable {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[debug(with = plaintext_debug_fmt)]
+        message: Vec<u8>,
+        #[cfg_attr(feature = "typescript", ts(type = "SecurityLevel"))]
+        security_level: SecurityLevel,
+        /// "json", "text", "yjs-update", "opaque", "cbor-command", or none.
+        compression_hint: Option<String>,
+    },
     /// Execute multiple requests in parallel, returning results in the same order as input.
     /// This enables single-roundtrip batch operations for efficiency.
     Batched {
@@ -1931,6 +1703,28 @@ pub enum ConfigCommand {
     ReleaseSession {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         session_cid: u64,
+    },
+    /// Join a session another connection holds, keeping that connection
+    /// attached too. A live session requires `proof`; an orphan is claimed as
+    /// `ClaimSession` claims it. See kernel/requests/connection_management_attach.rs.
+    AttachSession {
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        session_cid: u64,
+        proof: AttachProof,
+    },
+    /// This window has the account (and, with `peer_cid`, that conversation)
+    /// in front of the user, or no longer does. Native notices for what it
+    /// shows are held back while it does.
+    ReportFocus {
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        session_cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint | null"))]
+        peer_cid: Option<u64>,
+        focused: bool,
+    },
+    /// Say what this connection's client can do; answered with `AgentCapabilities`.
+    DeclareCapabilities {
+        capabilities: ClientCapabilities,
     },
 }
 
@@ -2067,6 +1861,20 @@ impl InternalServiceRequest {
             Self::GroupListGroupsFor { cid, .. } => Some(*cid),
             Self::GroupListJoined { cid, .. } => Some(*cid),
             Self::GroupRequestJoin { cid, .. } => Some(*cid),
+            Self::SendReliable { cid, .. } => Some(*cid),
+            Self::ConversationSend { cid, .. }
+            | Self::ConversationResend { cid, .. }
+            | Self::ConversationEdit { cid, .. }
+            | Self::ConversationDelete { cid, .. }
+            | Self::ConversationReact { cid, .. }
+            | Self::ConversationMarkRead { cid, .. }
+            | Self::ConversationRecord { cid, .. }
+            | Self::ConversationPatch { cid, .. }
+            | Self::ConversationClear { cid, .. }
+            | Self::ConversationList { cid, .. }
+            | Self::ConversationPage { cid, .. }
+            | Self::SetAccountPreferences { cid, .. }
+            | Self::GetAccountPreferences { cid, .. } => Some(*cid),
             // Exhaustive on purpose: no `_` arm.
             //
             // The catch-all made this gate fail OPEN by omission — a variant
@@ -2083,12 +1891,17 @@ impl InternalServiceRequest {
             //                            requests/connection_management_auth.rs.
             //   GetSessions /
             //   GetAccountInformation  — enumerate what this agent holds.
+            //   NoticeSubscribe /
+            //   NoticeSetMuted         — the native app's plane, gated by its
+            //                            launch token (kernel/notices).
             Self::Connect { .. }
             | Self::Register { .. }
             | Self::Batched { .. }
             | Self::ConnectionManagement { .. }
             | Self::GetSessions { .. }
-            | Self::GetAccountInformation { .. } => None,
+            | Self::GetAccountInformation { .. }
+            | Self::NoticeSubscribe { .. }
+            | Self::NoticeSetMuted { .. } => None,
         }
     }
 }

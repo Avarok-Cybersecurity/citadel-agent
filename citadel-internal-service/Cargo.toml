@@ -38,6 +38,16 @@ uuid = { workspace = true, features = [
     "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
 ]}
 bytes = { workspace = true }
+# OS randomness for session attach tokens (kernel/attach_tokens.rs). Already in
+# the tree through the SDK; declared for direct use.
+getrandom = "0.3"
+# The account ILM the agent hosts (kernel/ilm): the same crate the browser's
+# messenger runs, so frames and stored state are identical.
+intersession-layer-messaging = { workspace = true }
+async-trait = { workspace = true }
+# The conversation store's on-disk format is the web UI's JSON (kernel/conversations/stored.rs).
+serde = { workspace = true }
+serde_json = "1"
 async-recursion = { workspace = true }
 # Optional: native file picker dialog (requires desktop environment)
 rfd = { workspace = true, optional = true }

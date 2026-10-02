@@ -14,10 +14,12 @@
 
 mod advertisement;
 mod decode;
+mod inbound;
 #[cfg(test)]
 mod tests;
 
 pub use decode::{decode_notification, DecodeError, Decoded};
+pub use inbound::{carried_notification, into_inbound_frame};
 
 use super::{InternalMessage, WrappedMessage};
 use citadel_internal_service_types::{InternalServicePayload, InternalServiceRequest};

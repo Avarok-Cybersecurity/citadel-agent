@@ -3,7 +3,8 @@ use crate::kernel::media::{
     media_lane, MediaLaneTx, PeerMediaSession, UdpState, MEDIA_LANE_CAPACITY,
 };
 use crate::kernel::requests::{handle_request, HandledRequestResult};
-use crate::kernel::session_route::SessionRoute;
+use crate::kernel::session_route::Clients;
+use crate::kernel::session_subscribers::SessionSubscribers;
 use citadel_internal_service_connector::connector::{
     InternalServiceConnector, WrappedSink, WrappedStream,
 };
@@ -17,18 +18,16 @@ use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
 use citadel_internal_service_connector::io_interface::websockets::WebSocketInterface;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::*;
-use citadel_sdk::logging::{error, info, warn};
+use citadel_sdk::logging::{error, warn};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::remote_specialization::PeerRemote;
 use citadel_sdk::prelude::VirtualTargetType;
 use citadel_sdk::prelude::*;
-use futures::stream::StreamExt;
 use futures::{Sink, SinkExt};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
@@ -36,9 +35,12 @@ use tokio::sync::oneshot::Receiver as OneshotReceiver;
 use uuid::Uuid;
 
 pub(crate) mod c2s_reader;
+pub(crate) mod conversations;
+mod conversations_io;
 pub(crate) mod credential_fingerprint;
 pub(crate) mod ext;
 pub(crate) mod group_channels;
+pub(crate) mod ilm;
 pub(crate) mod media;
 pub(crate) mod peer_path;
 pub(crate) mod pending_group_invites;
@@ -46,13 +48,22 @@ pub(crate) mod picked_files;
 pub(crate) mod reconnect;
 
 use reconnect::policy::ReconnectPolicy;
+pub(crate) mod attach_tokens;
+pub(crate) mod membership;
+mod membership_hosting;
+mod migration_guard;
+pub mod notices;
 pub(crate) mod requests;
 pub(crate) mod responses;
 pub(crate) mod revfs_correlation;
 pub(crate) mod server_address;
 pub(crate) mod server_host;
 pub(crate) mod session_route;
+pub(crate) mod session_subscribers;
 pub(crate) mod session_wait;
+pub(crate) mod store_keys;
+mod tick_updater;
+pub(crate) use tick_updater::spawn_tick_updater;
 
 pub type RatchetType = StackedRatchet;
 
@@ -95,6 +106,15 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) reconnect_policy: ReconnectPolicy,
     /// Sessions a reconnect gave up on, until they sign in again (reconnect/signed_out.rs).
     pub(crate) signed_out: reconnect::signed_out::SignedOut,
+    /// The ILM the agent hosts per account, for clients that declared
+    /// `agent_ilm` (kernel/ilm).
+    pub(crate) ilm_hosts: Arc<ilm::IlmRegistry>,
+    /// The single writer of hosted accounts' conversations (kernel/conversations).
+    pub(crate) conversations: Arc<conversations::Engine>,
+    /// What each localhost connection's client declared it can do.
+    pub(crate) client_capabilities: Arc<RwLock<HashMap<Uuid, ClientCapabilities>>>,
+    /// Native notices and the menu-bar app's account rows (kernel/notices).
+    pub(crate) notices: Arc<notices::NoticeHub>,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -112,6 +132,10 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             connecting_usernames: self.connecting_usernames.clone(),
             reconnect_policy: self.reconnect_policy,
             signed_out: self.signed_out.clone(),
+            ilm_hosts: self.ilm_hosts.clone(),
+            conversations: self.conversations.clone(),
+            client_capabilities: self.client_capabilities.clone(),
+            notices: self.notices.clone(),
             io: self.io.clone(),
         }
     }
@@ -121,10 +145,12 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
     /// `reconnect_policy` is how a session its server dropped is brought back; the
     /// agent's is `SERVER_RECONNECT`. Required, so every caller states it.
     pub fn new(io: T, reconnect_policy: ReconnectPolicy) -> Self {
+        let clients: Clients = Arc::new(RwLock::new(Default::default()));
         CitadelWorkspaceService {
             remote: None,
             server_connection_map: Arc::new(RwLock::new(Default::default())),
-            tx_to_localhost_clients: Arc::new(RwLock::new(Default::default())),
+            notices: Arc::new(notices::NoticeHub::new(None, clients.clone(), Vec::new())),
+            tx_to_localhost_clients: clients,
             media_lanes: Arc::new(RwLock::new(Default::default())),
             orphan_sessions: Arc::new(RwLock::new(Default::default())),
             pending_peer_connect_signals: Arc::new(RwLock::new(Default::default())),
@@ -133,6 +159,9 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             connecting_usernames: Arc::new(Mutex::new(HashSet::new())),
             reconnect_policy,
             signed_out: Default::default(),
+            ilm_hosts: Default::default(),
+            conversations: Default::default(),
+            client_capabilities: Default::default(),
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -235,7 +264,12 @@ pub struct Connection<R: Ratchet> {
     pub sink_to_server: AsyncSink<R>,
     pub client_server_remote: ClientServerRemote<R>,
     pub peers: HashMap<u64, PeerConnection<R>>,
-    pub(crate) associated_localhost_connection: Arc<AtomicUuid>,
+    /// Every localhost connection attached to this session, primary first.
+    /// See kernel/session_subscribers.rs.
+    pub(crate) subscribers: SessionSubscribers,
+    /// Proofs a password attach handed out, for re-attaching without it.
+    /// See kernel/attach_tokens.rs.
+    pub(crate) attach_tokens: attach_tokens::AttachTokens,
     pub c2s_file_transfer_handlers: HashMap<ObjectId, Option<ObjectTransferHandler>>,
     /// Group channels this session is a member of. Not a plain HashMap: the
     /// map was insert-only, so entries outlived the membership they described
@@ -281,7 +315,7 @@ pub struct PeerConnection<R: Ratchet> {
     /// May be None for acceptor-side connections where we only have the channel.
     remote: Option<PeerRemote<R>>,
     handler_map: HashMap<ObjectId, Option<ObjectTransferHandler>>,
-    associated_localhost_connection: Arc<AtomicUuid>,
+    subscribers: SessionSubscribers,
     /// Where this peer's UDP transport currently lives. The SDK delivers the
     /// channel at most once per peer connection, so media sessions borrow the
     /// halves through this state machine and return them on close — consuming
@@ -323,7 +357,7 @@ impl<R: Ratchet> Connection<R> {
     fn new(
         sink: PeerChannelSendHalf<R>,
         client_server_remote: ClientServerRemote<R>,
-        associated_tcp_connection: Arc<AtomicUuid>,
+        subscribers: SessionSubscribers,
         username: String,
         server_address: String,
         server_host: Option<String>,
@@ -334,7 +368,8 @@ impl<R: Ratchet> Connection<R> {
             peers: HashMap::new(),
             sink_to_server: Arc::new(tokio::sync::Mutex::new(sink)),
             client_server_remote,
-            associated_localhost_connection: associated_tcp_connection,
+            subscribers,
+            attach_tokens: Default::default(),
             c2s_file_transfer_handlers: HashMap::new(),
             username,
             groups: group_channels::GroupChannels::new(),
@@ -410,7 +445,7 @@ impl<R: Ratchet> Connection<R> {
                     sink: Arc::new(tokio::sync::Mutex::new(sink)),
                     remote,
                     handler_map: HashMap::new(),
-                    associated_localhost_connection: self.associated_localhost_connection.clone(),
+                    subscribers: self.subscribers.clone(),
                     udp: UdpState::from_optional_channel(udp_rx),
                     media: None,
                     media_generation: 0,
@@ -538,6 +573,7 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
                     media_lanes.clone(),
                     server_connection_map.clone(),
                     self.orphan_sessions.clone(),
+                    self.client_capabilities.clone(),
                 );
             }
             Ok(())
@@ -593,9 +629,12 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
             Ok(())
         };
 
+        let sweeper = conversations::retention::sweeper(self.clone());
+
         let res = tokio::select! {
             res0 = listener_task => res0,
             res1 = inbound_command_task => res1,
+            () = sweeper => Ok(()),
         };
 
         warn!(target: "citadel", "Shutting down service because a critical task finished. {res:?}");
@@ -676,66 +715,4 @@ pub(crate) fn send_to_kernel(
 ) -> Result<(), NetworkError> {
     sender.send((request, conn_id))?;
     Ok(())
-}
-
-fn spawn_tick_updater<R: Ratchet>(
-    object_transfer_handler: ObjectTransferHandler,
-    implicated_cid: u64,
-    peer_cid: Option<u64>,
-    server_connection_map: &mut HashMap<u64, Connection<R>>,
-    tcp_connection_map: Arc<RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
-    request_id: Option<Uuid>,
-) {
-    let mut handle_inner = object_transfer_handler.inner;
-    if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-        let uuid = connection
-            .associated_localhost_connection
-            .load(Ordering::Relaxed);
-        // The REQUEST id may be frozen -- it names the request that started the
-        // transfer and does not change. The ROUTE may not: a reclaim re-points
-        // this session mid-transfer and every remaining tick has to follow it.
-        // See kernel/session_route.rs.
-        let request_id = Some(request_id.unwrap_or(uuid));
-        let route = SessionRoute::new(
-            connection.associated_localhost_connection.clone(),
-            tcp_connection_map,
-        );
-        let sender_status_updater = async move {
-            while let Some(status) = handle_inner.next().await {
-                let status_message = status.clone();
-                let message = InternalServiceResponse::FileTransferTickNotification(
-                    FileTransferTickNotification {
-                        cid: implicated_cid,
-                        peer_cid,
-                        status: status_message,
-                        request_id,
-                    },
-                );
-                match route.send(message) {
-                    Some(target) => {
-                        info!(target: "citadel", "File Transfer Status Tick Sent to {target:?}: {status:?}")
-                    }
-                    None => {
-                        warn!(target: "citadel", "No localhost connection owns CID {implicated_cid} - File Transfer Status Tick dropped")
-                    }
-                }
-
-                // Outside the delivery result on purpose. The transfer is over
-                // whether or not anybody was listening; keeping the task alive
-                // because a tab happened to be closed is how these leak.
-                if matches!(
-                    status,
-                    ObjectTransferStatus::TransferComplete
-                        | ObjectTransferStatus::ReceptionComplete
-                ) {
-                    info!(target: "citadel", "File Transfer Completed - Ending Tick Updater");
-                    break;
-                }
-            }
-            info!(target:"citadel", "Spawned Tick Updater has ended for {implicated_cid:?}");
-        };
-        tokio::task::spawn(sender_status_updater);
-    } else {
-        info!(target: "citadel", "tick_updater: Server Connection Not Found")
-    }
 }

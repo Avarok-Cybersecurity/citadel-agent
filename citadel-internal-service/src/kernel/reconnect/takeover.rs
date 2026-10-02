@@ -26,7 +26,6 @@ use citadel_sdk::logging::{info, warn};
 use citadel_sdk::prelude::{
     AuthenticationRequest, ProtocolRemoteExt, ProtocolRemoteTargetExt, Ratchet,
 };
-use std::sync::atomic::Ordering;
 use uuid::Uuid;
 
 /// Take `cid`'s reconnect over for the localhost connection `caller`, whose Connect
@@ -67,6 +66,7 @@ pub(crate) async fn take_over<T: IOInterface + Sync, R: Ratchet>(
         }
     };
     let _no_attempt_in_flight = gate.hold_attempts().await;
+    let clients = this.tx_to_localhost_clients.clone();
     info!(target: LOG_TARGET, "[Reconnect] {cid}: a sign-in is taking the reconnect over");
 
     // The attempt it waited on may have landed and been adopted.
@@ -74,8 +74,7 @@ pub(crate) async fn take_over<T: IOInterface + Sync, R: Ratchet>(
         let lock = this.server_connection_map.read();
         lock.get(&cid).map(|conn| {
             if conn.link == LinkState::Up {
-                conn.associated_localhost_connection
-                    .store(caller, Ordering::Relaxed);
+                crate::kernel::membership::take_over_in(&clients, cid, &conn.subscribers, caller);
             }
             conn.link
         })
@@ -126,8 +125,7 @@ pub(crate) async fn take_over<T: IOInterface + Sync, R: Ratchet>(
         if conn.link != LinkState::SigningIn {
             return false;
         }
-        conn.associated_localhost_connection
-            .store(caller, Ordering::Relaxed);
+        crate::kernel::membership::take_over_in(&clients, cid, &conn.subscribers, caller);
         conn.reconnect = credentials;
         true
     };
@@ -151,13 +149,13 @@ fn hand_back<T: IOInterface + Sync, R: Ratchet>(
     request_id: Uuid,
     reason: String,
 ) -> InternalServiceResponse {
+    let clients = this.tx_to_localhost_clients.clone();
     let handed = {
         let mut lock = this.server_connection_map.write();
         match lock.get_mut(&cid) {
             Some(conn) if conn.link == LinkState::SigningIn => {
                 conn.link = LinkState::Reconnecting;
-                conn.associated_localhost_connection
-                    .store(caller, Ordering::Relaxed);
+                crate::kernel::membership::take_over_in(&clients, cid, &conn.subscribers, caller);
                 Some((conn.handoff.next_generation(), conn.username.clone()))
             }
             _ => None,

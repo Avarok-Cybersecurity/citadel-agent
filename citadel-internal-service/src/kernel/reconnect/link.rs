@@ -4,6 +4,7 @@
 
 use super::report::{logged, notify};
 use super::{LinkState, LOG_TARGET};
+use crate::kernel::session_route::SessionRoute;
 use crate::kernel::{c2s_reader, create_client_server_remote, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{InternalServiceResponse, ServerReconnected};
@@ -11,7 +12,6 @@ use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{
     CitadelClientServerConnection, ProtocolRemoteTargetExt, Ratchet, SessionSecuritySettings,
 };
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -37,23 +37,21 @@ pub(super) async fn put_link<T: IOInterface + Sync, R: Ratchet>(
                 conn.sink_to_server = Arc::new(tokio::sync::Mutex::new(sink));
                 conn.client_server_remote = remote.clone();
                 conn.link = LinkState::Up;
-                conn.associated_localhost_connection.load(Ordering::Relaxed)
+                conn.subscribers.clone()
             }),
             None => None,
         }
     };
-    let Some(tcp_uuid) = installed else {
+    let Some(subscribers) = installed else {
         info!(target: LOG_TARGET, "[Reconnect] {cid}: nobody wants the new link; closing it");
         logged(cid, "closing an unowned link", remote.disconnect().await);
         return false;
     };
     c2s_reader::spawn(
-        this.server_connection_map.clone(),
-        this.tx_to_localhost_clients.clone(),
+        SessionRoute::new(subscribers, this.tx_to_localhost_clients.clone()),
         cid,
         stream,
         connect_request_id,
-        tcp_uuid,
     );
     let sent = notify(
         this,

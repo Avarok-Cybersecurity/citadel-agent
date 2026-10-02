@@ -1,7 +1,9 @@
 pub mod kernel;
 pub mod stun;
+pub mod updater;
 
 pub use stun::StunServers;
+pub use updater::UpdaterConfig;
 
 pub use kernel::reconnect::policy::{ReconnectPolicy, SERVER_RECONNECT};
 pub use kernel::reconnect::LOG_TARGET as RECONNECT_LOG_TARGET;

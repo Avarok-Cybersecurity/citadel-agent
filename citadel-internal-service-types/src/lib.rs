@@ -29,6 +29,7 @@ mod notices;
 mod server_link;
 mod turn;
 pub use chat_level::{ChatSecurityLevel, PeerSecurityMinimum};
+mod updates;
 pub use conversation::{
     Attachment, ConversationMessage, ConversationMetadata, ConversationPage, MessagePatch,
     MessageStatus, MessageType, PageTimestamps, Reaction, TransferMode, TransferState,
@@ -48,6 +49,7 @@ pub use server_link::{
     ServerConnectionLost, ServerReconnectFailed, ServerReconnected, SignedOutSession,
 };
 pub use turn::{IceServer, P2pPathReport, PeerTurnConfig, TurnPolicy};
+pub use updates::{UpdateAvailable, UpdateInstall, UpdateStatus};
 
 /// The `LocalDBGetKVFailure` message that means "no such key", as opposed to a
 /// real backend error.
@@ -1072,6 +1074,9 @@ pub enum InternalServiceResponse {
     NativeNotice(Box<NativeNotice>),
     NoticeRows(NoticeRows),
     NoticeFailure(NoticeFailure),
+    UpdateAvailable(UpdateAvailable),
+    UpdateStatus(UpdateStatus),
+    UpdateInstall(UpdateInstall),
     /// Results from a batched request, in the same order as input commands
     BatchedResponse(BatchedResponseData),
 }
@@ -1632,6 +1637,33 @@ pub enum InternalServiceRequest {
         cid: u64,
         muted: bool,
     },
+    /// Where the agent's updater stands; answered with `UpdateStatus`.
+    UpdateGetStatus {
+        request_id: Uuid,
+    },
+    /// Look for a newer release now; answered with `UpdateStatus` once the check is done.
+    UpdateCheckNow {
+        request_id: Uuid,
+    },
+    /// Install the downloaded, verified release now, restarting the agent: every signed-in
+    /// account will have to sign in again. Answered with `UpdateStatus`.
+    UpdateApply {
+        request_id: Uuid,
+    },
+    /// "Automatically install updates when no account is signed in"; answered with `UpdateStatus`.
+    UpdateSetSettings {
+        request_id: Uuid,
+        auto_install: bool,
+    },
+    /// The menu-bar app reporting how an `UpdateInstall` went: `error` is why it did not, and
+    /// the agent that receives it is the one still running. Gated by the launch token.
+    UpdateInstallResult {
+        request_id: Uuid,
+        #[debug(with = plaintext_debug_fmt)]
+        token: String,
+        version: String,
+        error: Option<String>,
+    },
     /// Send `message` to `peer_cid` through the ILM the agent hosts for `cid`.
     /// Answered with `SendReliableAccepted` once ILM has it, or `MessageSendFailure`.
     SendReliable {
@@ -1902,6 +1934,9 @@ impl InternalServiceRequest {
             //   NoticeSubscribe /
             //   NoticeSetMuted         — the native app's plane, gated by its
             //                            launch token (kernel/notices).
+            //   Update*                — the agent's own updater: no session's
+            //                            (kernel/updates); UpdateInstallResult is
+            //                            gated by the launch token.
             Self::Connect { .. }
             | Self::Register { .. }
             | Self::Batched { .. }
@@ -1909,7 +1944,12 @@ impl InternalServiceRequest {
             | Self::GetSessions { .. }
             | Self::GetAccountInformation { .. }
             | Self::NoticeSubscribe { .. }
-            | Self::NoticeSetMuted { .. } => None,
+            | Self::NoticeSetMuted { .. }
+            | Self::UpdateGetStatus { .. }
+            | Self::UpdateCheckNow { .. }
+            | Self::UpdateApply { .. }
+            | Self::UpdateSetSettings { .. }
+            | Self::UpdateInstallResult { .. } => None,
         }
     }
 }

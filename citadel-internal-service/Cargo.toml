@@ -23,7 +23,7 @@ citadel_io = { workspace = true }
 # The keep-alive constants that bound how long a server holds a dead session
 # (kernel/reconnect/policy.rs), from the SDK rather than copied.
 citadel_proto = { workspace = true }
-tokio = { workspace = true, features = ["net", "rt", "macros"] }
+tokio = { workspace = true, features = ["net", "rt", "macros", "time", "fs", "process", "io-util"] }
 bincode2 = { workspace = true }
 citadel-internal-service-types = { workspace = true }
 # Every ILM codec natively, brotli included: a native messenger has no module
@@ -53,6 +53,19 @@ async-recursion = { workspace = true }
 rfd = { workspace = true, optional = true }
 # Synchronous RwLock to prevent holding locks across await points
 parking_lot = { workspace = true }
+# The agent's updater (src/updater): the GitHub release check and downloads, over rustls with
+# the ring provider already in the tree and Mozilla's roots (no platform store to differ by host).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots"] }
+semver = "1"
+sha2 = "0.10"
+hex = "0.4"
+# GitHub artifact attestations (Sigstore bundles), verified against the embedded production trust
+# root: no TUF fetch, so no network beyond GitHub's.
+sigstore-verify = { version = "0.14", default-features = false }
+sigstore-trust-root = { version = "0.14", default-features = false }
+sigstore-types = "0.14"
+# Probing whether the install location is writable, and atomic temporary files beside it.
+tempfile = "3"
 
 # Unix-only: effective-uid lookup for verifying ownership of the
 # browser-transfer temp root (CWE-377 hardening). Already in the

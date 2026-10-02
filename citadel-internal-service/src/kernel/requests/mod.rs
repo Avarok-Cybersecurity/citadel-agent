@@ -32,6 +32,7 @@ mod message;
 mod notices;
 mod register;
 mod send_reliable;
+mod update;
 pub(crate) use agent_own::{answer_local_db, send_message};
 
 mod connection_management;
@@ -177,6 +178,13 @@ where
         InternalServiceRequest::NoticeSubscribe { .. }
         | InternalServiceRequest::NoticeSetMuted { .. } => {
             notices::handle(this, uuid, command).await
+        }
+        InternalServiceRequest::UpdateGetStatus { .. }
+        | InternalServiceRequest::UpdateCheckNow { .. }
+        | InternalServiceRequest::UpdateApply { .. }
+        | InternalServiceRequest::UpdateSetSettings { .. }
+        | InternalServiceRequest::UpdateInstallResult { .. } => {
+            update::handle(this, uuid, command).await
         }
         InternalServiceRequest::SendReliable { .. } => {
             send_reliable::handle(this, uuid, command).await

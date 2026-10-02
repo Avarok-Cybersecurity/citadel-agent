@@ -156,6 +156,9 @@ export * from './SignedOutSession.js';
 export * from './TransferMode.js';
 export * from './TransferState.js';
 export * from './TurnPolicy.js';
+export * from './UpdateAvailable.js';
+export * from './UpdateInstall.js';
+export * from './UpdateStatus.js';
 
 // Re-export protocol types used in InternalServiceRequest fields.
 // From an external package, so not derivable from this directory.

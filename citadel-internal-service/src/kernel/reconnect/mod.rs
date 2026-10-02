@@ -17,6 +17,7 @@
 //! policy.rs decides (pure, tested); task.rs does the SDK I/O.
 
 mod link;
+mod lost_peers;
 pub(crate) mod policy;
 
 /// The log target of a session's link to its server: the drop, each attempt, the

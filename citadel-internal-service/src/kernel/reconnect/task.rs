@@ -2,6 +2,7 @@
 //! new channel or give up. Every decision is policy.rs's.
 
 use super::link::put_link;
+use super::lost_peers;
 use super::policy::{self, DropAction, FailureKind, GiveUp, Next, ReconnectPolicy};
 use super::report::{fail, logged, notify};
 use super::sign_in;
@@ -22,8 +23,10 @@ use uuid::Uuid;
 
 /// What an unrequested drop did to the session.
 pub(crate) enum Began {
-    /// Kept and marked; the caller notifies and spawns the reconnect.
-    Reconnecting,
+    /// Kept and marked; the caller notifies (of `lost_peers` too) and spawns the reconnect.
+    Reconnecting {
+        lost_peers: Vec<u64>,
+    },
     AlreadyReconnecting,
     /// Being ended by its user: the caller removes it as it always did.
     Remove,
@@ -44,7 +47,7 @@ pub(crate) fn begin<R: Ratchet>(map: &Arc<RwLock<HashMap<u64, Connection<R>>>>, 
         DropAction::Reconnect => {
             conn.link = LinkState::Reconnecting;
             conn.handoff.next_generation();
-            conn.peers.clear();
+            let lost_peers = lost_peers::take(&mut conn.peers);
             // Only the send halves live here, and dropping one sends nothing. The recv
             // half, whose drop sends `LeaveRoom`, is owned by its receiver task and ends
             // with the dead session, so the server still lists this session's groups:
@@ -53,7 +56,7 @@ pub(crate) fn begin<R: Ratchet>(map: &Arc<RwLock<HashMap<u64, Connection<R>>>>, 
             // one opens into this same (never removed) entry.
             conn.groups = group_channels::GroupChannels::new();
             conn.c2s_file_transfer_handlers.clear();
-            Began::Reconnecting
+            Began::Reconnecting { lost_peers }
         }
     }
 }
@@ -62,6 +65,7 @@ pub(crate) fn begin<R: Ratchet>(map: &Arc<RwLock<HashMap<u64, Connection<R>>>>, 
 pub(crate) fn spawn<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     cid: u64,
+    lost_peers: &[u64],
 ) -> Result<(), NetworkError> {
     notify(
         this,
@@ -72,6 +76,9 @@ pub(crate) fn spawn<T: IOInterface + Sync, R: Ratchet>(
             request_id: None,
         }),
     )?;
+    for notice in lost_peers::notices(cid, lost_peers) {
+        notify(this, cid, notice)?;
+    }
     let generation = {
         let lock = this.server_connection_map.read();
         lock.get(&cid).map(|conn| conn.handoff.generation())

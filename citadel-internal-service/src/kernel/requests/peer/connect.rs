@@ -127,6 +127,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
             // Before connecting: the peer's own PeerConnect / PeerConnectAccept supplies the
             // other half.
+            super::answer::remember_window_relay(this, cid, turn.as_ref());
             if let Err(err) = set_peer_turn(remote, cid, peer_cid, turn.as_ref()).await {
                 let err_str = err.into_string();
                 error!(target: "citadel", "[PeerConnect] set_peer_turn FAILED: {}", err_str);

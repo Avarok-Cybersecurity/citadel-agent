@@ -16,6 +16,7 @@ use uuid::Uuid;
 #[cfg(feature = "typescript")]
 use ts_rs::TS;
 
+mod chat_level;
 mod conversation;
 mod conversation_api;
 mod group_drop;
@@ -27,6 +28,7 @@ mod multi_window;
 mod notices;
 mod server_link;
 mod turn;
+pub use chat_level::{ChatSecurityLevel, PeerSecurityMinimum};
 pub use conversation::{
     Attachment, ConversationMessage, ConversationMetadata, ConversationPage, MessagePatch,
     MessageStatus, MessageType, PageTimestamps, Reaction, TransferMode, TransferState,
@@ -682,6 +684,12 @@ pub struct PeerConnectNotification {
     #[cfg_attr(feature = "typescript", ts(type = "UdpMode"))]
     pub udp_mode: UdpMode,
     pub request_id: Option<Uuid>,
+    /// The agent answers this offer itself -- accepts, declines, or leaves it
+    /// unanswered by the UI's own rules -- so no window may answer it. Set for an
+    /// account the agent hosts, which is reachable with no window open. An
+    /// agent that predates this never sends it, which is what `false` means.
+    #[serde(default)]
+    pub answered_by_agent: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

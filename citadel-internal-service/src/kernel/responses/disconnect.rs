@@ -79,9 +79,9 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             Began::AlreadyReconnecting => {
                 citadel_sdk::logging::info!(target: LOG_TARGET, "[Disconnect Response] {cid} is already reconnecting");
             }
-            Began::Reconnecting => {
-                this.prune_cid_scoped_state(cid, None);
-                return task::spawn(this, cid);
+            Began::Reconnecting { lost_peers } => {
+                this.prune_dropped_link_state(cid);
+                return task::spawn(this, cid, &lost_peers);
             }
             Began::Remove => return remove(this, cid),
         }

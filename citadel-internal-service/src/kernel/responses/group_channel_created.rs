@@ -1,13 +1,10 @@
 use crate::kernel::session_route::SessionRoute;
-use crate::kernel::{
-    requests, send_response_to_tcp_client, CitadelWorkspaceService, GroupConnection,
-};
+use crate::kernel::{requests, CitadelWorkspaceService, GroupConnection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{GroupChannelCreateSuccess, InternalServiceResponse};
 use citadel_sdk::logging::warn;
 use citadel_sdk::prelude::{GroupChannel, GroupChannelCreated, NetworkError, Ratchet};
 use futures::StreamExt;
-use std::sync::atomic::Ordering;
 
 /// Adopts a group channel the SDK opened on its own: a joined group after a member's
 /// rejoin, or an owned one the owner re-founded after reconnecting. Both arrive the same
@@ -26,25 +23,20 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         connection.add_group_channel(key, GroupConnection { key, tx, cid });
 
         let route = SessionRoute::new(
-            connection.associated_localhost_connection.clone(),
+            connection.subscribers.clone(),
             this.tx_to_localhost_clients.clone(),
         );
         let departed = connection.groups.departure_flag(&key);
-        requests::spawn_group_channel_receiver(key, cid, route, departed, rx);
+        requests::spawn_group_channel_receiver(key, cid, route.clone(), departed, rx);
 
-        let associated_tcp_connection = connection
-            .associated_localhost_connection
-            .load(Ordering::Relaxed);
         drop(server_connection_map);
-        send_response_to_tcp_client(
-            &this.tx_to_localhost_clients,
-            InternalServiceResponse::GroupChannelCreateSuccess(GroupChannelCreateSuccess {
+        route.send(InternalServiceResponse::GroupChannelCreateSuccess(
+            GroupChannelCreateSuccess {
                 cid,
                 group_key: key,
                 request_id: None,
-            }),
-            associated_tcp_connection,
-        )?;
+            },
+        ));
 
         Ok(())
     } else {

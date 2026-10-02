@@ -1,6 +1,7 @@
 pub mod accept;
 pub mod connect;
 pub mod disconnect;
+mod disconnect_others;
 pub mod disconnect_outcome;
 pub mod list_all;
 pub mod list_registered;
@@ -9,7 +10,7 @@ pub mod respond_register;
 pub mod turn;
 
 // Re-export for use by response handlers
-pub use disconnect::{cleanup_state, DisconnectedConnection};
+pub use disconnect::cleanup_state;
 
 use citadel_internal_service_types::PeerInformation;
 use citadel_sdk::prelude::{

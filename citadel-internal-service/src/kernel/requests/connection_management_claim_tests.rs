@@ -15,7 +15,7 @@ fn rival() -> Uuid {
 /// ordering would have given.
 #[test]
 fn a_claim_that_lost_the_race_is_refused_on_fresh_state() {
-    let decision = decide_claim(SessionOwner::Live(rival()), true, caller(), 7);
+    let decision = decide_claim(SessionOwner::Live(vec![rival()]), true, caller(), 7);
     assert_eq!(decision, Err("Session 7 is not orphaned".to_string()));
 }
 
@@ -23,7 +23,7 @@ fn a_claim_that_lost_the_race_is_refused_on_fresh_state() {
 /// nothing, and the message is the one session_takeover.rs pins.
 #[test]
 fn a_forced_claim_that_lost_the_race_is_refused() {
-    let decision = decide_claim(SessionOwner::Live(rival()), false, caller(), 7);
+    let decision = decide_claim(SessionOwner::Live(vec![rival()]), false, caller(), 7);
     assert_eq!(
         decision,
         Err("Session 7 is in use by another connection".to_string())
@@ -45,7 +45,7 @@ fn a_still_orphaned_session_passes_the_recheck() {
 #[test]
 fn reasserting_an_owned_session_passes() {
     assert_eq!(
-        decide_claim(SessionOwner::Live(caller()), false, caller(), 7),
+        decide_claim(SessionOwner::Live(vec![caller()]), false, caller(), 7),
         Ok(())
     );
 }

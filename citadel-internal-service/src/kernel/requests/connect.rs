@@ -23,13 +23,13 @@
 use crate::kernel::reconnect::sign_in::{self, SignIn};
 use crate::kernel::reconnect::LinkState;
 use crate::kernel::requests::HandledRequestResult;
+use crate::kernel::session_route::SessionRoute;
 use crate::kernel::{create_client_server_remote, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    AtomicUuid, ConnectFailure, InternalServiceRequest, InternalServiceResponse,
+    ConnectFailure, InternalServiceRequest, InternalServiceResponse,
 };
 use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt, Ratchet};
-use std::sync::Arc;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
@@ -156,6 +156,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
         };
 
+        if let Some(refused) = this.refuse_older_connect(authorized, cid, uuid, request_id) {
+            cleanup_username(this, &username);
+            return Some(refused);
+        }
         match sign_in::on_sign_in(tracked, authorized) {
             SignIn::Refuse => {
                 citadel_sdk::logging::warn!(target: "citadel", "[Connect] REFUSED reuse of session {} for user {}: the password does not match the one that opened it", cid, username);
@@ -173,13 +177,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
             SignIn::AlreadyActive => {
                 citadel_sdk::logging::info!(target: "citadel", "[Connect] Session {} already active for user {} - returning SessionAlreadyActive", cid, username);
-                {
-                    let lock = this.server_connection_map.read();
-                    if let Some(conn) = lock.get(&cid) {
-                        conn.associated_localhost_connection
-                            .store(uuid, std::sync::atomic::Ordering::Relaxed);
-                    }
-                }
+                crate::kernel::membership::take_over(this, cid, uuid);
+                this.host_ilm_for(cid, uuid).await;
                 // Lets the frontend handle it gracefully (e.g. redirect to the workspace).
                 let response = InternalServiceResponse::SessionAlreadyActive(
                     citadel_internal_service_types::SessionAlreadyActive {
@@ -398,10 +397,11 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             )
             .await;
 
+            let subscribers = crate::kernel::session_subscribers::SessionSubscribers::new(uuid);
             let connection_struct = Connection::new(
                 sink,
                 client_server_remote,
-                Arc::new(AtomicUuid::new(uuid)),
+                subscribers.clone(),
                 username,
                 server_address,
                 server_host,
@@ -424,14 +424,13 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             );
 
             crate::kernel::c2s_reader::spawn(
-                this.server_connection_map.clone(),
-                this.tx_to_localhost_clients.clone(),
+                SessionRoute::new(subscribers, this.tx_to_localhost_clients.clone()),
                 cid,
                 stream,
                 request_id,
-                uuid,
             );
 
+            this.host_ilm_for(cid, uuid).await;
             cleanup_username(this, &username_for_cleanup);
             Some(HandledRequestResult { response, uuid })
         }

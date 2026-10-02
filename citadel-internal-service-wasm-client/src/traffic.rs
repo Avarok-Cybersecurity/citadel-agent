@@ -6,14 +6,11 @@
 //! receives exactly the frames it always has.
 
 use citadel_internal_service_connector::messenger::{
-    CompressionHint, DynamicCompression, IlmOptions,
+    ACCOUNT_ILM_OPTIONS, CompressionHint, IlmOptions,
 };
 use wasm_bindgen::JsValue;
 
-pub(crate) const BROWSER_ILM_OPTIONS: IlmOptions = IlmOptions {
-    piggyback_acks: true,
-    dynamic_compression: DynamicCompression::All,
-};
+pub(crate) const BROWSER_ILM_OPTIONS: IlmOptions = ACCOUNT_ILM_OPTIONS;
 
 /// The optional hint a JS caller passes with a reliable send.
 ///

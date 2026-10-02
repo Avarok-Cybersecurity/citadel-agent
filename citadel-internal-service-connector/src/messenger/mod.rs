@@ -51,10 +51,23 @@ use uuid::Uuid;
 use wasm_bindgen_futures;
 
 pub mod backend;
+pub mod backend_channel;
 pub mod backend_map;
 pub mod wire;
 
 pub use intersession_layer_messaging::{CompressionHint, DynamicCompression, IlmOptions};
+
+/// What an ILM hosted for a workspace account spends on the wire: both traffic
+/// reductions, each used toward a peer only once that peer advertised it, so an
+/// older peer still receives exactly the frames it always has.
+///
+/// One constant for every host -- the browser's messenger and the agent's
+/// (citadel-internal-service `kernel/ilm`) -- so an account's frames do not
+/// change shape when its ILM moves from one to the other.
+pub const ACCOUNT_ILM_OPTIONS: IlmOptions = IlmOptions {
+    piggyback_acks: true,
+    dynamic_compression: DynamicCompression::All,
+};
 pub use wire::WireWrapper;
 
 /// Platform-agnostic async sleep function
@@ -441,67 +454,31 @@ where
                 log::trace!(target: "citadel", "Received message from network layer: {network_message:?}");
                 match network_message {
                     // TODO: Add support for group messaging
-                    InternalServiceResponse::MessageNotification(mut message) => {
+                    InternalServiceResponse::MessageNotification(message) => {
                         // DEBUG: Log ALL MessageNotification arrivals to trace P2P message flow
                         ::log::info!(target: "ism", "[P2P-DEBUG] MessageNotification arrived: cid={}, peer_cid={}, msg_len={}",
                             message.cid, message.peer_cid, message.message.len());
                         // deserialize and relay to ISM
                         match wire::decode_notification(&message.message) {
                             Ok(decoded) => {
-                                let ism_frame = match decoded {
-                                    wire::Decoded::Control { signal, evidence } => InboundFrame {
-                                        payload: *signal,
-                                        evidence,
-                                        piggybacked_ack: None,
-                                    },
-                                    wire::Decoded::Data {
-                                        contents,
-                                        source,
-                                        destination,
-                                        message_id,
-                                        piggybacked_ack,
-                                    } => {
-                                        // Replace message bytes with unwrapped (and, for
-                                        // an extended frame, decompressed) content
-                                        let _ = std::mem::replace(&mut message.message, contents);
+                                let ism_frame = wire::into_inbound_frame(decoded, message);
 
-                                        // CRITICAL FIX: Forward UNWRAPPED MessageNotification to JavaScript.
-                                        // This ensures the frontend receives messages immediately with:
-                                        // 1. Correct peer_cid (from original MessageNotification)
-                                        // 2. Unwrapped message bytes (deserializable as P2PCommand)
-                                        //
-                                        // Previously, ISM messages were ONLY routed to ISM, which caused
-                                        // the leader tab to never receive P2P messages because ISM
-                                        // delivery wasn't working correctly in multi-tab scenarios.
-                                        let forward_message =
-                                            InternalServiceResponse::MessageNotification(
-                                                message.clone(),
-                                            );
-                                        if let Err(err) =
-                                            tx_to_local_user_clone.send(forward_message)
-                                        {
-                                            log::error!(target: "citadel", "Error forwarding ISM MessageNotification to JS: {err:?}");
-                                        } else {
-                                            ::log::info!(target: "ism", "[P2P-DEBUG] FORWARDED ISM MessageNotification to JS: cid={}, peer_cid={}, unwrapped_len={}",
-                                                message.cid, message.peer_cid, message.message.len());
-                                        }
-
-                                        InboundFrame {
-                                            payload: InternalMessage::Message(WrappedMessage {
-                                                source_id: source,
-                                                destination_id: destination,
-                                                message_id,
-                                                contents: InternalServicePayload::Response(
-                                                    InternalServiceResponse::MessageNotification(
-                                                        message,
-                                                    ),
-                                                ),
-                                            }),
-                                            evidence: intersession_layer_messaging::CapabilityEvidence::Silent,
-                                            piggybacked_ack,
-                                        }
+                                // CRITICAL FIX: Forward the UNWRAPPED MessageNotification to
+                                // JavaScript at once, with the right peer_cid and bytes that
+                                // decode as a P2PCommand. ISM delivery alone once left the
+                                // leader tab without P2P messages in multi-tab scenarios.
+                                if let Some(unwrapped) = wire::carried_notification(&ism_frame) {
+                                    let forward_message =
+                                        InternalServiceResponse::MessageNotification(
+                                            unwrapped.clone(),
+                                        );
+                                    if let Err(err) = tx_to_local_user_clone.send(forward_message) {
+                                        log::error!(target: "citadel", "Error forwarding ISM MessageNotification to JS: {err:?}");
+                                    } else {
+                                        ::log::info!(target: "ism", "[P2P-DEBUG] FORWARDED ISM MessageNotification to JS: cid={}, peer_cid={}, unwrapped_len={}",
+                                            unwrapped.cid, unwrapped.peer_cid, unwrapped.message.len());
                                     }
-                                };
+                                }
 
                                 let stream_key = StreamKey {
                                     cid: ism_frame.payload.destination_id(),

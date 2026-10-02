@@ -53,7 +53,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     );
 
                     let route = SessionRoute::new(
-                        conn.associated_localhost_connection.clone(),
+                        conn.subscribers.clone(),
                         this.tx_to_localhost_clients.clone(),
                     );
                     let departed = conn.groups.departure_flag(&key);

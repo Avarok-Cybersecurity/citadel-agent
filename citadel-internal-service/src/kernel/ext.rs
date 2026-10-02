@@ -1,20 +1,19 @@
 use crate::kernel::media::{MediaLaneRx, MediaLaneTx};
+use crate::kernel::membership::connection_closed;
 use crate::kernel::{send_to_kernel, sink_send_payload, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    InternalServicePayload, InternalServiceResponse, ServiceConnectionAccepted,
+    ClientCapabilities, InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
+    ServiceConnectionAccepted,
 };
 use citadel_sdk::logging::{debug, error, info, warn};
 use citadel_sdk::prelude::Ratchet;
 use futures::StreamExt;
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
-
-use citadel_internal_service_types::InternalServiceRequest;
 
 pub trait IOInterfaceExt: IOInterface {
     #[allow(clippy::too_many_arguments)]
@@ -30,14 +29,11 @@ pub trait IOInterfaceExt: IOInterface {
         media_lanes: Arc<RwLock<HashMap<Uuid, MediaLaneTx>>>,
         server_connection_map: Arc<RwLock<HashMap<u64, Connection<R>>>>,
         orphan_sessions: Arc<RwLock<HashMap<Uuid, bool>>>,
+        capabilities: Arc<RwLock<HashMap<Uuid, ClientCapabilities>>>,
     ) {
         tokio::task::spawn(async move {
             let write_task = async {
-                let response =
-                    InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
-                        cid: 0,
-                        request_id: Some(conn_id),
-                    });
+                let response = ServiceConnectionAccepted::greeting(conn_id);
 
                 if let Err(err) = sink_send_payload::<Self>(response, &mut sink).await {
                     error!(target: "citadel", "Failed to send to client: {err:?}");
@@ -107,6 +103,8 @@ pub trait IOInterfaceExt: IOInterface {
 
             tcp_connection_map.write().remove(&conn_id);
             retire_media_lane(&media_lanes, &conn_id);
+            let (sessions, clients) = (&server_connection_map, &tcp_connection_map);
+            connection_closed(&capabilities, sessions, clients, conn_id);
 
             // ALWAYS preserve sessions when TCP drops.
             //
@@ -132,9 +130,7 @@ pub trait IOInterfaceExt: IOInterface {
                     .collect();
                 let preserved: Vec<(u64, String)> = lock
                     .iter()
-                    .filter(|(_, conn)| {
-                        conn.associated_localhost_connection.load(Ordering::Relaxed) == conn_id
-                    })
+                    .filter(|(_, conn)| conn.subscribers.last_holder() == Some(conn_id))
                     .map(|(cid, conn)| (*cid, conn.username.clone()))
                     .collect();
                 (preserved.len(), all, preserved)
@@ -142,7 +138,7 @@ pub trait IOInterfaceExt: IOInterface {
 
             info!(target: "citadel", "[TCP_DISCONNECT] Connection {conn_id:?} closed. Preserving all sessions.");
             info!(target: "citadel", "[TCP_DISCONNECT] Total sessions in map: {:?}", all_sessions);
-            info!(target: "citadel", "[TCP_DISCONNECT] Sessions associated with THIS connection ({conn_id:?}): {:?}", preserved_sessions_info);
+            info!(target: "citadel", "[TCP_DISCONNECT] Sessions this connection was the last to hold ({conn_id:?}): {:?}", preserved_sessions_info);
             info!(target: "citadel", "[TCP_DISCONNECT] Preserved {} sessions for reconnection", preserved_session_count);
 
             // Clean up the orphan_sessions entry if it exists (no longer used for decisions)

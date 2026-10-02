@@ -20,16 +20,16 @@ type Outbound = UnboundedReceiver<(StreamKey, OutboundFrame<WrappedMessage>)>;
 
 fn backend() -> (CitadelWorkspaceBackend, Outbound) {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    let backend = CitadelWorkspaceBackend {
-        cid: CID,
-        expected_requests: Arc::new(DashMap::new()),
-        bypass_ism_outbound_tx: Some(BypasserTx {
-            tx,
-            stream_key: StreamKey::bypass_ism(),
-        }),
-        outbound_gate: Arc::new(Mutex::new(())),
-        inbound_gate: Arc::new(Mutex::new(())),
-    };
+    let backend = CitadelWorkspaceBackend::with_channel(
+        CID,
+        RequestChannel::new(
+            CID,
+            crate::messenger::BypasserTx {
+                tx,
+                stream_key: StreamKey::bypass_ism(),
+            },
+        ),
+    );
     (backend, rx)
 }
 
@@ -73,7 +73,7 @@ async fn a_minute_late_reply_completes_the_read() {
     let (value, unclaimed) = tokio::join!(backend.load_value("key"), agent);
     assert_eq!(value.ok(), Some(Some(vec![7])), "late is not failed");
     assert!(unclaimed.is_none(), "the reply was the backend's own");
-    assert!(backend.expected_requests.is_empty());
+    assert!(backend.channel.expected_requests.is_empty());
 }
 
 #[tokio::test(start_paused = true)]
@@ -99,7 +99,7 @@ async fn the_reply_to_an_abandoned_read_is_still_consumed() {
         "the backend's reply leaked to the application"
     );
     assert!(
-        backend.expected_requests.is_empty(),
+        backend.channel.expected_requests.is_empty(),
         "the slot outlived its reply"
     );
 }
@@ -148,7 +148,7 @@ async fn a_request_that_never_left_fails_its_waiter() {
     };
     let (outcome, ()) = tokio::join!(backend.load_value("key"), abandon);
     assert!(outcome.is_err());
-    assert!(backend.expected_requests.is_empty());
+    assert!(backend.channel.expected_requests.is_empty());
 }
 
 #[tokio::test(start_paused = true)]
@@ -169,7 +169,7 @@ async fn a_request_id_already_in_flight_is_refused_not_displaced() {
         "the second must not take the first one's slot"
     );
     assert_eq!(
-        backend.expected_requests.len(),
+        backend.channel.expected_requests.len(),
         1,
         "the first is still waiting"
     );

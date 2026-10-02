@@ -47,6 +47,12 @@ impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
             Some(peer) => *key == (cid, peer) || *key == (peer, cid),
         };
 
+        // The account's ILM ends with its session. Its state is durable in
+        // LocalDB, so the next sign-in's ILM resumes it.
+        if peer_cid.is_none() {
+            self.ilm_hosts.stop(cid);
+        }
+
         let mut pruned = PrunedCidState::default();
         {
             let mut m = self.pending_peer_connect_signals.write();

@@ -109,13 +109,24 @@ pub async fn create_and_join(
     from_service_b: &mut UnboundedReceiver<InternalServiceResponse>,
     cid_b: u64,
 ) -> Result<MessageGroupKey, Box<dyn Error>> {
-    // A creates a group, inviting B
-    to_service_a.send(InternalServiceRequest::GroupCreate {
-        cid: cid_a,
+    let group_key = create_inviting(to_service_a, from_service_a, cid_a, &[cid_b]).await?;
+    accept_invitation(to_service_b, from_service_b, cid_b, group_key).await?;
+    Ok(group_key)
+}
+
+/// `cid` creates a group inviting each of `invitees`. Returns the group's key.
+pub async fn create_inviting(
+    tx: &UnboundedSender<InternalServiceRequest>,
+    rx: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid: u64,
+    invitees: &[u64],
+) -> Result<MessageGroupKey, Box<dyn Error>> {
+    tx.send(InternalServiceRequest::GroupCreate {
+        cid,
         request_id: Uuid::new_v4(),
-        initial_users_to_invite: Some(vec![UserIdentifier::from(cid_b)]),
+        initial_users_to_invite: Some(invitees.iter().copied().map(UserIdentifier::from).collect()),
     })?;
-    let create_response = recv_until(from_service_a, "GroupCreateSuccess", |r| {
+    let create_response = recv_until(rx, "GroupCreateSuccess", |r| {
         matches!(r, InternalServiceResponse::GroupCreateSuccess(..))
     })
     .await;
@@ -124,9 +135,17 @@ pub async fn create_and_join(
     else {
         unreachable!()
     };
+    Ok(group_key)
+}
 
-    // B accepts the invitation
-    let invite = recv_until(from_service_b, "GroupInviteNotification", |r| {
+/// `cid` accepts its invitation to `group_key`.
+pub async fn accept_invitation(
+    tx: &UnboundedSender<InternalServiceRequest>,
+    rx: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid: u64,
+    group_key: MessageGroupKey,
+) -> Result<(), Box<dyn Error>> {
+    let invite = recv_until(rx, "GroupInviteNotification", |r| {
         matches!(r, InternalServiceResponse::GroupInviteNotification(..))
     })
     .await;
@@ -139,15 +158,15 @@ pub async fn create_and_join(
         unreachable!()
     };
     assert_eq!(invited_key, group_key);
-    to_service_b.send(InternalServiceRequest::GroupRespondRequest {
-        cid: cid_b,
+    tx.send(InternalServiceRequest::GroupRespondRequest {
+        cid,
         peer_cid,
         group_key,
         response: true,
         request_id: Uuid::new_v4(),
         invitation: true,
     })?;
-    let accept = recv_until(from_service_b, "GroupRespondRequest response", |r| {
+    let accept = recv_until(rx, "GroupRespondRequest response", |r| {
         matches!(
             r,
             InternalServiceResponse::GroupRespondRequestSuccess(..)
@@ -158,9 +177,9 @@ pub async fn create_and_join(
     let InternalServiceResponse::GroupRespondRequestSuccess(GroupRespondRequestSuccess { .. }) =
         accept
     else {
-        panic!("B failed to accept the group invitation: {accept:?}")
+        panic!("{cid} failed to accept the group invitation: {accept:?}")
     };
-    Ok(group_key)
+    Ok(())
 }
 
 /// Long enough for a broadcast through the server; a delivered message takes
@@ -234,48 +253,35 @@ pub async fn joined_group_on_one_service_reaching(
 }
 
 async fn join_the_second_to_the_firsts_group(
-    (
-        service_addr,
-        (mut owner_tx, mut owner_rx, owner_cid),
-        (mut member_tx, mut member_rx, member_cid),
-    ): (SocketAddr, PeerHandle, PeerHandle),
+    (service_addr, mut owner, mut member): (SocketAddr, PeerHandle, PeerHandle),
 ) -> Result<OneServiceGroup, Box<dyn Error>> {
-    let settings = SessionSecuritySettingsBuilder::default().build()?;
-    register_p2p(
-        &mut owner_tx,
-        &mut owner_rx,
-        owner_cid,
-        &mut member_tx,
-        &mut member_rx,
-        member_cid,
-        settings,
-        None,
-    )
-    .await?;
-    connect_p2p(
-        &mut owner_tx,
-        &mut owner_rx,
-        owner_cid,
-        &mut member_tx,
-        &mut member_rx,
-        member_cid,
-        settings,
-        None,
-    )
-    .await?;
+    peered(&mut owner, &mut member).await?;
     let group_key = create_and_join(
-        &owner_tx,
-        &mut owner_rx,
-        owner_cid,
-        &member_tx,
-        &mut member_rx,
-        member_cid,
+        &owner.0,
+        &mut owner.1,
+        owner.2,
+        &member.0,
+        &mut member.1,
+        member.2,
     )
     .await?;
     Ok(OneServiceGroup {
         service_addr,
-        owner: (owner_tx, owner_rx, owner_cid),
-        member: (member_tx, member_rx, member_cid),
+        owner,
+        member,
         group_key,
     })
+}
+
+/// Registers and connects `a` and `b` as peers, as a group invite between them needs.
+pub async fn peered(a: &mut PeerHandle, b: &mut PeerHandle) -> Result<(), Box<dyn Error>> {
+    let settings = SessionSecuritySettingsBuilder::default().build()?;
+    register_p2p(
+        &mut a.0, &mut a.1, a.2, &mut b.0, &mut b.1, b.2, settings, None,
+    )
+    .await?;
+    connect_p2p(
+        &mut a.0, &mut a.1, a.2, &mut b.0, &mut b.1, b.2, settings, None,
+    )
+    .await
 }

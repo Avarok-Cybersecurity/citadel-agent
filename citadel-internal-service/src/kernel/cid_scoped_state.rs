@@ -41,17 +41,31 @@ impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
     /// teardown, where the session survives — so only that pair goes, in both
     /// orderings. Pruning by `cid` there would discard pending requests from
     /// unrelated peers that are still perfectly live.
+    ///
+    /// A session teardown also stops the account's ILM: it ends with its session.
+    /// Its state is durable in LocalDB, so the next sign-in's ILM resumes it.
     pub fn prune_cid_scoped_state(&self, cid: u64, peer_cid: Option<u64>) -> PrunedCidState {
+        if peer_cid.is_none() {
+            self.ilm_hosts.stop(cid);
+        }
+        self.prune_cid_keyed_maps(cid, peer_cid)
+    }
+
+    /// The C2S link under a session that lives on dropped, and the agent is
+    /// reconnecting it. What the dead link carried goes, as in a session
+    /// teardown; the ILM does not. The session is not over, and nothing on the
+    /// way back starts an ILM again -- stopping it here left a signed-in account
+    /// unable to send until a window happened to declare again. Kept running,
+    /// it holds what it has queued until the account's peers are back.
+    pub fn prune_dropped_link_state(&self, cid: u64) -> PrunedCidState {
+        self.prune_cid_keyed_maps(cid, None)
+    }
+
+    fn prune_cid_keyed_maps(&self, cid: u64, peer_cid: Option<u64>) -> PrunedCidState {
         let touches = |key: &(u64, u64)| match peer_cid {
             None => key.0 == cid || key.1 == cid,
             Some(peer) => *key == (cid, peer) || *key == (peer, cid),
         };
-
-        // The account's ILM ends with its session. Its state is durable in
-        // LocalDB, so the next sign-in's ILM resumes it.
-        if peer_cid.is_none() {
-            self.ilm_hosts.stop(cid);
-        }
 
         let mut pruned = PrunedCidState::default();
         {

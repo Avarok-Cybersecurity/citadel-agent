@@ -9,3 +9,9 @@ pub(crate) fn conversation_owner(key: &str) -> Option<u64> {
     let (owner, _) = rest.split_once("_with_")?;
     owner.parse().ok()
 }
+
+/// The pause record the web UI keeps for one contact, in the session's own
+/// LocalDB (`p2p-pause/pause-rules.ts`, `pauseKey`).
+pub(crate) fn pause_key(peer_cid: u64) -> String {
+    format!("p2p_paused_peer_{peer_cid}")
+}

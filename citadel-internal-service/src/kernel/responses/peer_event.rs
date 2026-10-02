@@ -217,7 +217,18 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 info!(target: "citadel", "[PostConnect] Stored pending PeerConnect signal for (cid={}, peer_cid={}), total pending: {}", session_cid, peer_cid, signals.len());
             }
 
-            {
+            // Decided before windows hear of it: the notification says whether the
+            // agent answers (kernel/inbound_connect), so no window answers too.
+            // Off the event loop, as a window's answer is.
+            let this = this.clone();
+            drop(tokio::spawn(async move {
+                let answer = this
+                    .agent_answer_for(
+                        session_cid,
+                        peer_cid,
+                        session_security_settings.security_level,
+                    )
+                    .await;
                 let response =
                     InternalServiceResponse::PeerConnectNotification(PeerConnectNotification {
                         cid: session_cid,
@@ -225,10 +236,16 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                         session_security_settings,
                         udp_mode,
                         request_id: None,
+                        answered_by_agent: answer.agent_has_it(),
                     });
                 // Re-resolved through the CID, never broadcast; see the function.
-                send_response_for_session(this, response, session_cid, None).await?;
-            }
+                if let Err(err) =
+                    send_response_for_session(&this, response, session_cid, None).await
+                {
+                    warn!(target: "citadel", "[PostConnect] notification for {session_cid} not sent: {err:?}");
+                }
+                this.answer_as_agent(session_cid, peer_cid, answer).await;
+            }));
         }
         _ => {}
     }

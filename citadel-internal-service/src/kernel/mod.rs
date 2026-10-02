@@ -41,6 +41,7 @@ pub(crate) mod credential_fingerprint;
 pub(crate) mod ext;
 pub(crate) mod group_channels;
 pub(crate) mod ilm;
+mod inbound_connect;
 pub(crate) mod media;
 pub(crate) mod peer_path;
 pub(crate) mod pending_group_invites;
@@ -301,6 +302,8 @@ pub struct Connection<R: Ratchet> {
     /// who only knew the username. See kernel/credential_fingerprint.rs for why
     /// this is a recorded fingerprint rather than a local credential check.
     pub credential_fingerprint: Option<Vec<u8>>,
+    /// The relay half a window last sent; see requests/peer/answer.rs.
+    pub(crate) window_relay: Option<PeerTurnConfig>,
     /// What the session was opened with, so a server drop can be reconnected.
     /// In memory only. See kernel/reconnect/mod.rs.
     pub(crate) reconnect: reconnect::Credentials,
@@ -379,6 +382,7 @@ impl<R: Ratchet> Connection<R> {
             picked_files: HashMap::new(),
             revfs_correlations: revfs_correlation::RevfsCorrelations::default(),
             credential_fingerprint,
+            window_relay: None,
             reconnect,
             link: reconnect::LinkState::Up,
             handoff: reconnect::Handoff::default(),

@@ -522,6 +522,7 @@ pub async fn connect_p2p_with_turn(
             session_security_settings: _,
             udp_mode: _,
             request_id: _,
+            answered_by_agent: _,
         }) => {
             assert_eq!(cid, cid_b);
             assert_eq!(peer_cid, cid_a);

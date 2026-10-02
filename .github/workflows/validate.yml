@@ -31,7 +31,18 @@ jobs:
     strategy:
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
-    runs-on: ${{ matrix.os }}
+    # The macOS leg may run on the self-hosted Apple Silicon runners
+    # (`apple-48gb-metal`) when the org variable CITADEL_MAC_RUNNER is '1';
+    # unset, it is macos-latest exactly as before. Linux and Windows stay hosted.
+    # The same-repo clause is mandatory: this repository is public, and a fork's
+    # pull request must never execute on that machine. The fork-safety job
+    # below refuses any other spelling of this expression.
+    runs-on: >-
+      ${{ matrix.os == 'macos-latest'
+          && vars.CITADEL_MAC_RUNNER == '1'
+          && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+          && fromJSON('["self-hosted","macOS","ARM64","apple-48gb-metal"]')
+          || matrix.os }}
     timeout-minutes: 60
     steps:
       - uses: Avarok-Cybersecurity/gh-actions-deps@master
@@ -64,6 +75,22 @@ jobs:
         if: startsWith(matrix.os, 'windows')
       - run: cargo nextest run --features=websockets
         if: ${{ !startsWith(matrix.os, 'windows') }}
+        env:
+          # The tests give every node a filesystem backend under temp_dir().
+          # On a hosted runner that dies with the VM; on the self-hosted Mac it
+          # would pile up between jobs, so point it at the per-job temp dir the
+          # runner empties.
+          TMPDIR: ${{ runner.temp }}
+
+  fork-safety:
+    name: No fork's pull request can reach the self-hosted Mac
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: node .github/scripts/check-mac-runner-is-fork-safe.mjs
+      - name: The guard refuses every unguarded shape
+        run: node --test .github/scripts/mac-runner-routing.test.mjs
 
   clippy:
     runs-on: ubuntu-latest

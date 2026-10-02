@@ -1161,6 +1161,19 @@ pub async fn two_sessions_on_one_service_reaching(
     tag: &str,
     server_addrs: [SocketAddr; 2],
 ) -> Result<(SocketAddr, PeerHandle, PeerHandle), Box<dyn Error>> {
+    let (service_addr, mut sessions) = sessions_on_one_service_reaching(tag, &server_addrs).await?;
+    let second = sessions.remove(1);
+    let first = sessions.remove(0);
+    Ok((service_addr, first, second))
+}
+
+/// One internal service hosting a registered, server-connected session per entry of
+/// `server_addrs`, session `i` registering to `server_addrs[i]` as `{tag}.{i}` /
+/// `secret_{i}`. The sessions come back in that order.
+pub async fn sessions_on_one_service_reaching(
+    tag: &str,
+    server_addrs: &[SocketAddr],
+) -> Result<(SocketAddr, Vec<PeerHandle>), Box<dyn Error>> {
     let service_addr: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
     let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
         service_addr,
@@ -1176,7 +1189,7 @@ pub async fn two_sessions_on_one_service_reaching(
     tokio::task::spawn(internal_service);
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
-    let to_spawn = (0..2)
+    let to_spawn = (0..server_addrs.len())
         .map(|i| RegisterAndConnectItems {
             internal_service_addr: service_addr,
             server_addr: server_addrs[i],
@@ -1187,8 +1200,6 @@ pub async fn two_sessions_on_one_service_reaching(
         })
         .collect();
 
-    let mut info = register_and_connect_to_server(to_spawn).await.unwrap();
-    let second = info.remove(1);
-    let first = info.remove(0);
-    Ok((service_addr, first, second))
+    let sessions = register_and_connect_to_server(to_spawn).await.unwrap();
+    Ok((service_addr, sessions))
 }

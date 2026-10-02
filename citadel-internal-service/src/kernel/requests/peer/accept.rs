@@ -1,4 +1,4 @@
-use crate::kernel::requests::peer::turn::set_peer_turn;
+use crate::kernel::requests::peer::answer::{answer_offer, remember_window_relay};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -8,7 +8,6 @@ use citadel_internal_service_types::{
 };
 use citadel_sdk::logging::{error, info};
 use citadel_sdk::prelude::Ratchet;
-use citadel_sdk::responses;
 use uuid::Uuid;
 
 /// Handle PeerConnectAccept request - respond to an incoming P2P connection request.
@@ -25,6 +24,10 @@ use uuid::Uuid;
 /// 4. UI sends PeerConnectAccept back
 /// 5. This handler retrieves stored signal, calls responses::peer_connect
 /// 6. SDK completes the connection handshake
+///
+/// For an account the agent hosts, step 4 is the agent's own
+/// (kernel/inbound_connect): the account is reachable with no window open, and
+/// the notification says so (`answered_by_agent`) so no window answers too.
 pub async fn handle<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
@@ -45,88 +48,13 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     };
 
     info!(target: "citadel", "[PeerConnectAccept] Received request: cid={}, peer_cid={}, accept={}", cid, peer_cid, accept);
-
-    // IDEMPOTENCY CHECK: If peer is already connected, return success immediately.
-    // This prevents duplicate PeerConnectAccept requests (from race conditions in
-    // multi-tab scenarios) from failing after the first one succeeds.
-    {
-        let conns = this.server_connection_map.read();
-        if let Some(conn) = conns.get(&cid) {
-            // Only an ACCEPT is idempotent against an existing connection.
-            // Without the `accept` test this shortcut answered a refusal with
-            // success and did nothing — the peer stayed connected and the
-            // caller was told its answer had been delivered.
-            if accept && conn.peers.contains_key(&peer_cid) {
-                info!(target: "citadel", "[PeerConnectAccept] Peer {} already connected to {} - idempotent success", peer_cid, cid);
-                return Some(HandledRequestResult {
-                    response: InternalServiceResponse::PeerConnectAcceptSuccess(
-                        PeerConnectAcceptSuccess {
-                            cid,
-                            peer_cid,
-                            accept,
-                            request_id: Some(request_id),
-                        },
-                    ),
-                    uuid,
-                });
-            }
-        }
+    if accept {
+        remember_window_relay(this, cid, turn.as_ref());
     }
 
-    // Log current pending signals for debugging
-    {
-        let pending = this.pending_peer_connect_signals.read();
-        info!(target: "citadel", "[PeerConnectAccept] Current pending signals count: {}", pending.len());
-        for key in pending.keys() {
-            info!(target: "citadel", "[PeerConnectAccept]   - Pending signal key: (cid={}, peer_cid={})", key.0, key.1);
-        }
-    }
-
-    // Retrieve the stored pending signal
-    let pending_signal = this
-        .pending_peer_connect_signals
-        .write()
-        .remove(&(cid, peer_cid));
-
-    let Some(signal) = pending_signal else {
-        error!(target: "citadel", "[PeerConnectAccept] No pending signal found for ({}, {})", cid, peer_cid);
-        return Some(HandledRequestResult {
-            response: InternalServiceResponse::PeerConnectAcceptFailure(PeerConnectAcceptFailure {
-                cid,
-                peer_cid,
-                message: format!("No pending connection request from peer {}", peer_cid),
-                request_id: Some(request_id),
-            }),
-            uuid,
-        });
-    };
-
-    info!(target: "citadel", "[PeerConnectAccept] Found pending signal, calling peer_connect response");
-
-    // Get the remote to send the response
-    let remote = this.remote();
-
-    // The accepting half of the TURN config, set before the accept lets the attempt start. A
-    // decline starts no attempt, so it only clears.
-    let turn = if accept { turn.as_ref() } else { None };
-    if let Err(err) = set_peer_turn(remote, cid, peer_cid, turn).await {
-        let err_str = err.into_string();
-        error!(target: "citadel", "[PeerConnectAccept] set_peer_turn FAILED: {}", err_str);
-        return Some(HandledRequestResult {
-            response: InternalServiceResponse::PeerConnectAcceptFailure(PeerConnectAcceptFailure {
-                cid,
-                peer_cid,
-                message: err_str,
-                request_id: Some(request_id),
-            }),
-            uuid,
-        });
-    }
-
-    // Call the SDK's peer_connect response function
-    // Both outcomes still answer with PeerConnectAcceptSuccess, because both
-    // ARE successes: the answer was delivered. What the response now carries is
-    // WHICH answer, in `accept`.
+    // Both outcomes answer with PeerConnectAcceptSuccess, because both ARE
+    // successes: the answer was delivered. What the response carries is WHICH
+    // answer, in `accept`.
     //
     // Without that field the type name was the entire message and it said
     // "success" either way, so a receiver could not tell "they accepted" from
@@ -134,41 +62,31 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     // it was live: declining a registration ran the frontend's acceptance path,
     // marked the declined peer registered, and had auto-connect open a
     // connection to the person just refused.
-    //
-    // Nothing sends accept:false today — incoming connections are auto-accepted,
-    // consent having been given at registration — so this was latent. It is the
-    // shape FileTransferStatusNotification already uses, which carries both
-    // `success` and `response`.
-    match responses::peer_connect(signal, accept, remote, peer_session_password).await {
-        Ok(ticket) => {
-            info!(target: "citadel", "[PeerConnectAccept] Successfully sent {} response, ticket={:?}",
-                if accept { "accept" } else { "decline" }, ticket);
-            Some(HandledRequestResult {
-                response: InternalServiceResponse::PeerConnectAcceptSuccess(
-                    PeerConnectAcceptSuccess {
-                        cid,
-                        peer_cid,
-                        accept,
-                        request_id: Some(request_id),
-                    },
-                ),
-                uuid,
+    let response = match answer_offer(
+        this,
+        cid,
+        peer_cid,
+        accept,
+        turn.as_ref(),
+        peer_session_password,
+    )
+    .await
+    {
+        Ok(()) => InternalServiceResponse::PeerConnectAcceptSuccess(PeerConnectAcceptSuccess {
+            cid,
+            peer_cid,
+            accept,
+            request_id: Some(request_id),
+        }),
+        Err(message) => {
+            error!(target: "citadel", "[PeerConnectAccept] ({cid}, {peer_cid}) failed: {message}");
+            InternalServiceResponse::PeerConnectAcceptFailure(PeerConnectAcceptFailure {
+                cid,
+                peer_cid,
+                message,
+                request_id: Some(request_id),
             })
         }
-        Err(err) => {
-            let err_str = err.into_string();
-            error!(target: "citadel", "[PeerConnectAccept] Failed to send response: {}", err_str);
-            Some(HandledRequestResult {
-                response: InternalServiceResponse::PeerConnectAcceptFailure(
-                    PeerConnectAcceptFailure {
-                        cid,
-                        peer_cid,
-                        message: err_str,
-                        request_id: Some(request_id),
-                    },
-                ),
-                uuid,
-            })
-        }
-    }
+    };
+    Some(HandledRequestResult { response, uuid })
 }

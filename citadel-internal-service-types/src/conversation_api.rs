@@ -1,6 +1,7 @@
 //! What windows and the agent say to each other about conversations: account
 //! preferences, change events, and the answers to conversation requests.
 
+use crate::chat_level::{ChatSecurityLevel, PeerSecurityMinimum};
 use crate::conversation::{ConversationMessage, ConversationMetadata, ConversationPage};
 use crate::plaintext_debug_fmt;
 use custom_debug::Debug;
@@ -49,6 +50,10 @@ pub struct AccountPreferences {
     pub notify_on_screenshot: bool,
     pub notification_preview: NotificationPreview,
     pub retention: Vec<PeerRetention>,
+    /// Chats with a level above Standard; an absent chat admits every offer.
+    /// Absent from a UI that predates it, which pushed no minimum.
+    #[serde(default)]
+    pub security_minimums: Vec<PeerSecurityMinimum>,
 }
 
 impl AccountPreferences {
@@ -62,6 +67,7 @@ impl AccountPreferences {
         // user turns previews on for the account.
         notification_preview: NotificationPreview::SenderOnly,
         retention: Vec::new(),
+        security_minimums: Vec::new(),
     };
 
     pub fn retention_for(&self, peer_cid: u64) -> Retention {
@@ -70,6 +76,14 @@ impl AccountPreferences {
             .find(|r| r.peer_cid == peer_cid)
             .map(|r| r.retention)
             .unwrap_or(Retention::Forever)
+    }
+
+    pub fn security_minimum_for(&self, peer_cid: u64) -> ChatSecurityLevel {
+        self.security_minimums
+            .iter()
+            .find(|m| m.peer_cid == peer_cid)
+            .map(|m| m.level)
+            .unwrap_or(ChatSecurityLevel::Standard)
     }
 }
 

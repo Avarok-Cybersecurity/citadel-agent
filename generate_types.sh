@@ -87,7 +87,7 @@ for ts_file in *.ts; do
     # Find which protocol types are used in this file (excluding existing imports)
     needed_types=()
     for ptype in "${PROTOCOL_TYPES[@]}"; do
-        if grep -q "$ptype" "$ts_file" && ! grep -q "import.*$ptype.*@avarok/citadel-protocol-types" "$ts_file"; then
+        if grep -qw "$ptype" "$ts_file" && ! grep -q "import.*$ptype.*@avarok/citadel-protocol-types" "$ts_file"; then
             needed_types+=("$ptype")
         fi
     done

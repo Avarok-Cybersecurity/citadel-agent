@@ -64,6 +64,7 @@ pub(crate) mod session_subscribers;
 pub(crate) mod session_wait;
 pub(crate) mod store_keys;
 mod tick_updater;
+pub mod updates;
 pub(crate) use tick_updater::spawn_tick_updater;
 
 pub type RatchetType = StackedRatchet;
@@ -116,6 +117,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) client_capabilities: Arc<RwLock<HashMap<Uuid, ClientCapabilities>>>,
     /// Native notices and the menu-bar app's account rows (kernel/notices).
     pub(crate) notices: Arc<notices::NoticeHub>,
+    /// The agent's updater, when the shipped binary configured one (kernel/updates).
+    pub(crate) updates: Arc<updates::UpdatesSlot>,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -137,6 +140,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             conversations: self.conversations.clone(),
             client_capabilities: self.client_capabilities.clone(),
             notices: self.notices.clone(),
+            updates: self.updates.clone(),
             io: self.io.clone(),
         }
     }
@@ -163,6 +167,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             ilm_hosts: Default::default(),
             conversations: Default::default(),
             client_capabilities: Default::default(),
+            updates: Default::default(),
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -639,6 +644,7 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
             res0 = listener_task => res0,
             res1 = inbound_command_task => res1,
             () = sweeper => Ok(()),
+            () = updates::run(self.clone()) => Ok(()),
         };
 
         warn!(target: "citadel", "Shutting down service because a critical task finished. {res:?}");

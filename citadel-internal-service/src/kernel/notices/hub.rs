@@ -52,14 +52,23 @@ struct StreamNotifier {
 
 impl StreamNotifier {
     fn send(&self, response: InternalServiceResponse) {
-        let live: Vec<Uuid> = {
-            let clients = self.clients.read();
-            let mut subscribers = self.subscribers.write();
-            subscribers.retain(|id| clients.contains_key(id));
-            subscribers.iter().copied().collect()
-        };
-        deliver(&self.clients, &live, response);
+        stream_send(&self.subscribers, &self.clients, response);
     }
+}
+
+/// Send to every live subscriber, forgetting the ones that are gone; how many it reached.
+fn stream_send(
+    subscribers: &Subscribers,
+    clients: &Clients,
+    response: InternalServiceResponse,
+) -> usize {
+    let live: Vec<Uuid> = {
+        let connected = clients.read();
+        let mut subscribers = subscribers.write();
+        subscribers.retain(|id| connected.contains_key(id));
+        subscribers.iter().copied().collect()
+    };
+    deliver(clients, &live, response).len()
 }
 
 impl Notifier for StreamNotifier {
@@ -147,6 +156,20 @@ impl NoticeHub {
             .filter(|(held, _)| *held == cid)
             .map(|(_, peer)| *peer)
             .collect()
+    }
+
+    /// Send `response` to the menu-bar app's stream alone; how many subscribers it reached.
+    pub(crate) fn send_to_stream(&self, response: InternalServiceResponse) -> usize {
+        stream_send(&self.subscribers, &self.clients, response)
+    }
+
+    /// Whether the menu-bar app's stream has a live subscriber.
+    pub(crate) fn has_stream(&self) -> bool {
+        let clients = self.clients.read();
+        self.subscribers
+            .read()
+            .iter()
+            .any(|id| clients.contains_key(id))
     }
 
     pub(crate) fn send_notice(&self, notice: &NativeNotice) {

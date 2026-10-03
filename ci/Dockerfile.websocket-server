@@ -1,6 +1,9 @@
 # Dockerfile for WebSocket test server
-# Using nightly for edition 2024 and unstable features
-FROM rustlang/rust:nightly-slim AS builder
+# Using nightly for edition 2024 and unstable features.
+# Pinned to the runtime's Debian release: the floating `nightly-slim` tag moved
+# to trixie on 2026-10-03, and a binary linked there needs GLIBC_2.38, which the
+# bookworm runtime below does not have ("version `GLIBC_2.38' not found").
+FROM rustlang/rust:nightly-bookworm-slim AS builder
 
 WORKDIR /app
 

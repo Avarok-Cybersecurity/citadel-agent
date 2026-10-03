@@ -8,8 +8,24 @@ import type { FileSource } from "./FileSource";
 import type { MessagePatch } from "./MessagePatch";
 import type { MessageType } from "./MessageType";
 import type { PeerTurnConfig } from "./PeerTurnConfig";
+import type { SignInManagementOp } from "./SignInManagementOp";
+import type { StepUp } from "./StepUp";
 
-export type InternalServiceRequest = { "Connect": { request_id: string, username: string, password: number[], connect_mode: ConnectMode, udp_mode: UdpMode, keep_alive_timeout: { secs: number; nanos: number } | null, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Register": { request_id: string, 
+export type InternalServiceRequest = { "Connect": { request_id: string, username: string, 
+/**
+ * Absent for a `KeyOnly` account and for a recovery-code sign-in.
+ */
+password: number[] | null, 
+/**
+ * Whether this window can answer a `SecurityKeyChallengeNotification`. A client from
+ * before post-quantum sign-in sends neither this nor `recovery_code`.
+ */
+security_key: boolean, 
+/**
+ * A recovery code as typed. It signs in once, to a session that may only add a
+ * security key, set the sign-in policy or sign out.
+ */
+recovery_code: number[] | null, connect_mode: ConnectMode, udp_mode: UdpMode, keep_alive_timeout: { secs: number; nanos: number } | null, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Register": { request_id: string, 
 /**
  * `host:port`, resolved by the AGENT rather than by the browser.
  *
@@ -93,7 +109,11 @@ turn?: PeerTurnConfig | null, } } | { "PeerRegister": { request_id: string, cid:
 /**
  * "json", "text", "yjs-update", "opaque", "cbor-command", or none.
  */
-compression_hint: string | null, } } | { "Batched": { request_id: string, 
+compression_hint: string | null, } } | { "SecurityKeyAnswer": { request_id: string, challenge_id: string, credential_id: Array<number>, 
+/**
+ * The 32-byte WebAuthn PRF output. Handed to the SDK and wiped; never logged.
+ */
+prf_output: number[], } } | { "SecurityKeyDecline": { request_id: string, challenge_id: string, reason: string, } } | { "SignInManagement": { request_id: string, cid: bigint, op: SignInManagementOp, step_up: StepUp, } } | { "Batched": { request_id: string, 
 /**
  * The list of commands to execute in parallel
  */

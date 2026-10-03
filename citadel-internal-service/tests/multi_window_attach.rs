@@ -102,7 +102,9 @@ mod tests {
         legacy.0.send(InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "mw.legacy.0".to_string(),
-            password: SecBuffer::from(ALICE_PASSWORD.as_bytes().to_vec()),
+            password: Some(SecBuffer::from(ALICE_PASSWORD.as_bytes().to_vec())),
+            security_key: false,
+            recovery_code: None,
             connect_mode: ConnectMode::Standard { force_login: true },
             udp_mode: Default::default(),
             keep_alive_timeout: None,

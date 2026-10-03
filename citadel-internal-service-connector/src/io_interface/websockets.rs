@@ -612,7 +612,9 @@ mod tests {
         let request = InternalServicePayload::Request(InternalServiceRequest::Connect {
             request_id,
             username: "test_user".to_string(),
-            password: SecBuffer::from(b"password".to_vec()),
+            password: Some(SecBuffer::from(b"password".to_vec())),
+            security_key: false,
+            recovery_code: None,
             connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                 force_login: false,
             },
@@ -680,7 +682,9 @@ mod tests {
         let request_payload = InternalServicePayload::Request(InternalServiceRequest::Connect {
             request_id: Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap(),
             username: "frontend_user".to_string(),
-            password: SecBuffer::from(b"password".to_vec()),
+            password: Some(SecBuffer::from(b"password".to_vec())),
+            security_key: false,
+            recovery_code: None,
             connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                 force_login: false,
             },
@@ -770,7 +774,9 @@ mod tests {
             let request = InternalServicePayload::Request(InternalServiceRequest::Connect {
                 request_id: Uuid::new_v4(),
                 username: format!("test_user_{}", i),
-                password: SecBuffer::from(b"password".to_vec()),
+                password: Some(SecBuffer::from(b"password".to_vec())),
+                security_key: false,
+                recovery_code: None,
                 connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                     force_login: false,
                 },
@@ -828,7 +834,9 @@ mod tests {
         let request = InternalServicePayload::Request(InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "test_user".to_string(),
-            password: SecBuffer::from(b"password".to_vec()),
+            password: Some(SecBuffer::from(b"password".to_vec())),
+            security_key: false,
+            recovery_code: None,
             connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                 force_login: false,
             },

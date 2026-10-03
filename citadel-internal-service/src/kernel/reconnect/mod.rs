@@ -16,6 +16,7 @@
 //!
 //! policy.rs decides (pure, tested); task.rs does the SDK I/O.
 
+mod attempt;
 mod link;
 mod lost_peers;
 pub(crate) mod policy;
@@ -98,12 +99,22 @@ impl Handoff {
     }
 }
 
+/// How a session can be signed in to again without its user (kernel/sign_in/mod.rs decides).
+#[derive(Clone)]
+pub enum Reauth {
+    /// The password alone opened it.
+    Password(SecBuffer),
+    /// It needed the user, a security-key touch or a recovery code, which a reconnect cannot
+    /// ask for unprompted: the reconnect gives up with this reason, and the user signs in.
+    NeedsUser(&'static str),
+}
+
 /// What a session was opened with, so it can be opened again the same way. The
 /// username and server are the `Connection`'s own; the SDK dials the server recorded
 /// for the account, so a hosted workspace is reached over its WebSocket URL again.
 #[derive(Clone)]
 pub struct Credentials {
-    pub password: SecBuffer,
+    pub reauth: Reauth,
     pub connect_mode: ConnectMode,
     pub udp_mode: UdpMode,
     pub keep_alive_timeout: Option<Duration>,

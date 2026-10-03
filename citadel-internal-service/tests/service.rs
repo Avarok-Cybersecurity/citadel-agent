@@ -253,7 +253,9 @@ mod tests {
         let connect_command = InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "Username".into(),
-            password: "Password".into(),
+            password: Some("Password".into()),
+            security_key: false,
+            recovery_code: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
@@ -277,7 +279,9 @@ mod tests {
         let connect_command = InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "Username".into(),
-            password: "Password".into(),
+            password: Some("Password".into()),
+            security_key: false,
+            recovery_code: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
@@ -301,7 +305,9 @@ mod tests {
         let connect_command = InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "Username".into(),
-            password: "Password".into(),
+            password: Some("Password".into()),
+            security_key: false,
+            recovery_code: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
@@ -496,6 +502,13 @@ mod tests {
 
         send(&mut sink, register_command).await?;
 
+        // The registration's own answer comes first (it carries the recovery codes of a
+        // post-quantum server; none here), then the connect's.
+        let registered = stream.next().await.unwrap();
+        assert!(
+            matches!(registered, InternalServiceResponse::RegisterSuccess(_)),
+            "the registration was not answered first: {registered:?}"
+        );
         let response_packet = stream.next().await.unwrap();
 
         if let InternalServiceResponse::ConnectSuccess(

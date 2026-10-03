@@ -5,6 +5,9 @@ pub mod group;
 pub mod group_rejoin;
 pub mod multi_window;
 mod ports;
+pub mod pq;
+pub mod pq_accounts;
+pub mod pq_window;
 pub use ports::get_free_port;
 
 /// The launch token every test agent's notice plane admits (kernel/notices).
@@ -177,7 +180,9 @@ pub async fn register_and_connect_to_server<
             // now, connect to the server
             let command = InternalServiceRequest::Connect {
                 username,
-                password,
+                password: Some(password),
+                security_key: false,
+                recovery_code: None,
                 connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
                 udp_mode: Default::default(),
                 keep_alive_timeout: None,

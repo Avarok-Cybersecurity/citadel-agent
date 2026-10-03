@@ -1,7 +1,7 @@
 //! The ownership gate in mod.rs: who may act on a session.
 use super::{
     gate_decision, is_exempt_from_ownership_gate, is_ilm_key_for, refusal_response,
-    requires_owned_session, GateDecision, HandledRequestResult,
+    requires_owned_session, GateDecision, HandledRequestResult, REFUSED,
 };
 use citadel_internal_service_types::InternalServiceRequest;
 use uuid::Uuid;

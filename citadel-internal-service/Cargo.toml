@@ -41,6 +41,13 @@ bytes = { workspace = true }
 # OS randomness for session attach tokens (kernel/attach_tokens.rs). Already in
 # the tree through the SDK; declared for direct use.
 getrandom = "0.3"
+# A security key's PRF output is copied into a buffer wiped on drop before it reaches the SDK
+# (kernel/sign_in/key_relay.rs). Already in the tree through the SDK.
+zeroize = "1.8"
+# The session-reuse fingerprint is an HMAC-SHA3-256 of the password under a key this process
+# draws once (kernel/credential_fingerprint.rs). Both already in the tree through the SDK.
+hmac = "0.12"
+sha3 = "0.10"
 # The account ILM the agent hosts (kernel/ilm): the same crate the browser's
 # messenger runs, so frames and stored state are identical.
 intersession-layer-messaging = { workspace = true }

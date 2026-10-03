@@ -44,7 +44,9 @@ mod tests {
     ) -> InternalServiceRequest {
         InternalServiceRequest::Connect {
             username: username.to_string(),
-            password: password.to_vec().into(),
+            password: Some(password.to_vec().into()),
+            security_key: false,
+            recovery_code: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,

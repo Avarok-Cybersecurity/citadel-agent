@@ -11,7 +11,9 @@ fn main() {
     let request = InternalServicePayload::Request(InternalServiceRequest::Connect {
         request_id: Uuid::new_v4(),
         username: "frontend_user".to_string(),
-        password: SecBuffer::from(b"my_password".to_vec()),
+        password: Some(SecBuffer::from(b"my_password".to_vec())),
+        security_key: false,
+        recovery_code: None,
         connect_mode: citadel_internal_service_types::ConnectMode::Standard { force_login: false },
         udp_mode: Default::default(),
         keep_alive_timeout: Some(Duration::from_secs(30)),

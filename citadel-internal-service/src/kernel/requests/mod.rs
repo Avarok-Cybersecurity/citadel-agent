@@ -31,8 +31,10 @@ mod media;
 mod message;
 mod notices;
 mod register;
+mod security_key;
 mod send_reliable;
 mod update;
+mod sign_in_management;
 pub(crate) use agent_own::{answer_local_db, send_message};
 
 mod connection_management;
@@ -154,15 +156,27 @@ where
                 let variant = debug.split(['{', '(']).next().unwrap_or("Request").trim();
                 log::warn!(target: "citadel",
                     "Refusing {variant} for session {cid} from connection {uuid}: {reason}");
-                return refusal_response(&command, uuid);
+                return refusal_response(&command, uuid, REFUSED);
             }
+        }
+    }
+
+    // A recovery session may only add a key, set the policy or sign out (kernel/sign_in).
+    if let Some(cid) = command.session_cid() {
+        if this.is_recovery_session(cid) && !crate::kernel::sign_in::recovery::allows(&command) {
+            log::warn!(target: "citadel", "Refusing a request for recovery session {cid} from connection {uuid}");
+            return refusal_response(
+                &command,
+                uuid,
+                crate::kernel::sign_in::recovery::RECOVERY_ONLY,
+            );
         }
     }
 
     // The agent is the only writer of a hosted account's conversations.
     if this.writes_hosted_conversation(&command) {
         log::warn!(target: "citadel", "Refusing a conversation-record write from connection {uuid}: the agent hosts that account");
-        return refusal_response(&command, uuid);
+        return refusal_response(&command, uuid, REFUSED);
     }
 
     match &command {
@@ -316,6 +330,15 @@ where
 
         InternalServiceRequest::ConnectionManagement { .. } => {
             connection_management::handle(this, uuid, command).await
+        }
+
+        InternalServiceRequest::SecurityKeyAnswer { .. }
+        | InternalServiceRequest::SecurityKeyDecline { .. } => {
+            security_key::handle(this, uuid, command).await
+        }
+
+        InternalServiceRequest::SignInManagement { .. } => {
+            sign_in_management::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::Batched {
@@ -658,11 +681,16 @@ pub(crate) fn gate_decision(
 /// Twenty-two now answer with their own Failure variant. Ten stay silent for
 /// reasons written beside them, and the exhaustiveness test asserts exactly
 /// that list.
-fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<HandledRequestResult> {
-    /// Same wording for every refusal; see above.
-    const REFUSED: &str = "Session unavailable to this connection";
+/// Same wording for every ownership refusal; see the gate.
+const REFUSED: &str = "Session unavailable to this connection";
 
-    if let Some(response) = conversation::refusal(command, REFUSED) {
+/// `command`'s failure response, saying `message`; `None` for the requests with none.
+fn refusal_response(
+    command: &InternalServiceRequest,
+    uuid: Uuid,
+    message: &str,
+) -> Option<HandledRequestResult> {
+    if let Some(response) = conversation::refusal(command, message) {
         return Some(HandledRequestResult { response, uuid });
     }
     let response = match command {
@@ -674,7 +702,7 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
         } => InternalServiceResponse::LocalDBSetKVFailure(LocalDBSetKVFailure {
             cid: *cid,
             peer_cid: *peer_cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::LocalDBDeleteKV {
@@ -685,7 +713,7 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
         } => InternalServiceResponse::LocalDBDeleteKVFailure(LocalDBDeleteKVFailure {
             cid: *cid,
             peer_cid: *peer_cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::LocalDBGetAllKV {
@@ -696,7 +724,7 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
         } => InternalServiceResponse::LocalDBGetAllKVFailure(LocalDBGetAllKVFailure {
             cid: *cid,
             peer_cid: *peer_cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::LocalDBClearAllKV {
@@ -707,7 +735,7 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
         } => InternalServiceResponse::LocalDBClearAllKVFailure(LocalDBClearAllKVFailure {
             cid: *cid,
             peer_cid: *peer_cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         // The two operations this gate exists to protect, and the two it
@@ -729,14 +757,14 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
         InternalServiceRequest::Disconnect { request_id, cid } => {
             InternalServiceResponse::PeerDisconnectFailure(PeerDisconnectFailure {
                 cid: *cid,
-                message: REFUSED.to_string(),
+                message: message.to_string(),
                 request_id: Some(*request_id),
             })
         }
         InternalServiceRequest::Deregister { request_id, cid } => {
             InternalServiceResponse::DeregisterFailure(DeregisterFailure {
                 cid: *cid,
-                message: REFUSED.to_string(),
+                message: message.to_string(),
                 request_id: Some(*request_id),
             })
         }
@@ -744,119 +772,119 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
             request_id, cid, ..
         } => InternalServiceResponse::DeleteVirtualFileFailure(DeleteVirtualFileFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::DownloadFile {
             request_id, cid, ..
         } => InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::GroupCreate {
             request_id, cid, ..
         } => InternalServiceResponse::GroupCreateFailure(GroupCreateFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::GroupEnd {
             request_id, cid, ..
         } => InternalServiceResponse::GroupEndFailure(GroupEndFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::GroupInvite {
             request_id, cid, ..
         } => InternalServiceResponse::GroupInviteFailure(GroupInviteFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::GroupKick {
             request_id, cid, ..
         } => InternalServiceResponse::GroupKickFailure(GroupKickFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::GroupLeave {
             request_id, cid, ..
         } => InternalServiceResponse::GroupLeaveFailure(GroupLeaveFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::GroupMessage {
             request_id, cid, ..
         } => InternalServiceResponse::GroupMessageFailure(GroupMessageFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::GroupRequestJoin {
             request_id, cid, ..
         } => InternalServiceResponse::GroupRequestJoinFailure(GroupRequestJoinFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::GroupRespondRequest {
             request_id, cid, ..
         } => InternalServiceResponse::GroupRespondRequestFailure(GroupRespondRequestFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::ListAllPeers {
             request_id, cid, ..
         } => InternalServiceResponse::ListAllPeersFailure(ListAllPeersFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::ListRegisteredPeers {
             request_id, cid, ..
         } => InternalServiceResponse::ListRegisteredPeersFailure(ListRegisteredPeersFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::PeerConnect {
             request_id, cid, ..
         } => InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::PeerDisconnect {
             request_id, cid, ..
         } => InternalServiceResponse::PeerDisconnectFailure(PeerDisconnectFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::PeerRegister {
             request_id, cid, ..
         } => InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::PickFile {
             request_id, cid, ..
         } => InternalServiceResponse::PickFileFailure(PickFileFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::SendFile {
             request_id, cid, ..
         } => InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::Message {
@@ -866,7 +894,7 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
             request_id, cid, ..
         } => InternalServiceResponse::MessageSendFailure(MessageSendFailure {
             cid: *cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         // `error`, not `message` -- this one's failure struct names the field
@@ -879,7 +907,7 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
         } => InternalServiceResponse::PeerConnectAcceptFailure(PeerConnectAcceptFailure {
             cid: *cid,
             peer_cid: *peer_cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         // A refused read is ANSWERED, because it has somewhere to say so.
@@ -903,13 +931,20 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
         } => InternalServiceResponse::LocalDBGetKVFailure(LocalDBGetKVFailure {
             cid: *cid,
             peer_cid: *peer_cid,
-            message: REFUSED.to_string(),
+            message: message.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::SignInManagement {
+            request_id, cid, ..
+        } => InternalServiceResponse::SignInManagementFailure(SignInManagementFailure {
+            cid: *cid,
+            message: message.to_string(),
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::GroupListJoined { request_id, cid } => {
             InternalServiceResponse::GroupListJoinedFailure(GroupListJoinedFailure {
                 cid: *cid,
-                message: REFUSED.to_string(),
+                message: message.to_string(),
                 request_id: Some(*request_id),
             })
         }

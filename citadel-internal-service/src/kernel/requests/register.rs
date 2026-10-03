@@ -21,9 +21,12 @@
 //! - `connect.rs` → `remote.connect()` → Connects to EXISTING account, SAME CID
 
 use crate::kernel::requests::{handle_request, HandledRequestResult};
+use crate::kernel::session_route::deliver;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
-use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
+use citadel_internal_service_types::{
+    InternalServiceRequest, InternalServiceResponse, RecoveryCodes,
+};
 use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{ConnectMode, ProtocolRemoteExt, Ratchet};
 use uuid::Uuid;
@@ -137,33 +140,40 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     }
 
     match registered {
-        Ok(res) => match connect_after_register {
-            false => {
-                let response = InternalServiceResponse::RegisterSuccess(
-                    citadel_internal_service_types::RegisterSuccess {
-                        cid: res.cid,
-                        request_id: Some(request_id),
-                    },
-                );
-
-                Some(HandledRequestResult { response, uuid })
+        Ok(res) => {
+            // The codes exist only here: the SDK derived them on this client, and the server
+            // keeps only their keys. They go to the window that registered, once, and nowhere
+            // else -- not to a log, not to the store.
+            let response = InternalServiceResponse::RegisterSuccess(
+                citadel_internal_service_types::RegisterSuccess {
+                    cid: res.cid,
+                    request_id: Some(request_id),
+                    recovery_codes: RecoveryCodes(res.recovery_codes),
+                },
+            );
+            if !connect_after_register {
+                return Some(HandledRequestResult { response, uuid });
             }
-            true => {
-                let connect_command = InternalServiceRequest::Connect {
-                    username,
-                    password: proposed_password,
-                    keep_alive_timeout: None,
-                    udp_mode: Default::default(),
-                    // The Connect handler sets force_login by origin (requests/connect_mode.rs).
-                    connect_mode: ConnectMode::Standard { force_login: false },
-                    session_security_settings,
-                    request_id,
-                    server_password,
-                };
-
-                handle_request(this, uuid, connect_command).await
+            // Sent ahead of the connect's own answer, which keeps the request id.
+            if deliver(&this.tx_to_localhost_clients, &[uuid], response).is_empty() {
+                citadel_sdk::logging::warn!(target: "citadel", "[Register] {} registered, but its window left before the recovery codes reached it", res.cid);
             }
-        },
+            let connect_command = InternalServiceRequest::Connect {
+                username,
+                password: Some(proposed_password),
+                security_key: false,
+                recovery_code: None,
+                keep_alive_timeout: None,
+                udp_mode: Default::default(),
+                // The Connect handler sets force_login by origin (requests/connect_mode.rs).
+                connect_mode: ConnectMode::Standard { force_login: false },
+                session_security_settings,
+                request_id,
+                server_password,
+            };
+
+            handle_request(this, uuid, connect_command).await
+        }
         Err(err) => {
             let response = InternalServiceResponse::RegisterFailure(
                 citadel_internal_service_types::RegisterFailure {

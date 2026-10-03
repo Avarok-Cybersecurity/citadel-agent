@@ -33,8 +33,8 @@ mod notices;
 mod register;
 mod security_key;
 mod send_reliable;
-mod update;
 mod sign_in_management;
+mod update;
 pub(crate) use agent_own::{answer_local_db, send_message};
 
 mod connection_management;

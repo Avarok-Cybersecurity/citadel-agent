@@ -10,9 +10,13 @@ use citadel_sdk::prelude::{
 };
 use std::error::Error;
 
-fn credentials(outcome: SignInManagementOutcome) -> Vec<SignInCredential> {
+/// The listed factors and the policy the list reports.
+fn credentials(outcome: SignInManagementOutcome) -> (SignInPolicy, Vec<SignInCredential>) {
     match outcome {
-        SignInManagementOutcome::Credentials(list) => list,
+        SignInManagementOutcome::Credentials {
+            policy,
+            credentials,
+        } => (policy, credentials),
         other => panic!("not a credential list: {other:?}"),
     }
 }
@@ -33,10 +37,11 @@ async fn each_management_change_works_and_the_last_factor_cannot_be_removed(
     let pw = Some(PASSWORD);
     let key = FakeKey::new(4);
 
-    let list = credentials(
+    let (policy, list) = credentials(
         w.manage(cid, SignInManagementOp::ListCredentials, pw, None)
             .await??,
     );
+    assert_eq!(policy, SignInPolicy::Password);
     assert_eq!(of_kind(&list, FactorKind::Password).len(), 1);
     assert_eq!(of_kind(&list, FactorKind::RecoveryCode).len(), 10);
     let password_id = of_kind(&list, FactorKind::Password)[0].id;
@@ -66,7 +71,7 @@ async fn each_management_change_works_and_the_last_factor_cannot_be_removed(
         w.manage(cid, rename, pw, None).await??,
         SignInManagementOutcome::Renamed
     );
-    let list = credentials(
+    let (_, list) = credentials(
         w.manage(cid, SignInManagementOp::ListCredentials, pw, None)
             .await??,
     );
@@ -80,6 +85,13 @@ async fn each_management_change_works_and_the_last_factor_cannot_be_removed(
     };
     let set = w.manage(cid, key_only, pw, Some(&key)).await??;
     assert_eq!(set, SignInManagementOutcome::PolicySet);
+    let listed = w.manage(cid, SignInManagementOp::ListCredentials, None, Some(&key));
+    let (policy, _) = credentials(listed.await??);
+    assert_eq!(
+        policy,
+        SignInPolicy::KeyOnly,
+        "the list does not report the policy"
+    );
     let remove_key = SignInManagementOp::RemoveCredential { id: key_id };
     let refused = w.manage(cid, remove_key.clone(), None, Some(&key)).await?;
     assert!(

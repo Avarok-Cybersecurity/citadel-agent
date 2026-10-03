@@ -20,12 +20,12 @@ password: number[] | null,
  * Whether this window can answer a `SecurityKeyChallengeNotification`. A client from
  * before post-quantum sign-in sends neither this nor `recovery_code`.
  */
-security_key: boolean, 
+security_key?: boolean, 
 /**
  * A recovery code as typed. It signs in once, to a session that may only add a
  * security key, set the sign-in policy or sign out.
  */
-recovery_code: number[] | null, connect_mode: ConnectMode, udp_mode: UdpMode, keep_alive_timeout: { secs: number; nanos: number } | null, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Register": { request_id: string, 
+recovery_code?: number[] | null, connect_mode: ConnectMode, udp_mode: UdpMode, keep_alive_timeout: { secs: number; nanos: number } | null, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Register": { request_id: string, 
 /**
  * `host:port`, resolved by the AGENT rather than by the browser.
  *

@@ -1109,11 +1109,12 @@ pub enum InternalServiceRequest {
         /// Whether this window can answer a `SecurityKeyChallengeNotification`. A client from
         /// before post-quantum sign-in sends neither this nor `recovery_code`.
         #[serde(default)]
+        #[cfg_attr(feature = "typescript", ts(as = "Option<bool>", optional))]
         security_key: bool,
         /// A recovery code as typed. It signs in once, to a session that may only add a
         /// security key, set the sign-in policy or sign out.
         #[serde(default)]
-        #[cfg_attr(feature = "typescript", ts(type = "number[] | null"))]
+        #[cfg_attr(feature = "typescript", ts(type = "number[] | null", optional))]
         recovery_code: Option<SecBuffer>,
         #[cfg_attr(feature = "typescript", ts(type = "ConnectMode"))]
         connect_mode: ConnectMode,

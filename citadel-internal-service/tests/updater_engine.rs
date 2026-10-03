@@ -7,6 +7,8 @@
 //! recorded bundle in updater/attest_tests.rs), the installer (the real ones replace the
 //! running executable and exit), and the announcer / sessions / settings (the service's).
 
+// Shared with tests/updater_platforms.rs, which uses parts of it this file does not.
+#[allow(dead_code)]
 #[path = "updater_fakes/mod.rs"]
 mod fakes;
 
@@ -209,4 +211,28 @@ async fn a_link_only_install_downloads_nothing_and_links_its_asset() {
         .download_url
         .ends_with("/agent-v0.9.0/citadel-agent-linux-x64.deb"));
     assert_eq!(world.source.downloads(), 0);
+}
+
+#[tokio::test]
+async fn read_rather_than_run_the_staged_version_installs_and_refuses_alike() {
+    // The engine on hosts that cannot run the fixture script (Windows), exercised everywhere.
+    let world = World::reading_versions("agent-v0.9.0", tarball_plan(), "citadel-agent 0.9.0");
+    world.engine.check().await;
+    assert!(
+        world.announced()[0].ready,
+        "{:?}",
+        world.engine.status(None)
+    );
+    world.engine.consider(Trigger::Idle).await.unwrap();
+    assert_eq!(world.installed().len(), 1);
+
+    let world = World::reading_versions("agent-v0.9.0", tarball_plan(), "citadel-agent 0.8.6");
+    world.engine.check().await;
+    assert!(!world.announced()[0].ready);
+    assert!(world
+        .engine
+        .status(None)
+        .last_error
+        .unwrap()
+        .contains("0.8.6"));
 }

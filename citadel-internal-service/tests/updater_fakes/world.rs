@@ -1,5 +1,6 @@
 //! The recorders for what would restart the agent, and the world a test runs in.
 
+use super::staging::ReadsVersion;
 use super::{FakeSource, FakeVerifier};
 use async_trait::async_trait;
 use citadel_internal_service::updater::engine::Engine;
@@ -67,6 +68,7 @@ pub struct World {
     pub agent_script: String,
     recorder: Arc<Recorder>,
     plan: Plan,
+    runs_agent: bool,
     dir: tempfile::TempDir,
 }
 
@@ -91,7 +93,17 @@ fn tarball(dir: &Path, script: &str) -> Vec<u8> {
 }
 
 impl World {
+    /// The staged agent is run where it can be (unix) and read elsewhere (staging.rs).
     pub fn new(tag: &str, plan: Plan, prints: &str) -> Self {
+        Self::with(tag, plan, prints, cfg!(unix))
+    }
+
+    /// The staged agent's version is read, not run, on every host.
+    pub fn reading_versions(tag: &str, plan: Plan, prints: &str) -> Self {
+        Self::with(tag, plan, prints, false)
+    }
+
+    fn with(tag: &str, plan: Plan, prints: &str, runs_agent: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let agent_script = format!("#!/bin/sh\necho '{prints}'\n");
         let payload = tarball(dir.path(), &agent_script);
@@ -99,6 +111,7 @@ impl World {
             "citadel-agent-linux-x64.tar.gz",
             "citadel-agent-linux-x64.deb",
             "Citadel-Agent.dmg",
+            "Citadel-Agent-x64.msi",
         ];
         let source = Arc::new(FakeSource::new(tag, &names, &payload));
         let recorder = Arc::new(Recorder::default());
@@ -106,13 +119,14 @@ impl World {
             engine: Engine::new(
                 Version::new(0, 0, 0),
                 plan.clone(),
-                io(&source, &recorder, dir.path()),
+                io(&source, &recorder, dir.path(), runs_agent),
             ),
             sessions: SessionCount(recorder.clone()),
             source,
             agent_script,
             recorder,
             plan,
+            runs_agent,
             dir,
         };
         world.engine = world.rebuild();
@@ -121,12 +135,34 @@ impl World {
 
     /// A fresh engine over the same server, recorders and directory.
     pub fn rebuild(&self) -> Engine {
-        let io = io(&self.source, &self.recorder, self.dir.path());
+        let io = io(
+            &self.source,
+            &self.recorder,
+            self.dir.path(),
+            self.runs_agent,
+        );
         Engine::new(Version::new(0, 8, 8), self.plan.clone(), io)
+    }
+
+    /// An engine over this world, but with `plan` and `installer`: the production ones a
+    /// host's facts select (updater::platform, updater::installer_for).
+    pub fn engine_for(&self, plan: Plan, installer: Arc<dyn Installer>) -> Engine {
+        let mut io = io(
+            &self.source,
+            &self.recorder,
+            self.dir.path(),
+            self.runs_agent,
+        );
+        io.installer = installer;
+        Engine::new(Version::new(0, 8, 8), plan, io)
     }
 
     pub fn announced(&self) -> Vec<UpdateAvailable> {
         self.recorder.announced.lock().clone()
+    }
+    /// The recorder, as an installer (the menu-bar app's seam, in tests/updater_platforms.rs).
+    pub fn recorder(&self) -> Arc<Recorder> {
+        self.recorder.clone()
     }
     pub fn installed(&self) -> Vec<(PathBuf, String)> {
         self.recorder.installs.lock().clone()
@@ -136,11 +172,17 @@ impl World {
     }
 }
 
-fn io(source: &Arc<FakeSource>, recorder: &Arc<Recorder>, dir: &Path) -> Io {
+fn io(source: &Arc<FakeSource>, recorder: &Arc<Recorder>, dir: &Path, runs_agent: bool) -> Io {
+    let staging = FsStaging::new(dir.join("cache"));
+    let staging: Arc<dyn Staging> = if runs_agent {
+        Arc::new(staging)
+    } else {
+        Arc::new(ReadsVersion(staging))
+    };
     Io {
         source: source.clone(),
         verifier: Arc::new(FakeVerifier),
-        staging: Arc::new(FsStaging::new(dir.join("cache"))),
+        staging,
         installer: recorder.clone(),
         announcer: recorder.clone(),
         settings: recorder.clone(),

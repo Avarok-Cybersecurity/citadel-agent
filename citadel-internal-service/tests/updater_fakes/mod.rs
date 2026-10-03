@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+mod staging;
 mod world;
 pub use world::*;
 

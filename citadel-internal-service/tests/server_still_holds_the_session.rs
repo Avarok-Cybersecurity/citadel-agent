@@ -20,7 +20,7 @@ mod reconnect;
 #[path = "server_host_support/mod.rs"]
 mod support;
 
-use citadel_internal_service::{ReconnectPolicy, SERVER_RECONNECT};
+use citadel_internal_service::ReconnectPolicy;
 use citadel_internal_service_test_common as common;
 use citadel_internal_service_types::InternalServiceResponse;
 use citadel_sdk::prelude::*;

@@ -489,13 +489,21 @@ impl<R: Ratchet> Connection<R> {
         }
     }
 
-    /// The SDK restored this peer's UDP channel after a path recovery. Offered to the peer's
-    /// next open, unless a call or an open is using the transport: `false` then.
+    /// The SDK restored this peer's UDP channel after a path recovery. A live call moves to
+    /// it; otherwise it is offered to the peer's next open. `false` when an open is
+    /// mid-await on the transport, which keeps its own.
     pub(crate) fn offer_restored_udp(&mut self, peer_cid: u64, channel: UdpChannel<R>) -> bool {
+        let session_cid = self.session_cid();
         let Some(peer) = self.peers.get_mut(&peer_cid) else {
             return false;
         };
-        if peer.media.is_some() || matches!(peer.udp, UdpState::Opening) {
+        if let Some(call) = peer.media.as_mut() {
+            let (tx, rx) = channel.split();
+            peer.udp = UdpState::Lent { tx: tx.clone() };
+            call.rebind_transport(tx, rx, session_cid, peer_cid);
+            return true;
+        }
+        if matches!(peer.udp, UdpState::Opening) {
             return false;
         }
         let (tx, rx) = tokio::sync::oneshot::channel();

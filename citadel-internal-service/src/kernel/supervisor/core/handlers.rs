@@ -33,7 +33,6 @@ impl Core {
         let stable = self.policy.stable_after;
         for peer in self.peers.values_mut() {
             if peer.connected && peer.since.is_some_and(|since| now.since(since) >= stable) {
-                peer.dial.attempts = 0;
                 if peer.path != Some(P2pPathReport::ServerRelay) {
                     peer.upgrade.attempts = 0;
                 }

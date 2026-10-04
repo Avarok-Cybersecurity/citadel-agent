@@ -1,8 +1,9 @@
 //! The shell against doubles (`shell_rig`): each command reaches its port, and each answer
 //! reaches the core.
 
-use super::shell::Signal;
+use super::shell::{interest_until, Signal};
 use super::shell_rig::*;
+use super::types::Millis;
 use super::types::{HealCause, LinkStatus, ProbeOutcome, SupervisorEvent};
 use citadel_internal_service_types::P2pPathReport;
 use std::sync::atomic::Ordering;
@@ -180,4 +181,17 @@ async fn a_probe_out_for_a_link_that_has_gone_says_nothing_about_the_new_one() {
     // it would count as a miss and ask for another probe at once.
     let _ = answer.send(ProbeOutcome::Timeout);
     rig.marker().await;
+}
+
+#[test]
+fn interest_ends_when_asked_but_never_past_the_ceiling() {
+    let ceiling = Duration::from_secs(120);
+    assert_eq!(
+        interest_until(Millis(5), Duration::from_secs(30), ceiling),
+        Millis(30_005)
+    );
+    assert_eq!(
+        interest_until(Millis(5), Duration::from_secs(3600), ceiling),
+        Millis(120_005)
+    );
 }

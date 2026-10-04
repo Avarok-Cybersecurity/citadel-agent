@@ -95,6 +95,12 @@ pub struct MediaOutbound<K: FragmentSink> {
 }
 
 impl<K: FragmentSink> MediaOutbound<K> {
+    /// Later frames go out on `sink`. The packetizer's sequence numbers carry on, so the
+    /// receiver sees one unbroken stream across the change of transport.
+    pub fn replace_sink(&mut self, sink: K) {
+        self.sink = sink;
+    }
+
     /// Built before any transport half is committed, so a config rejection
     /// cannot strand the peer's only UDP channel.
     pub fn new(sink: K) -> Result<Self, NetworkError> {
@@ -152,6 +158,9 @@ pub struct MediaSession<S, K: FragmentSink> {
     owner: Uuid,
     shutdown: Option<oneshot::Sender<()>>,
     pump: Option<tokio::task::JoinHandle<Option<S>>>,
+    /// Where inbound frames go, kept so the pump can be restarted on a new transport.
+    to_client: UnboundedSender<InternalServiceResponse>,
+    media_lane: MediaLaneTx,
 }
 
 impl<S, K> MediaSession<S, K>
@@ -177,8 +186,8 @@ where
             shutdown_rx,
             cid,
             peer_cid,
-            to_client,
-            media_lane,
+            to_client.clone(),
+            media_lane.clone(),
         ));
         info!(target: "citadel", "[Media] session open cid={cid} peer_cid={peer_cid}");
         Self {
@@ -186,7 +195,32 @@ where
             owner,
             shutdown: Some(shutdown_tx),
             pump: Some(pump),
+            to_client,
+            media_lane,
         }
+    }
+
+    /// The path the call rode ended and the SDK restored a UDP channel: the call moves to
+    /// it. Outbound frames use `sink` from the next one on, and the inbound pump restarts
+    /// on `udp_rx`. The old pump's receive half is dropped with it, which is right: the
+    /// channel it belonged to ended with its route.
+    pub fn rebind_transport(&mut self, sink: K, udp_rx: S, cid: u64, peer_cid: u64) {
+        if let Some(old) = self.pump.take() {
+            old.abort();
+        }
+        self.shutdown = None;
+        self.outbound.lock().replace_sink(sink);
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        self.pump = Some(tokio::task::spawn(pump::pump_inbound(
+            udp_rx,
+            shutdown_rx,
+            cid,
+            peer_cid,
+            self.to_client.clone(),
+            self.media_lane.clone(),
+        )));
+        self.shutdown = Some(shutdown_tx);
+        info!(target: "citadel", "[Media] call moved to a restored UDP channel cid={cid} peer_cid={peer_cid}");
     }
 
     pub fn owner(&self) -> Uuid {

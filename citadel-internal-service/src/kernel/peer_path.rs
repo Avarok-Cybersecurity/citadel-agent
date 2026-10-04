@@ -73,9 +73,8 @@ impl PathWatch {
 }
 
 /// A recovery that began with UDP restores the UDP channel (`PathControl::upgrade`); each one
-/// replaces the channel that ended with the route it rode, and is offered to the peer's next
-/// call. A peer in a call keeps its own transport: the media pump does not yet move to a
-/// restored one.
+/// replaces the channel that ended with the route it rode. A live call moves to it, and
+/// otherwise it is offered to the peer's next call.
 pub(crate) fn adopt_restored_udp<R: Ratchet>(
     map: Arc<RwLock<HashMap<u64, Connection<R>>>>,
     cid: u64,
@@ -89,7 +88,7 @@ pub(crate) fn adopt_restored_udp<R: Ratchet>(
                 .get_mut(&cid)
                 .is_some_and(|conn| conn.offer_restored_udp(peer_cid, channel));
             if !adopted {
-                warn!(target: "citadel", "[PeerPath] {cid}: a restored UDP channel for {peer_cid} was not taken (a call is live, or the peer is gone)");
+                warn!(target: "citadel", "[PeerPath] {cid}: a restored UDP channel for {peer_cid} was not taken (an open is mid-await, or the peer is gone)");
             }
         }
     });

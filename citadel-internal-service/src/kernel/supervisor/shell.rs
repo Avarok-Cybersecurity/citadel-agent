@@ -65,6 +65,12 @@ pub(super) struct Shell {
     pub(super) said_refused: Vec<&'static str>,
 }
 
+/// When a window's interest ends: as it asked, but never later than the ceiling allows, so a
+/// window that has gone cannot pin a peer connected.
+pub(super) fn interest_until(now: Millis, ttl: Duration, ceiling: Duration) -> Millis {
+    now.after(ttl.min(ceiling))
+}
+
 /// Runs until `signals` closes or the session ends.
 pub(crate) async fn run(
     core: Core,
@@ -160,7 +166,7 @@ impl Shell {
             Signal::PeerReleased(peer) => Input::PeerReleased { now, peer },
             Signal::Interest { peer, ttl } => Input::Interest {
                 peer,
-                until: now.after(ttl.min(self.policy.interest_ceiling)),
+                until: interest_until(now, ttl, self.policy.interest_ceiling),
             },
         };
         vec![input]

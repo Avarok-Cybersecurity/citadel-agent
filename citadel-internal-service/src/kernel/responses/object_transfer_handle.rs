@@ -32,6 +32,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     object_transfer_handle: ObjectTransferHandle,
 ) -> Result<(), NetworkError> {
+    let ticket = object_transfer_handle.ticket;
     let metadata = object_transfer_handle.handle.metadata.clone();
     let object_id = metadata.object_id;
     let implicated_cid = object_transfer_handle.session_cid;
@@ -106,9 +107,9 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 match handler.accept() {
                     Ok(()) => {
                         info!(target: "citadel", "Auto-accepted inbound REVFS push from peer {peer_cid} for cid {implicated_cid}");
-                        // Drain the status stream so reception completes; the
-                        // receiving browser issued no request, so there is no
-                        // request_id to stamp these ticks with.
+                        // Drain the status stream so reception completes. The
+                        // receiving browser issued no request, so the ticks name
+                        // none: this is storage, not a transfer it can follow.
                         spawn_tick_updater(
                             handler,
                             implicated_cid,
@@ -193,24 +194,13 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         // we know the opposite node agreed to the connection thus we can spawn
         let mut server_connection_map = this.server_connection_map.write();
         info!(target: "citadel", "Sender Obtained ObjectTransferHandler");
-        // A REVFS push's Sender ticks are the uploader's ONLY completion
-        // signal (SendFileRequestSuccess just means "queued"), so reclaim the
-        // browser's SendFile request_id registered in requests/file/upload.rs.
-        // The scope key mirrors upload.rs: for a c2s push the handle carries
-        // source == receiver == session_cid, so the computed `peer_cid` here
-        // IS `implicated_cid` — which is what upload.rs registered under
-        // (`peer_cid.unwrap_or(cid)`). Standard file transfers register
-        // nothing, so they keep the legacy TCP-uuid fallback.
-        let request_id = if matches!(
-            object_transfer_handler.metadata.transfer_type,
-            TransferType::RemoteEncryptedVirtualFilesystem { .. }
-        ) {
-            server_connection_map
-                .get_mut(&implicated_cid)
-                .and_then(|conn| conn.revfs_correlations.take_push(peer_cid))
-        } else {
-            None
-        };
+        // The SendFile this handle answers, joined by the request's ticket
+        // (kernel/send_correlation.rs). None when this node did not ask for the
+        // transfer -- it is answering a peer's RE-VFS pull -- and then the ticks
+        // name no request, rather than one the browser could mistake for its own.
+        let request_id = server_connection_map
+            .get_mut(&implicated_cid)
+            .and_then(|conn| conn.send_correlations.take(ticket.0));
         spawn_tick_updater(
             object_transfer_handler,
             implicated_cid,

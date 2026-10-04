@@ -22,14 +22,14 @@ pub(crate) fn spawn_tick_updater<R: Ratchet>(
 ) {
     let mut handle_inner = object_transfer_handler.inner;
     if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-        // The REQUEST id may be frozen -- it names the request that started the
-        // transfer and does not change. The ROUTE may not: windows attach and
-        // drop mid-transfer and every remaining tick has to reach whoever is
-        // attached. See kernel/session_route.rs.
-        let request_id = Some(
-            request_id
-                .unwrap_or_else(|| connection.subscribers.primary().unwrap_or_else(Uuid::nil)),
-        );
+        // The REQUEST id is frozen -- it names the request that started the
+        // transfer, or is None for a stream nobody here requested. It used to
+        // fall back to the session's TCP uuid, which every such stream shared:
+        // the browser filed that uuid as "not a chat transfer" on the first
+        // RE-VFS reception and then dropped every chat send's ticks with it.
+        // The ROUTE may change: windows attach and drop mid-transfer and every
+        // remaining tick has to reach whoever is attached. See
+        // kernel/session_route.rs.
         let route = SessionRoute::new(connection.subscribers.clone(), tcp_connection_map);
         let sender_status_updater = async move {
             while let Some(status) = handle_inner.next().await {

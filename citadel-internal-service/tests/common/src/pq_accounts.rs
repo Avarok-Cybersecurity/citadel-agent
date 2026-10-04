@@ -5,7 +5,7 @@
 use crate::pq::{username, CRED, PASSWORD};
 use crate::pq_window::{FakeKey, Offer, Window};
 use citadel_internal_service_types::RecoveryCodes;
-use citadel_sdk::prelude::{SignInManagementOp, SignInManagementOutcome, SignInPolicy};
+use citadel_internal_service_types::{SignInManagementOp, SignInManagementOutcome, SignInPolicy};
 use std::error::Error;
 use std::net::SocketAddr;
 

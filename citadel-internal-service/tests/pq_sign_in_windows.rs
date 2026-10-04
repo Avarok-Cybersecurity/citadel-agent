@@ -7,10 +7,11 @@ use citadel_internal_service_test_common::pq::{spawn_agent, spawn_server, Server
 use citadel_internal_service_test_common::pq_accounts::{add_key, password_offer};
 use citadel_internal_service_test_common::pq_window::{FakeKey, Window};
 use citadel_internal_service_test_common::setup_log;
+use citadel_internal_service_types::SignInManagementOutcome;
 use citadel_internal_service_types::{
     ConfigCommand, InternalServiceRequest, InternalServiceResponse, SecurityKeyPurpose, StepUp,
 };
-use citadel_sdk::prelude::{SecBuffer, SignInManagementOutcome};
+use citadel_sdk::prelude::SecBuffer;
 use std::error::Error;
 use uuid::Uuid;
 

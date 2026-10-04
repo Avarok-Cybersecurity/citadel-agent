@@ -7,7 +7,7 @@ use citadel_internal_service_test_common::pq_accounts::{account, add_key};
 use citadel_internal_service_test_common::pq_window::{FakeKey, Offer, Window};
 use citadel_internal_service_test_common::setup_log;
 use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
-use citadel_sdk::prelude::{SignInManagementOp, SignInManagementOutcome, SignInPolicy};
+use citadel_internal_service_types::{SignInManagementOp, SignInManagementOutcome, SignInPolicy};
 use std::error::Error;
 use uuid::Uuid;
 

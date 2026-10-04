@@ -2,7 +2,7 @@
 import type { FactorKind } from "./FactorKind";
 
 /**
- * One enrolled factor, as `ListCredentials` reports it.
+ * One enrolled factor (`citadel_types::auth::SignInCredential`).
  */
 export type SignInCredential = { id: number, kind: FactorKind, label: string, 
 /**

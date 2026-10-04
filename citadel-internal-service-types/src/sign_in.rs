@@ -2,14 +2,14 @@
 //! security-key challenge the agent relays to a window, and the management of an account's
 //! sign-in factors.
 //!
-//! The account-level types (`SignInPolicy`, `SignInManagementOp`, ...) are the SDK's
-//! `citadel_types::auth`, not copies of them.
+//! The account-level types (`SignInPolicy`, `SignInManagementOp`, ...) are in
+//! `sign_in_wire.rs`: the SDK's `citadel_types::auth` shapes, in the agent's wire.
 //!
 //! Three things here are secret: recovery codes, a PRF output and a step-up password. None of
 //! them is ever printed: the PRF output and the password are `SecBuffer`s, and the codes are
 //! [`RecoveryCodes`], whose `Debug` shows only how many there are.
 
-use citadel_types::auth::SignInManagementOutcome;
+use crate::{plaintext_debug_fmt, SignInManagementOutcome};
 use citadel_types::crypto::SecBuffer;
 use custom_debug::Debug;
 use serde::{Deserialize, Serialize};
@@ -43,7 +43,7 @@ impl Drop for RecoveryCodes {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export, rename_all = "snake_case"))]
+#[cfg_attr(feature = "typescript", ts(export))]
 pub enum FailureReason {
     /// The server needs an admission token (show the Turnstile widget) and none was sent.
     AdmissionRequired,
@@ -92,8 +92,10 @@ pub struct SecurityKeyChallengeNotification {
     /// Names this challenge in the answer.
     pub challenge_id: Uuid,
     pub purpose: SecurityKeyPurpose,
+    #[debug(with = credential_ids_fmt)]
     pub allowed_credential_ids: Vec<Vec<u8>>,
     /// 32 bytes: the PRF `eval.first` input.
+    #[debug(with = plaintext_debug_fmt)]
     pub prf_salt: Vec<u8>,
     /// How long the SDK waits for the touch. An answer after that is refused.
     #[cfg_attr(feature = "typescript", ts(type = "number"))]
@@ -135,7 +137,6 @@ pub struct SignInManagementSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
     pub request_id: Option<Uuid>,
-    #[debug(with = outcome_fmt)]
     pub outcome: SignInManagementOutcome,
 }
 
@@ -149,16 +150,10 @@ pub struct SignInManagementFailure {
     pub message: String,
 }
 
-fn outcome_fmt(
-    outcome: &SignInManagementOutcome,
-    f: &mut std::fmt::Formatter<'_>,
-) -> std::fmt::Result {
-    match outcome {
-        SignInManagementOutcome::RecoveryCodes(codes) => {
-            write!(f, "RecoveryCodes(<{} redacted>)", codes.len())
-        }
-        other => write!(f, "{other:?}"),
-    }
+/// How many credentials a challenge allows, never which.
+#[allow(clippy::ptr_arg)] // custom_debug hands the field over as `&Vec`.
+fn credential_ids_fmt(ids: &Vec<Vec<u8>>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{{{} credential id(s), redacted}}", ids.len())
 }
 
 #[cfg(test)]
@@ -180,7 +175,7 @@ mod tests {
         let success = SignInManagementSuccess {
             cid: 1,
             request_id: None,
-            outcome: SignInManagementOutcome::RecoveryCodes(vec![CODE.to_string()]),
+            outcome: SignInManagementOutcome::RecoveryCodes(RecoveryCodes(vec![CODE.to_string()])),
         };
         let printed = format!("{success:?}");
         assert!(!printed.contains(CODE), "{printed}");

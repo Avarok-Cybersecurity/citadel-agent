@@ -130,3 +130,31 @@ fn reason_codes_cross_the_wire_in_snake_case() {
     let json = serde_json::to_string(&FailureReason::AdmissionFailed).unwrap();
     assert_eq!(json, "\"admission_failed\"");
 }
+
+#[test]
+fn a_key_challenge_and_its_answer_never_print_their_bytes() {
+    let credential = b"yubikey-5-credential-id".to_vec();
+    let salt = vec![0x5a; 32];
+    let challenge = SecurityKeyChallengeNotification {
+        cid: 1,
+        request_id: None,
+        challenge_id: Uuid::nil(),
+        purpose: SecurityKeyPurpose::SignIn,
+        allowed_credential_ids: vec![credential.clone()],
+        prf_salt: salt.clone(),
+        expires_in_ms: 60_000,
+    };
+    let answer = InternalServiceRequest::SecurityKeyAnswer {
+        request_id: Uuid::nil(),
+        challenge_id: Uuid::nil(),
+        credential_id: credential.clone(),
+        prf_output: SecBuffer::from(vec![1; 32]),
+    };
+    for printed in [format!("{challenge:?}"), format!("{answer:?}")] {
+        // "121, 117, 98, 105, 107": the credential's first bytes, as `{:?}` lists them.
+        let leading = format!("{:?}", &credential[..5]);
+        let leading = leading.trim_start_matches('[').trim_end_matches(']');
+        assert!(!printed.contains(leading), "{printed}");
+        assert!(!printed.contains("90, 90"), "{printed}");
+    }
+}

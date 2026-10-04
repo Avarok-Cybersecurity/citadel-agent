@@ -5,7 +5,7 @@ use citadel_internal_service_test_common::pq::{spawn_agent, spawn_server, Server
 use citadel_internal_service_test_common::pq_accounts::{add_key, password_offer};
 use citadel_internal_service_test_common::pq_window::{FakeKey, Window};
 use citadel_internal_service_test_common::setup_log;
-use citadel_sdk::prelude::{
+use citadel_internal_service_types::{
     FactorKind, SignInCredential, SignInManagementOp, SignInManagementOutcome, SignInPolicy,
 };
 use std::error::Error;
@@ -116,6 +116,6 @@ async fn each_management_change_works_and_the_last_factor_cannot_be_removed(
     else {
         panic!("no new recovery codes");
     };
-    assert_eq!(codes.len(), 10);
+    assert_eq!(codes.0.len(), 10);
     Ok(())
 }

@@ -6,10 +6,11 @@ use citadel_internal_service_test_common::pq::{spawn_agent, spawn_server, Server
 use citadel_internal_service_test_common::pq_accounts::account;
 use citadel_internal_service_test_common::pq_window::{FakeKey, Window};
 use citadel_internal_service_test_common::setup_log;
+use citadel_internal_service_types::SignInPolicy;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, SecurityKeyChallengeNotification,
 };
-use citadel_sdk::prelude::{ConnectMode, SecBuffer, SignInPolicy, UdpMode};
+use citadel_sdk::prelude::{ConnectMode, SecBuffer, UdpMode};
 use std::error::Error;
 use std::time::{Duration, Instant};
 use uuid::Uuid;

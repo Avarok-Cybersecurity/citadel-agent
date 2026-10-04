@@ -14,7 +14,10 @@ pub(crate) const RECOVERY_ONLY: &str = "This session signed in with a recovery c
 pub(crate) fn allows(command: &InternalServiceRequest) -> bool {
     match command {
         InternalServiceRequest::Disconnect { .. } => true,
-        InternalServiceRequest::SignInManagement { op, .. } => op.allowed_in_recovery(),
+        // The SDK's rule, not a copy of it.
+        InternalServiceRequest::SignInManagement { op, .. } => {
+            citadel_sdk::prelude::SignInManagementOp::from(op.clone()).allowed_in_recovery()
+        }
         _ => false,
     }
 }
@@ -23,7 +26,7 @@ pub(crate) fn allows(command: &InternalServiceRequest) -> bool {
 mod tests {
     use super::*;
     use citadel_internal_service_types::StepUp;
-    use citadel_sdk::prelude::{SignInManagementOp, SignInPolicy};
+    use citadel_internal_service_types::{SignInManagementOp, SignInPolicy};
     use uuid::Uuid;
 
     fn manage(op: SignInManagementOp) -> InternalServiceRequest {

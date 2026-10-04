@@ -74,7 +74,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     };
 
     let kind = op_name(&op);
-    let outcome = handle.manage_sign_in(op, factors).await;
+    let outcome = handle.manage_sign_in(op.into(), factors).await;
     drop(underway);
     match outcome {
         Ok(outcome) => {
@@ -83,7 +83,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 InternalServiceResponse::SignInManagementSuccess(SignInManagementSuccess {
                     cid,
                     request_id: Some(request_id),
-                    outcome,
+                    outcome: outcome.into(),
                 });
             Some(HandledRequestResult { response, uuid })
         }
@@ -95,8 +95,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 }
 
 /// The change's name, for the log: never its labels or credential ids.
-fn op_name(op: &citadel_sdk::prelude::SignInManagementOp) -> &'static str {
-    use citadel_sdk::prelude::SignInManagementOp as Op;
+fn op_name(op: &citadel_internal_service_types::SignInManagementOp) -> &'static str {
+    use citadel_internal_service_types::SignInManagementOp as Op;
     match op {
         Op::ListCredentials => "ListCredentials",
         Op::AddSecurityKey { .. } => "AddSecurityKey",

@@ -28,6 +28,7 @@ mod multi_window;
 mod notices;
 mod server_link;
 mod sign_in;
+mod sign_in_wire;
 mod turn;
 pub use chat_level::{ChatSecurityLevel, PeerSecurityMinimum};
 mod updates;
@@ -53,6 +54,9 @@ pub use sign_in::{
     FailureReason, RecoveryCodes, SecurityKeyAnswerFailure, SecurityKeyAnswerSuccess,
     SecurityKeyChallengeNotification, SecurityKeyPurpose, SignInManagementFailure,
     SignInManagementSuccess, StepUp,
+};
+pub use sign_in_wire::{
+    FactorKind, SignInCredential, SignInManagementOp, SignInManagementOutcome, SignInPolicy,
 };
 pub use turn::{IceServer, P2pPathReport, PeerTurnConfig, TurnPolicy};
 pub use updates::{UpdateAvailable, UpdateInstall, UpdateStatus};
@@ -1743,6 +1747,7 @@ pub enum InternalServiceRequest {
     SecurityKeyAnswer {
         request_id: Uuid,
         challenge_id: Uuid,
+        #[debug(with = plaintext_debug_fmt)]
         credential_id: Vec<u8>,
         /// The 32-byte WebAuthn PRF output. Handed to the SDK and wiped; never logged.
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
@@ -1762,7 +1767,7 @@ pub enum InternalServiceRequest {
         request_id: Uuid,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
-        op: citadel_types::auth::SignInManagementOp,
+        op: SignInManagementOp,
         step_up: StepUp,
     },
     /// Execute multiple requests in parallel, returning results in the same order as input.

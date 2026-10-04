@@ -9,7 +9,7 @@ use citadel_internal_service_connector::connector::{
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
 use citadel_internal_service_types::{
     FailureReason, InternalServiceRequest, InternalServiceResponse, RecoveryCodes,
-    SecurityKeyChallengeNotification, StepUp,
+    SecurityKeyChallengeNotification, SignInManagementOp, SignInManagementOutcome, StepUp,
 };
 use citadel_sdk::prelude::*;
 use futures::StreamExt;

@@ -14,7 +14,7 @@ use citadel_internal_service_test_common::pq::{spawn_agent, spawn_server, Server
 use citadel_internal_service_test_common::pq_accounts::{account, password_offer};
 use citadel_internal_service_test_common::pq_window::{FakeKey, Offer, Window};
 use citadel_internal_service_test_common::setup_log;
-use citadel_sdk::prelude::SignInPolicy;
+use citadel_internal_service_types::SignInPolicy;
 use reconnect::{next_link_event, Proxy};
 use std::error::Error;
 

@@ -8,4 +8,11 @@ export type ServiceConnectionAccepted = { cid: bigint, request_id: string | null
  * declare: an older agent does not answer a declaration at all. Its
  * greeting has no such field, which is what `false` means here.
  */
-agent_ilm: boolean, };
+agent_ilm: boolean, 
+/**
+ * This agent supervises its hosted accounts' peer connections (redialling them with
+ * no window open), so a window must not auto-connect for them: it sends
+ * `ConfigCommand::Interest` instead. Absent from an older agent's greeting, which is
+ * what `false` means.
+ */
+supervises_p2p: boolean, };

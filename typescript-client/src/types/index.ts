@@ -167,6 +167,8 @@ export * from './SignInManagementSuccess.js';
 export * from './SignInPolicy.js';
 export * from './SignedOutSession.js';
 export * from './StepUp.js';
+export * from './SupervisorNotification.js';
+export * from './SupervisorState.js';
 export * from './TransferMode.js';
 export * from './TransferState.js';
 export * from './TurnPolicy.js';

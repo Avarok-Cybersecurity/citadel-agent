@@ -1,4 +1,4 @@
-use crate::kernel::peer_path::PathWatch;
+use crate::kernel::peer_path::{adopt_restored_udp, PathWatch};
 use crate::kernel::session_route::SessionRoute;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -28,13 +28,23 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     // offer of a UDP channel, and a call needs it to avoid running media over the
     // reliable path.
     let udp_rx = peer_channel_created.udp_rx_opt;
-    let channel = *peer_channel_created.channel;
+    let mut channel = *peer_channel_created.channel;
     let session_cid = channel.get_session_cid();
     let peer_cid = channel.get_peer_cid();
     // Subscribed before the path is read, so no change falls between the report below and the
     // notifications that follow it.
     let path_watch = PathWatch::new(&channel.p2p_path_cell());
     let (path, upgrading) = path_watch.current();
+    this.supervisors
+        .set_path_control(session_cid, peer_cid, channel.path_control());
+    if let Some(restored) = channel.take_restored_udp() {
+        adopt_restored_udp(
+            this.server_connection_map.clone(),
+            session_cid,
+            peer_cid,
+            restored,
+        );
+    }
 
     info!(target: "citadel", "[PeerChannelCreated] *** RECEIVED P2P CHANNEL *** session_cid={}, peer_cid={}, path={:?}", session_cid, peer_cid, path);
     info!(target: "citadel", "[PeerChannelCreated] This is the SDK event indicating successful P2P handshake");
@@ -139,7 +149,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         }
         // After the success above, on the same route: the application hears of the connection
         // before any change to its path.
-        path_watch.forward(session_cid, peer_cid, route);
+        path_watch.forward(session_cid, peer_cid, route, this.supervisors.clone());
 
         Ok(())
     } else {

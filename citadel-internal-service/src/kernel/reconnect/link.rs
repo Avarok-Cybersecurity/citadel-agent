@@ -5,6 +5,7 @@
 use super::report::{logged, notify};
 use super::{LinkState, LOG_TARGET};
 use crate::kernel::session_route::SessionRoute;
+use crate::kernel::supervisor::{LinkStatus, Signal};
 use crate::kernel::{c2s_reader, create_client_server_remote, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{InternalServiceResponse, ServerReconnected};
@@ -60,6 +61,7 @@ pub(super) async fn put_link<T: IOInterface + Sync, R: Ratchet>(
         stream,
         connect_request_id,
     );
+    this.supervisors.signal(cid, Signal::Link(LinkStatus::Up));
     let sent = notify(
         this,
         cid,

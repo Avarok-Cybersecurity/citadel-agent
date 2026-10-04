@@ -19,6 +19,7 @@
 //! The agent's own effects are reached through [`HostIo`], so everything here is
 //! tested against a double with no SDK and no sockets.
 
+mod backlog;
 mod channel;
 mod delivery;
 mod io;
@@ -28,6 +29,7 @@ mod transport;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use backlog::pending_by_peer;
 pub(crate) use registry::IlmRegistry;
 
 use citadel_internal_service_types::{

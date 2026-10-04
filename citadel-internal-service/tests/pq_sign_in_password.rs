@@ -63,12 +63,6 @@ async fn a_live_post_quantum_session_is_not_handed_to_a_wrong_password(
     a_live_session_is_handed_only_to_its_password(Server::PostQuantum).await
 }
 
-#[tokio::test]
-async fn a_server_without_post_quantum_sign_in_still_registers_and_signs_in(
-) -> Result<(), Box<dyn Error>> {
-    a_live_session_is_handed_only_to_its_password(Server::Legacy).await
-}
-
 async fn a_live_session_is_handed_only_to_its_password(kind: Server) -> Result<(), Box<dyn Error>> {
     setup_log();
     let server = spawn_server(kind);
@@ -76,8 +70,7 @@ async fn a_live_session_is_handed_only_to_its_password(kind: Server) -> Result<(
     let mut first = Window::open(agent).await?;
     let user = username("live");
     let (_, codes) = first.register(server, &user, PASSWORD).await??;
-    let expected_codes = if kind == Server::PostQuantum { 10 } else { 0 };
-    assert_eq!(codes.0.len(), expected_codes);
+    assert_eq!(codes.0.len(), 10);
     let cid = first.sign_in(&user, &password(PASSWORD)).await??;
 
     let mut second = Window::open(agent).await?;

@@ -47,6 +47,7 @@ pub(crate) mod peer_path;
 pub(crate) mod pending_group_invites;
 pub(crate) mod picked_files;
 pub(crate) mod reconnect;
+pub mod supervisor;
 
 use reconnect::policy::ReconnectPolicy;
 pub(crate) mod attach_tokens;
@@ -112,6 +113,10 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     /// The ILM the agent hosts per account, for clients that declared
     /// `agent_ilm` (kernel/ilm).
     pub(crate) ilm_hosts: Arc<ilm::IlmRegistry>,
+    /// How the agent keeps each hosted account's links alive (kernel/supervisor); `None`
+    /// is a service that does not supervise, and so does not declare `supervises_p2p`.
+    pub(crate) supervisor: Option<supervisor::SupervisorPolicy>,
+    pub(crate) supervisors: Arc<supervisor::Supervisors>,
     /// The single writer of hosted accounts' conversations (kernel/conversations).
     pub(crate) conversations: Arc<conversations::Engine>,
     /// What each localhost connection's client declared it can do.
@@ -140,6 +145,8 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             reconnect_policy: self.reconnect_policy,
             signed_out: self.signed_out.clone(),
             ilm_hosts: self.ilm_hosts.clone(),
+            supervisor: self.supervisor,
+            supervisors: self.supervisors.clone(),
             conversations: self.conversations.clone(),
             client_capabilities: self.client_capabilities.clone(),
             notices: self.notices.clone(),
@@ -169,12 +176,21 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             reconnect_policy,
             signed_out: Default::default(),
             ilm_hosts: Default::default(),
+            supervisor: None,
+            supervisors: Default::default(),
             conversations: Default::default(),
             client_capabilities: Default::default(),
             updates: Default::default(),
             key_challenges: Default::default(),
             io: Arc::new(RwLock::new(Some(io))),
         }
+    }
+
+    /// Supervise every hosted account's links with `policy` (kernel/supervisor). The agent
+    /// binary states its policy; a service that never calls this supervises nothing.
+    pub fn with_supervisor(mut self, policy: supervisor::SupervisorPolicy) -> Self {
+        self.supervisor = Some(policy);
+        self
     }
 
     pub fn remote(&self) -> &NodeRemote<R> {
@@ -473,6 +489,23 @@ impl<R: Ratchet> Connection<R> {
         }
     }
 
+    /// The SDK restored this peer's UDP channel after a path recovery. Offered to the peer's
+    /// next open, unless a call or an open is using the transport: `false` then.
+    pub(crate) fn offer_restored_udp(&mut self, peer_cid: u64, channel: UdpChannel<R>) -> bool {
+        let Some(peer) = self.peers.get_mut(&peer_cid) else {
+            return false;
+        };
+        if peer.media.is_some() || matches!(peer.udp, UdpState::Opening) {
+            return false;
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if tx.send(channel).is_err() {
+            return false;
+        }
+        peer.udp.offer(rx);
+        true
+    }
+
     fn add_object_transfer_handler(
         &mut self,
         peer_cid: u64,
@@ -592,6 +625,7 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
                     server_connection_map.clone(),
                     self.orphan_sessions.clone(),
                     self.client_capabilities.clone(),
+                    self.supervises_p2p(),
                 );
             }
             Ok(())

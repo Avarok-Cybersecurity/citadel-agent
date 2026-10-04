@@ -29,9 +29,6 @@ pub const CRED: &[u8] = b"yubikey-5-credential";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Server {
     PostQuantum,
-    /// A server without post-quantum settings: the legacy Argon2 sign-in, as a server from
-    /// before protocol 0.12 runs it.
-    Legacy,
 }
 
 /// Spawns the server and returns where it listens.
@@ -60,24 +57,22 @@ impl AdmissionPolicy for Turnstile {
     }
 }
 
-fn spawn(kind: Server, admission: Option<Arc<dyn AdmissionPolicy>>) -> SocketAddr {
+fn spawn(_kind: Server, admission: Option<Arc<dyn AdmissionPolicy>>) -> SocketAddr {
     let (node, addr) = server_test_node_skip_cert_verification(
         EmptyKernel::<StackedRatchet>::default(),
         |builder| {
-            if kind == Server::PostQuantum {
-                let settings = PqAuthServerSettings::new(OprfSeed::generate(), KsfParams::FLOOR)
-                    .expect("the floor parameters are accepted");
-                let _ = builder
-                    .with_server_misc_settings(ServerMiscSettings {
-                        pq_sign_in: Some(settings),
-                        admission,
-                        ..Default::default()
-                    })
-                    .with_server_argon_settings(ArgonDefaultServerSettings {
-                        lanes: 0,
-                        ..Default::default()
-                    });
-            }
+            let settings = PqAuthServerSettings::new(OprfSeed::generate(), KsfParams::FLOOR)
+                .expect("the floor parameters are accepted");
+            let _ = builder
+                .with_server_misc_settings(ServerMiscSettings {
+                    pq_sign_in: Some(settings),
+                    admission,
+                    ..Default::default()
+                })
+                .with_server_argon_settings(ArgonDefaultServerSettings {
+                    lanes: 0,
+                    ..Default::default()
+                });
         },
     );
     drop(tokio::spawn(node));

@@ -24,6 +24,7 @@ pub struct Proxy {
     pub addr: SocketAddr,
     severed: tokio::sync::watch::Sender<u64>,
     stranded: tokio::sync::watch::Sender<u64>,
+    stalled: tokio::sync::watch::Sender<u64>,
     released: tokio::sync::watch::Sender<u64>,
     accepting: Arc<AtomicBool>,
 }
@@ -34,10 +35,12 @@ impl Proxy {
         let addr = listener.local_addr()?;
         let (severed, _) = tokio::sync::watch::channel(0u64);
         let (stranded, _) = tokio::sync::watch::channel(0u64);
+        let (stalled, _) = tokio::sync::watch::channel(0u64);
         let (released, _) = tokio::sync::watch::channel(0u64);
         let accepting = Arc::new(AtomicBool::new(true));
         let (severed_in, accepting_in) = (severed.clone(), accepting.clone());
         let (stranded_in, released_in) = (stranded.clone(), released.clone());
+        let stalled_in = stalled.clone();
         tokio::spawn(async move {
             while let Ok((inbound, _)) = listener.accept().await {
                 if !accepting_in.load(Ordering::SeqCst) {
@@ -48,6 +51,8 @@ impl Proxy {
                 sever.mark_unchanged();
                 let mut strand = stranded_in.subscribe();
                 strand.mark_unchanged();
+                let mut stall = stalled_in.subscribe();
+                stall.mark_unchanged();
                 let mut release = released_in.subscribe();
                 release.mark_unchanged();
                 tokio::spawn(async move {
@@ -55,14 +60,26 @@ impl Proxy {
                         return reset(inbound);
                     };
                     let (mut inbound, mut outbound) = (inbound, outbound);
-                    let stranded = tokio::select! {
-                        _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound) => false,
-                        _ = sever.changed() => false,
-                        _ = strand.changed() => true,
+                    let ended = tokio::select! {
+                        _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound) => Ended::Closed,
+                        _ = sever.changed() => Ended::Closed,
+                        _ = strand.changed() => Ended::Stranded,
+                        _ = stall.changed() => Ended::Stalled,
                     };
-                    reset(inbound);
-                    if stranded {
-                        let _ = release.changed().await;
+                    match ended {
+                        Ended::Closed => reset(inbound),
+                        Ended::Stranded => {
+                            reset(inbound);
+                            let _ = release.changed().await;
+                        }
+                        // Both ends held open and unread until the path is released or cut.
+                        Ended::Stalled => {
+                            tokio::select! {
+                                _ = release.changed() => {}
+                                _ = sever.changed() => {}
+                            }
+                            reset(inbound);
+                        }
                     }
                     reset(outbound);
                 });
@@ -72,6 +89,7 @@ impl Proxy {
             addr,
             severed,
             stranded,
+            stalled,
             released,
             accepting,
         })
@@ -85,6 +103,10 @@ impl Proxy {
         self.stranded.send_modify(|generation| *generation += 1);
     }
 
+    pub fn stall(&self) {
+        self.stalled.send_modify(|generation| *generation += 1);
+    }
+
     pub fn release(&self) {
         self.released.send_modify(|generation| *generation += 1);
     }
@@ -92,6 +114,13 @@ impl Proxy {
     pub fn refuse(&self, refuse: bool) {
         self.accepting.store(!refuse, Ordering::SeqCst);
     }
+}
+
+/// How a proxied pair of sockets came to its end.
+enum Ended {
+    Closed,
+    Stranded,
+    Stalled,
 }
 
 /// Close with RST rather than FIN.

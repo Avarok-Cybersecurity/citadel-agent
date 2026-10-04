@@ -3,6 +3,7 @@
 
 use crate::kernel::requests::connection_management::refusal;
 use crate::kernel::requests::HandledRequestResult;
+use crate::kernel::supervisor::Signal;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -101,4 +102,66 @@ pub(crate) fn report_focus<T: IOInterface + Sync, R: Ratchet>(
         response,
         uuid: conn_id,
     })
+}
+
+/// A window has `peer` open until `until` (Unix ms): the supervisor keeps it connected.
+/// Refused when no supervisor runs for the account, which tells the window to dial itself.
+pub(crate) fn declare_p2p_interest<T: IOInterface + Sync, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    conn_id: Uuid,
+    request_id: Uuid,
+    command: ConfigCommand,
+) -> Option<HandledRequestResult> {
+    let ConfigCommand::Interest {
+        session_cid: cid,
+        peer_cid,
+        until,
+    } = command
+    else {
+        return None;
+    };
+    let attached =
+        crate::kernel::membership::subscribers_of(this, cid).is_some_and(|s| s.contains(conn_id));
+    if !attached {
+        return Some(refusal(
+            cid,
+            request_id,
+            conn_id,
+            format!("Session {cid} is not attached to this connection"),
+        ));
+    }
+    if !this.supervisors.is_running(cid) {
+        return Some(refusal(
+            cid,
+            request_id,
+            conn_id,
+            format!("Session {cid}'s peers are not supervised by this agent"),
+        ));
+    }
+    this.supervisors.signal(
+        cid,
+        Signal::Interest {
+            peer: peer_cid,
+            ttl: std::time::Duration::from_millis(until.saturating_sub(unix_ms())),
+        },
+    );
+    Some(HandledRequestResult {
+        response: InternalServiceResponse::ConnectionManagementSuccess(
+            ConnectionManagementSuccess {
+                cid,
+                request_id: Some(request_id),
+                message: "Interest noted".to_string(),
+            },
+        ),
+        uuid: conn_id,
+    })
+}
+
+/// The wall clock, at the request edge: the supervisor's own time is monotonic and relative.
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
 }

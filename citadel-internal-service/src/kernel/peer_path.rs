@@ -8,11 +8,18 @@
 
 use crate::kernel::requests::peer::turn::path_report;
 use crate::kernel::session_route::SessionRoute;
+use crate::kernel::supervisor::{Signal, Supervisors};
+use crate::kernel::Connection;
 use citadel_internal_service_types::{
     InternalServiceResponse, P2pPathReport, PeerPathChangedNotification,
 };
 use citadel_sdk::logging::info;
-use citadel_sdk::prelude::{P2pPathCell, P2pPathStatus};
+use citadel_sdk::logging::warn;
+use citadel_sdk::prelude::{P2pPathCell, P2pPathStatus, Ratchet, UdpChannel};
+use parking_lot::RwLock;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::watch;
 
 /// A subscription taken before the connection is reported, so no change can fall between the
@@ -35,19 +42,57 @@ impl PathWatch {
     }
 
     /// Forwards every later change until the connection closes.
-    pub(crate) fn forward(mut self, cid: u64, peer_cid: u64, route: SessionRoute) {
+    ///
+    /// The account's supervisor hears the connection come up, and each change of its path
+    /// (kernel/supervisor); its loss comes from the disconnect path, which knows whether
+    /// the user ended it.
+    pub(crate) fn forward(
+        mut self,
+        cid: u64,
+        peer_cid: u64,
+        route: SessionRoute,
+        supervisors: Arc<Supervisors>,
+    ) {
+        supervisors.signal(
+            cid,
+            Signal::PeerUp(peer_cid, path_report(self.rx.borrow().path)),
+        );
         tokio::spawn(async move {
             while self.rx.changed().await.is_ok() {
                 let status = *self.rx.borrow_and_update();
                 let Some(notification) = notification(cid, peer_cid, status) else {
                     break;
                 };
+                supervisors.signal(cid, Signal::PeerPath(peer_cid, path_report(status.path)));
                 if route.send(notification).is_empty() {
                     info!(target: "citadel", "[PeerPath] No localhost connection owns CID {cid}; path change for peer {peer_cid} dropped");
                 }
             }
         });
     }
+}
+
+/// A recovery that began with UDP restores the UDP channel (`PathControl::upgrade`); each one
+/// replaces the channel that ended with the route it rode, and is offered to the peer's next
+/// call. A peer in a call keeps its own transport: the media pump does not yet move to a
+/// restored one.
+pub(crate) fn adopt_restored_udp<R: Ratchet>(
+    map: Arc<RwLock<HashMap<u64, Connection<R>>>>,
+    cid: u64,
+    peer_cid: u64,
+    mut restored: UnboundedReceiver<UdpChannel<R>>,
+) {
+    tokio::spawn(async move {
+        while let Some(channel) = restored.recv().await {
+            let adopted = map
+                .write()
+                .get_mut(&cid)
+                .is_some_and(|conn| conn.offer_restored_udp(peer_cid, channel));
+            if !adopted {
+                warn!(target: "citadel", "[PeerPath] {cid}: a restored UDP channel for {peer_cid} was not taken (a call is live, or the peer is gone)");
+            }
+        }
+    });
 }
 
 /// The notification for `status`, or `None` once the connection has closed (its end is reported

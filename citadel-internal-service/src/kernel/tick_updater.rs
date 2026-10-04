@@ -1,5 +1,6 @@
 //! File-transfer progress, reported to every window attached to the session.
 
+use crate::kernel::pulled_files::{PulledFileHook, PulledOutput};
 use crate::kernel::session_route::SessionRoute;
 use crate::kernel::Connection;
 use citadel_internal_service_types::{FileTransferTickNotification, InternalServiceResponse};
@@ -19,6 +20,7 @@ pub(crate) fn spawn_tick_updater<R: Ratchet>(
     server_connection_map: &mut HashMap<u64, Connection<R>>,
     tcp_connection_map: Arc<RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
     request_id: Option<Uuid>,
+    on_pulled: Option<PulledFileHook>,
 ) {
     let mut handle_inner = object_transfer_handler.inner;
     if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
@@ -32,7 +34,16 @@ pub(crate) fn spawn_tick_updater<R: Ratchet>(
         // kernel/session_route.rs.
         let route = SessionRoute::new(connection.subscribers.clone(), tcp_connection_map);
         let sender_status_updater = async move {
+            let mut on_pulled = on_pulled;
+            let mut pulled = PulledOutput::default();
             while let Some(status) = handle_inner.next().await {
+                if on_pulled.is_some() {
+                    if let Some(info) = pulled.observe(&status, std::time::Instant::now()) {
+                        if let Some(hook) = on_pulled.take() {
+                            hook(info);
+                        }
+                    }
+                }
                 let status_message = status.clone();
                 let message = InternalServiceResponse::FileTransferTickNotification(
                     FileTransferTickNotification {

@@ -47,6 +47,7 @@ pub(crate) mod media;
 pub(crate) mod peer_path;
 pub(crate) mod pending_group_invites;
 pub(crate) mod picked_files;
+pub(crate) mod pulled_files;
 pub(crate) mod reconnect;
 pub mod supervisor;
 

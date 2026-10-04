@@ -78,6 +78,23 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 // registered under: the peer's cid for P2P, 0 for c2s
                 // (handle.source == C2S_IDENTITY_CID).
                 let request_id = connection.revfs_correlations.take_pull(peer_cid);
+                // The file the pull writes is this session's to send on
+                // (kernel/pulled_files.rs): how an owner shares a file from
+                // peer storage with the peer who holds it.
+                let connections = this.server_connection_map.clone();
+                let pick_key = request_id.unwrap_or_else(Uuid::new_v4);
+                let on_pulled: crate::kernel::pulled_files::PulledFileHook =
+                    Box::new(move |info| {
+                        if let Some(conn) = connections.write().get_mut(&implicated_cid) {
+                            let now = info.picked_at;
+                            crate::kernel::picked_files::store(
+                                &mut conn.picked_files,
+                                pick_key,
+                                info,
+                                now,
+                            );
+                        }
+                    });
                 spawn_tick_updater(
                     object_transfer_handler,
                     implicated_cid,
@@ -85,6 +102,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     &mut server_connection_map,
                     this.tx_to_localhost_clients.clone(),
                     request_id,
+                    Some(on_pulled),
                 );
             } else if matches!(
                 metadata.transfer_type,
@@ -116,6 +134,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                             Some(peer_cid),
                             &mut server_connection_map,
                             this.tx_to_localhost_clients.clone(),
+                            None,
                             None,
                         );
                     }
@@ -208,6 +227,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             &mut server_connection_map,
             this.tx_to_localhost_clients.clone(),
             request_id,
+            None,
         );
     }
 

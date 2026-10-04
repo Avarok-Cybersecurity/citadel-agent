@@ -53,6 +53,7 @@ mod tests {
             session_security_settings: Default::default(),
             request_id,
             server_password: None,
+            admission_token: None,
         }
     }
 

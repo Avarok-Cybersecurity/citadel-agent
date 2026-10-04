@@ -194,6 +194,7 @@ mod tests {
             session_security_settings: Default::default(),
             connect_after_register: false,
             server_password: None,
+            admission_token: None,
         };
         sink.send(register_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
@@ -215,6 +216,7 @@ mod tests {
             session_security_settings: Default::default(),
             connect_after_register: false,
             server_password: Some(PreSharedKey::from("IncorrectPassword".as_bytes())),
+            admission_token: None,
         };
         sink.send(register_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
@@ -236,6 +238,7 @@ mod tests {
             session_security_settings: Default::default(),
             connect_after_register: false,
             server_password: Some(PreSharedKey::from("SecretPassword".as_bytes())),
+            admission_token: None,
         };
         sink.send(register_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
@@ -261,6 +264,7 @@ mod tests {
             keep_alive_timeout: None,
             session_security_settings: Default::default(),
             server_password: None,
+            admission_token: None,
         };
         sink.send(connect_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
@@ -287,6 +291,7 @@ mod tests {
             keep_alive_timeout: None,
             session_security_settings: Default::default(),
             server_password: Some(PreSharedKey::from("IncorrectPassword".as_bytes())),
+            admission_token: None,
         };
         sink.send(connect_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
@@ -313,6 +318,7 @@ mod tests {
             keep_alive_timeout: None,
             session_security_settings: Default::default(),
             server_password: Some(PreSharedKey::from("SecretPassword".as_bytes())),
+            admission_token: None,
         };
         sink.send(connect_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
@@ -498,6 +504,7 @@ mod tests {
             connect_after_register: true,
             request_id: Uuid::new_v4(),
             server_password: None,
+            admission_token: None,
         };
 
         send(&mut sink, register_command).await?;

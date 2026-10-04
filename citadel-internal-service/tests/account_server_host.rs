@@ -117,6 +117,7 @@ async fn the_host_survives_an_agent_restart() -> Result<(), Box<dyn Error>> {
                 keep_alive_timeout: None,
                 session_security_settings: Default::default(),
                 server_password: None,
+                admission_token: None,
             },
         )
         .await?;

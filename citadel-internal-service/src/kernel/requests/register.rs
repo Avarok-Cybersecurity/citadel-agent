@@ -45,6 +45,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         connect_after_register,
         session_security_settings,
         server_password,
+        admission_token,
     } = request
     else {
         unreachable!("Should never happen if programmed properly")
@@ -71,6 +72,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     cid: 0,
                     message,
                     request_id: Some(request_id),
+                    reason_code: None,
                 },
             ),
             uuid,
@@ -92,13 +94,14 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         crate::kernel::server_address::ServerAddress::WebSocket(endpoint) => {
             info!(target: "citadel", "About to register to {endpoint} for user {username}");
             remote
-                .register_to_endpoint(
+                .register_to_endpoint_admitted(
                     endpoint,
                     full_name,
                     username.clone(),
                     proposed_password.clone(),
                     session_security_settings,
                     server_password.clone(),
+                    admission_token,
                 )
                 .await
         }
@@ -112,13 +115,14 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             };
             info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
             remote
-                .register(
+                .register_admitted(
                     server_addr,
                     full_name,
                     username.clone(),
                     proposed_password.clone(),
                     session_security_settings,
                     server_password.clone(),
+                    admission_token,
                 )
                 .await
         }
@@ -170,6 +174,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 session_security_settings,
                 request_id,
                 server_password,
+                admission_token: None,
             };
 
             handle_request(this, uuid, connect_command).await
@@ -178,6 +183,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             let response = InternalServiceResponse::RegisterFailure(
                 citadel_internal_service_types::RegisterFailure {
                     cid: 0,
+                    reason_code: crate::kernel::sign_in::failure_reason(err.code),
                     message: err.into_string(),
                     request_id: Some(request_id),
                 },

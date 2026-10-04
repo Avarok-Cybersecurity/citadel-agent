@@ -14,15 +14,29 @@ pub(crate) struct Underway {
     relay: Option<KeyRelay>,
 }
 
+/// What a window's request offers: a `Connect`'s factors, or a step-up's.
+pub(crate) struct Offer {
+    pub password: Option<SecBuffer>,
+    /// Whether the window can answer a key challenge.
+    pub security_key: bool,
+    pub recovery_code: Option<SecBuffer>,
+    /// A fresh sign-in's admission (Turnstile) token. Never logged.
+    pub admission: Option<String>,
+}
+
 /// The factors for the SDK, offering the key channel only when the window can answer it.
 pub(crate) fn begin(
     challenges: &Arc<KeyChallenges>,
     clients: &Clients,
     asker: Asker,
-    password: Option<SecBuffer>,
-    security_key: bool,
-    recovery_code: Option<SecBuffer>,
+    offer: Offer,
 ) -> Result<(SignInFactors, Underway), String> {
+    let Offer {
+        password,
+        security_key,
+        recovery_code,
+        admission,
+    } = offer;
     let (security_key, relay) = match security_key {
         true => {
             let (key, relay) = KeyRelay::start(challenges, clients, asker);
@@ -36,7 +50,9 @@ pub(crate) fn begin(
         recovery_code,
     };
     let scope = offered.scope();
-    Ok((offered.into_factors()?, Underway { scope, relay }))
+    let mut factors = offered.into_factors()?;
+    factors.admission = admission;
+    Ok((factors, Underway { scope, relay }))
 }
 
 impl Underway {

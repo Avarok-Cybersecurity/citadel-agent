@@ -16,10 +16,16 @@ fn legacy_connect_json() -> String {
         keep_alive_timeout: None,
         session_security_settings: SessionSecuritySettings::default(),
         server_password: None,
+        admission_token: None,
     };
     let mut value = serde_json::to_value(&current).unwrap();
     let fields = value["Connect"].as_object_mut().unwrap();
-    for added in ["security_key", "recovery_code", "server_password"] {
+    for added in [
+        "security_key",
+        "recovery_code",
+        "server_password",
+        "admission_token",
+    ] {
         assert!(fields.remove(added).is_some(), "{added} is not a field");
     }
     value.to_string()
@@ -95,4 +101,32 @@ fn the_new_notification_is_a_notification_and_the_failures_are_errors() {
         message: String::new(),
     });
     assert!(failed.is_error());
+}
+
+#[test]
+fn an_admission_token_never_reaches_a_debug_string() {
+    let connect = InternalServiceRequest::Connect {
+        request_id: Uuid::nil(),
+        username: "alice".to_string(),
+        password: None,
+        security_key: false,
+        recovery_code: None,
+        admission_token: Some("0.turnstile-secret".to_string()),
+        connect_mode: ConnectMode::Standard { force_login: false },
+        udp_mode: UdpMode::Enabled,
+        keep_alive_timeout: None,
+        session_security_settings: SessionSecuritySettings::default(),
+        server_password: None,
+    };
+    let printed = format!("{connect:?}");
+    assert!(!printed.contains("turnstile-secret"), "{printed}");
+    assert!(printed.contains("redacted"), "{printed}");
+}
+
+#[test]
+fn reason_codes_cross_the_wire_in_snake_case() {
+    let json = serde_json::to_string(&FailureReason::AdmissionRequired).unwrap();
+    assert_eq!(json, "\"admission_required\"");
+    let json = serde_json::to_string(&FailureReason::AdmissionFailed).unwrap();
+    assert_eq!(json, "\"admission_failed\"");
 }

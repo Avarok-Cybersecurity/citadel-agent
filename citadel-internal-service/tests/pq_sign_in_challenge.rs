@@ -35,6 +35,7 @@ async fn challenged(
             keep_alive_timeout: None,
             session_security_settings: Default::default(),
             server_password: None,
+            admission_token: None,
         })
         .await?;
     match window.next_of(request_id).await? {

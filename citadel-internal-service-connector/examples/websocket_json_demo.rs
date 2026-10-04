@@ -19,6 +19,7 @@ fn main() {
         keep_alive_timeout: Some(Duration::from_secs(30)),
         session_security_settings: Default::default(),
         server_password: None,
+        admission_token: None,
     });
 
     let request_json = serde_json::to_string_pretty(&request).unwrap();

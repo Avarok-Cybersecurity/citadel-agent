@@ -10,11 +10,15 @@ use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service::SERVER_RECONNECT;
 use citadel_sdk::prefabs::server::empty::EmptyKernel;
 use citadel_sdk::prelude::*;
+use citadel_user::auth::pq::admission::{
+    AdmissionContext, AdmissionPolicy, AdmissionRefusal, AdmissionToken,
+};
 use citadel_user::auth::pq::oprf::OprfSeed;
 use citadel_user::auth::pq::record::KsfParams;
 use citadel_user::auth::pq::server::PqAuthServerSettings;
 use std::error::Error;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub const PASSWORD: &str = "correct horse battery";
@@ -32,6 +36,31 @@ pub enum Server {
 
 /// Spawns the server and returns where it listens.
 pub fn spawn_server(kind: Server) -> SocketAddr {
+    spawn(kind, None)
+}
+
+/// A post-quantum server that requires an admission token for every fresh sign-in and
+/// registration, and admits exactly `GOOD_TOKEN`: a stand-in for Turnstile.
+pub fn spawn_guarded_server() -> SocketAddr {
+    spawn(Server::PostQuantum, Some(Arc::new(Turnstile)))
+}
+
+pub const GOOD_TOKEN: &str = "turnstile-ok";
+
+struct Turnstile;
+
+#[citadel_sdk::async_trait]
+impl AdmissionPolicy for Turnstile {
+    async fn admit(&self, ctx: AdmissionContext) -> Result<(), AdmissionRefusal> {
+        match ctx.token.as_ref().map(AdmissionToken::as_str) {
+            None => Err(AdmissionRefusal::Required),
+            Some(GOOD_TOKEN) => Ok(()),
+            Some(_) => Err(AdmissionRefusal::Failed("invalid-input-response".into())),
+        }
+    }
+}
+
+fn spawn(kind: Server, admission: Option<Arc<dyn AdmissionPolicy>>) -> SocketAddr {
     let (node, addr) = server_test_node_skip_cert_verification(
         EmptyKernel::<StackedRatchet>::default(),
         |builder| {
@@ -41,6 +70,7 @@ pub fn spawn_server(kind: Server) -> SocketAddr {
                 let _ = builder
                     .with_server_misc_settings(ServerMiscSettings {
                         pq_sign_in: Some(settings),
+                        admission,
                         ..Default::default()
                     })
                     .with_server_argon_settings(ArgonDefaultServerSettings {

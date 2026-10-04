@@ -622,6 +622,7 @@ mod tests {
             keep_alive_timeout: Some(Duration::from_secs(30)),
             session_security_settings: Default::default(),
             server_password: None,
+            admission_token: None,
         });
 
         client.send(request).await.unwrap();
@@ -692,6 +693,7 @@ mod tests {
             keep_alive_timeout: Some(Duration::from_secs(30)),
             session_security_settings: Default::default(),
             server_password: None,
+            admission_token: None,
         });
 
         // Convert to JSON string to show what the frontend should send
@@ -784,6 +786,7 @@ mod tests {
                 keep_alive_timeout: Some(Duration::from_secs(30)),
                 session_security_settings: Default::default(),
                 server_password: None,
+                admission_token: None,
             });
 
             client.send(request).await.unwrap();
@@ -844,6 +847,7 @@ mod tests {
             keep_alive_timeout: Some(Duration::from_secs(30)),
             session_security_settings: Default::default(),
             server_password: None,
+            admission_token: None,
         });
 
         client.send(request).await.unwrap();

@@ -25,7 +25,12 @@ security_key?: boolean,
  * A recovery code as typed. It signs in once, to a session that may only add a
  * security key, set the sign-in policy or sign out.
  */
-recovery_code?: number[] | null, connect_mode: ConnectMode, udp_mode: UdpMode, keep_alive_timeout: { secs: number; nanos: number } | null, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Register": { request_id: string, 
+recovery_code?: number[] | null, 
+/**
+ * A Turnstile token for a server that checks fresh sign-ins (Turnstile action
+ * `sign-in`). Never logged.
+ */
+admission_token?: string | null, connect_mode: ConnectMode, udp_mode: UdpMode, keep_alive_timeout: { secs: number; nanos: number } | null, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Register": { request_id: string, 
 /**
  * `host:port`, resolved by the AGENT rather than by the browser.
  *
@@ -53,7 +58,14 @@ recovery_code?: number[] | null, connect_mode: ConnectMode, udp_mode: UdpMode, k
  * already true of every build the pipeline produces; it is written
  * down because the failure names neither the cause nor the component.
  */
-server_addr: string, full_name: string, username: string, proposed_password: number[], connect_after_register: boolean, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Message": { request_id: string, message: number[], cid: bigint, peer_cid: bigint | null, security_level: SecurityLevel, } } | { "Disconnect": { request_id: string, cid: bigint, } } | { "MediaOpen": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "MediaSend": { request_id: string, cid: bigint, peer_cid: bigint, 
+server_addr: string, full_name: string, username: string, proposed_password: number[], connect_after_register: boolean, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, 
+/**
+ * A Turnstile token for a server that checks fresh registrations (Turnstile action
+ * `register`). It admits the registration only: Turnstile tokens are single-use, so with
+ * `connect_after_register` against such a server the connect is refused with
+ * `admission_required` and the window signs in with a fresh token. Never logged.
+ */
+admission_token?: string | null, } } | { "Message": { request_id: string, message: number[], cid: bigint, peer_cid: bigint | null, security_level: SecurityLevel, } } | { "Disconnect": { request_id: string, cid: bigint, } } | { "MediaOpen": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "MediaSend": { request_id: string, cid: bigint, peer_cid: bigint, 
 /**
  * Which stream within the call: audio, main video, or thumbnail video.
  */

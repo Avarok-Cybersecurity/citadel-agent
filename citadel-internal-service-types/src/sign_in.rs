@@ -39,6 +39,18 @@ impl Drop for RecoveryCodes {
     }
 }
 
+/// A failure the UI can act on, beside the message it shows.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export, rename_all = "snake_case"))]
+pub enum FailureReason {
+    /// The server needs an admission token (show the Turnstile widget) and none was sent.
+    AdmissionRequired,
+    /// The server refused the admission token that was sent (reset the widget and retry).
+    AdmissionFailed,
+}
+
 /// The factors a window offers to prove the account again before a change to its sign-in
 /// factors. A session signed in with a recovery code offers none.
 #[derive(Serialize, Deserialize, Debug, Clone)]

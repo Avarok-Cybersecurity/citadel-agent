@@ -61,9 +61,12 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         challenges,
         clients,
         asker,
-        password,
-        step_up.security_key,
-        None,
+        factors::Offer {
+            password,
+            security_key: step_up.security_key,
+            recovery_code: None,
+            admission: None,
+        },
     );
     let (factors, underway) = match begun {
         Ok(begun) => begun,

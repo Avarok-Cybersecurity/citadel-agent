@@ -164,6 +164,7 @@ pub async fn register_and_connect_to_server<
             session_security_settings,
             connect_after_register: false,
             server_password: server_password.clone(),
+            admission_token: None,
         };
         send(&mut sink, register_command).await?;
 
@@ -189,6 +190,7 @@ pub async fn register_and_connect_to_server<
                 session_security_settings,
                 request_id: Uuid::new_v4(),
                 server_password: server_password.clone(),
+                admission_token: None,
             };
 
             send(&mut sink, command).await?;

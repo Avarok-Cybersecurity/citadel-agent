@@ -11,6 +11,7 @@ pub(crate) mod recovery;
 
 use crate::kernel::reconnect::Reauth;
 use crate::kernel::CitadelWorkspaceService;
+use citadel_internal_service_types::FailureReason;
 use citadel_sdk::prelude::{
     CitadelClientServerConnection, NetworkError, PeerChannelRecvHalf, PeerChannelSendHalf, Ratchet,
     SecBuffer, SessionScope,
@@ -63,6 +64,16 @@ pub(crate) fn reauth(scope: SessionScope, key_asked: bool, password: Option<SecB
         (SessionScope::Full, true, _) => Reauth::NeedsUser(KEY_REAUTH),
         (SessionScope::Full, false, Some(password)) => Reauth::Password(password),
         (SessionScope::Full, false, None) => Reauth::NeedsUser(KEY_REAUTH),
+    }
+}
+
+/// The reason a sign-in or registration the server refused carries for the UI, when it has one.
+pub(crate) fn failure_reason(code: citadel_io::ErrorCode) -> Option<FailureReason> {
+    use citadel_io::ErrorCode;
+    match code {
+        ErrorCode::PqSignInAdmissionRequired => Some(FailureReason::AdmissionRequired),
+        ErrorCode::PqSignInAdmissionFailed => Some(FailureReason::AdmissionFailed),
+        _ => None,
     }
 }
 

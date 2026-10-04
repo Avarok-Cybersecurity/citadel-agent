@@ -57,6 +57,7 @@ mod tests {
             session_security_settings: Default::default(),
             server_password: None,
             request_id,
+            admission_token: None,
         };
 
         sink_a.send(connect_request).await.unwrap();
@@ -103,6 +104,7 @@ mod tests {
             session_security_settings: Default::default(),
             server_password: None,
             request_id,
+            admission_token: None,
         };
 
         // Send request

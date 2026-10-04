@@ -62,6 +62,7 @@ pub async fn sign_in_again(
         session_security_settings: Default::default(),
         request_id: connect_id,
         server_password: None,
+        admission_token: None,
     })?;
     let connected = recv_until(&mut new_rx, "Connect answer", |r| match r {
         InternalServiceResponse::ConnectSuccess(s) => s.request_id == Some(connect_id),

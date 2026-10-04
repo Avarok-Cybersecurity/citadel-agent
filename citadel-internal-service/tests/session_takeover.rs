@@ -294,6 +294,7 @@ mod tests {
             session_security_settings: Default::default(),
             request_id: Uuid::new_v4(),
             server_password: None,
+            admission_token: None,
         })?;
 
         let deadline = tokio::time::Instant::now() + ARRIVES;

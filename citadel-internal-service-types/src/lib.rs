@@ -50,7 +50,7 @@ pub use server_link::{
     ServerConnectionLost, ServerReconnectFailed, ServerReconnected, SignedOutSession,
 };
 pub use sign_in::{
-    RecoveryCodes, SecurityKeyAnswerFailure, SecurityKeyAnswerSuccess,
+    FailureReason, RecoveryCodes, SecurityKeyAnswerFailure, SecurityKeyAnswerSuccess,
     SecurityKeyChallengeNotification, SecurityKeyPurpose, SignInManagementFailure,
     SignInManagementSuccess, StepUp,
 };
@@ -90,6 +90,14 @@ pub fn plaintext_debug_fmt<T: AsRef<[u8]>>(
     f: &mut std::fmt::Formatter,
 ) -> std::fmt::Result {
     write!(f, "{{Plaintext(len: {}, redacted)}}", val.as_ref().len())
+}
+
+/// For an optional secret: says whether there is one, never what it is.
+pub fn secret_debug_fmt<T>(val: &Option<T>, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    match val {
+        Some(_) => f.write_str("Some(<redacted>)"),
+        None => f.write_str("None"),
+    }
 }
 
 pub fn bytes_debug_fmt<T: std::fmt::Debug + AsRef<[u8]>>(
@@ -196,6 +204,11 @@ pub struct ConnectFailure {
     pub cid: u64,
     pub message: String,
     pub request_id: Option<Uuid>,
+    /// Why, when the UI can act on it: the server's admission check (a Turnstile token) refused
+    /// the attempt. Absent for every other failure, and from an older agent.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub reason_code: Option<FailureReason>,
 }
 
 /// Returned when a Connect request is made for a session that is already active.
@@ -233,6 +246,11 @@ pub struct RegisterFailure {
     pub cid: u64,
     pub message: String,
     pub request_id: Option<Uuid>,
+    /// Why, when the UI can act on it: the server's admission check (a Turnstile token) refused
+    /// the attempt. Absent for every other failure, and from an older agent.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub reason_code: Option<FailureReason>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1116,6 +1134,12 @@ pub enum InternalServiceRequest {
         #[serde(default)]
         #[cfg_attr(feature = "typescript", ts(type = "number[] | null", optional))]
         recovery_code: Option<SecBuffer>,
+        /// A Turnstile token for a server that checks fresh sign-ins (Turnstile action
+        /// `sign-in`). Never logged.
+        #[serde(default)]
+        #[debug(with = secret_debug_fmt)]
+        #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+        admission_token: Option<String>,
         #[cfg_attr(feature = "typescript", ts(type = "ConnectMode"))]
         connect_mode: ConnectMode,
         #[cfg_attr(feature = "typescript", ts(type = "UdpMode"))]
@@ -1168,6 +1192,14 @@ pub enum InternalServiceRequest {
         session_security_settings: SessionSecuritySettings,
         #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
         server_password: Option<PreSharedKey>,
+        /// A Turnstile token for a server that checks fresh registrations (Turnstile action
+        /// `register`). It admits the registration only: Turnstile tokens are single-use, so with
+        /// `connect_after_register` against such a server the connect is refused with
+        /// `admission_required` and the window signs in with a fresh token. Never logged.
+        #[serde(default)]
+        #[debug(with = secret_debug_fmt)]
+        #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+        admission_token: Option<String>,
     },
     Message {
         request_id: Uuid,
@@ -2036,6 +2068,7 @@ mod tests {
             cid: 0,
             message: "test".to_string(),
             request_id: None,
+            reason_code: None,
         });
         assert!(!success_response.is_error());
         assert!(error_response.is_error());
@@ -2072,6 +2105,7 @@ mod tests {
             keep_alive_timeout: None,
             session_security_settings: SessionSecuritySettings::default(),
             server_password: None,
+            admission_token: None,
         };
         assert_eq!(request.request_id(), Some(&request_id));
     }

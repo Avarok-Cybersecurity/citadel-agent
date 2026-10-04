@@ -125,6 +125,7 @@ async fn handle_request(
                     cid: 0,
                     message: "Unhandled request type".to_string(),
                     request_id: None,
+                    reason_code: None,
                 },
             ))
         }

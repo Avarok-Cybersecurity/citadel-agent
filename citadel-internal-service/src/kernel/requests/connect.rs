@@ -46,6 +46,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         password,
         security_key,
         recovery_code,
+        admission_token,
         connect_mode,
         udp_mode,
         keep_alive_timeout,
@@ -75,6 +76,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 cid: 0,
                 message: format!("Connection already in progress for user {}", username),
                 request_id: Some(request_id),
+                reason_code: None,
             });
             return Some(HandledRequestResult { response, uuid });
         }
@@ -123,6 +125,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                             cid, e
                         ),
                         request_id: Some(request_id),
+                        reason_code: None,
                     });
                     return Some(HandledRequestResult { response, uuid });
                 }
@@ -178,6 +181,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     cid: 0,
                     message: "Invalid username or password".to_string(),
                     request_id: Some(request_id),
+                    reason_code: None,
                 });
                 return Some(HandledRequestResult { response, uuid });
             }
@@ -243,9 +247,12 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         challenges,
         clients,
         asker,
-        password.clone(),
-        security_key,
-        recovery_code,
+        factors::Offer {
+            password: password.clone(),
+            security_key,
+            recovery_code,
+            admission: admission_token,
+        },
     );
     let (factors, underway) = match offered {
         Ok(begun) => begun,
@@ -255,6 +262,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 cid: 0,
                 message,
                 request_id: Some(request_id),
+                reason_code: None,
             });
             return Some(HandledRequestResult { response, uuid });
         }
@@ -310,6 +318,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                         cid,
                         message: err.into_string(),
                         request_id: Some(request_id),
+                        reason_code: None,
                     });
                     return Some(HandledRequestResult { response, uuid });
                 }
@@ -353,6 +362,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                             cid
                         ),
                         request_id: Some(request_id),
+                        reason_code: None,
                     });
                     return Some(HandledRequestResult { response, uuid });
                 }
@@ -412,6 +422,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                             cid
                         ),
                         request_id: Some(request_id),
+                        reason_code: None,
                     });
                     return Some(HandledRequestResult { response, uuid });
                 }
@@ -493,6 +504,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         Err(err) => {
             let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
                 cid: 0,
+                reason_code: pq_sign_in::failure_reason(err.code),
                 message: err.into_string(),
                 request_id: Some(request_id),
             });

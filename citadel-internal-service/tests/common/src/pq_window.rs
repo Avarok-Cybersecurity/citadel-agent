@@ -8,7 +8,7 @@ use citadel_internal_service_connector::connector::{
 };
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
 use citadel_internal_service_types::{
-    InternalServiceRequest, InternalServiceResponse, RecoveryCodes,
+    FailureReason, InternalServiceRequest, InternalServiceResponse, RecoveryCodes,
     SecurityKeyChallengeNotification, StepUp,
 };
 use citadel_sdk::prelude::*;
@@ -35,6 +35,8 @@ pub struct Offer {
     pub password: Option<String>,
     pub key: Option<FakeKey>,
     pub recovery_code: Option<String>,
+    /// A Turnstile token, for a server that checks fresh sign-ins.
+    pub admission: Option<String>,
 }
 
 /// The request's final answer, and what was asked of the window on the way.
@@ -111,6 +113,19 @@ impl Window {
         username: &str,
         password: &str,
     ) -> Result<Result<(u64, RecoveryCodes), String>, Box<dyn Error>> {
+        self.register_admitted(server, username, password, None)
+            .await
+            .map(|registered| registered.map_err(|(message, _)| message))
+    }
+
+    /// As `register`, with an admission (Turnstile) token; a refusal also carries its reason.
+    pub async fn register_admitted(
+        &mut self,
+        server: SocketAddr,
+        username: &str,
+        password: &str,
+        token: Option<&str>,
+    ) -> Result<Result<(u64, RecoveryCodes), (String, Option<FailureReason>)>, Box<dyn Error>> {
         let request_id = Uuid::new_v4();
         self.send(InternalServiceRequest::Register {
             request_id,
@@ -121,14 +136,17 @@ impl Window {
             connect_after_register: false,
             session_security_settings: Default::default(),
             server_password: None,
+            admission_token: token.map(str::to_string),
         })
         .await?;
         Ok(match self.answer_of(request_id, None).await?.response {
             InternalServiceResponse::RegisterSuccess(success) => {
                 Ok((success.cid, success.recovery_codes.clone()))
             }
-            InternalServiceResponse::RegisterFailure(failure) => Err(failure.message),
-            other => Err(format!("not a registration answer: {other:?}")),
+            InternalServiceResponse::RegisterFailure(failure) => {
+                Err((failure.message, failure.reason_code))
+            }
+            other => Err((format!("not a registration answer: {other:?}"), None)),
         })
     }
 
@@ -144,6 +162,7 @@ impl Window {
             password: offer.password.as_deref().map(SecBuffer::from),
             security_key: offer.key.is_some(),
             recovery_code: offer.recovery_code.as_deref().map(SecBuffer::from),
+            admission_token: offer.admission.clone(),
             connect_mode: ConnectMode::Standard { force_login: false },
             udp_mode: UdpMode::Disabled,
             keep_alive_timeout: None,

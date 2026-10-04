@@ -110,6 +110,7 @@ mod tests {
             keep_alive_timeout: None,
             session_security_settings: SessionSecuritySettingsBuilder::default().build()?,
             server_password: None,
+            admission_token: None,
         })?;
         let answer = recv_until(&mut legacy.1, "the takeover's answer", |r| {
             matches!(r, InternalServiceResponse::SessionAlreadyActive(_))

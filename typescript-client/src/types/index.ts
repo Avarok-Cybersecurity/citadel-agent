@@ -39,6 +39,7 @@ export * from './DisconnectNotification.js';
 export * from './DownloadFileFailure.js';
 export * from './DownloadFileSuccess.js';
 export * from './FactorKind.js';
+export * from './FailureReason.js';
 export * from './FileSource.js';
 export * from './FileTransferRequestNotification.js';
 export * from './FileTransferStatusNotification.js';

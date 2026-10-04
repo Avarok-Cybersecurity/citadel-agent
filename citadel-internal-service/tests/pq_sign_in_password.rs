@@ -116,6 +116,7 @@ async fn registering_and_connecting_at_once_still_delivers_the_codes() -> Result
             connect_after_register: true,
             session_security_settings: Default::default(),
             server_password: None,
+            admission_token: None,
         })
         .await?;
     let first = window.answer_of(request_id, None).await?.response;

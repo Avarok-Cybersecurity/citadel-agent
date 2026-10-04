@@ -5,8 +5,10 @@
 //! - hub.rs: the notice plane's subscribers, the windows' focus, and the
 //!   `Notifier` seam the OS backends plug into.
 //! - raise.rs: the agent's side: what happened and the account as it stands.
+//! - heard.rs: telling the windows whether anything shows the notices.
 
 pub(crate) mod decide;
+mod heard;
 pub(crate) mod hub;
 mod raise;
 

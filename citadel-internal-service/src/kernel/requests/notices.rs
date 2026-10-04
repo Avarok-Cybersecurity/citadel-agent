@@ -40,7 +40,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         return Some(HandledRequestResult { response, uuid });
     }
     match request {
-        InternalServiceRequest::NoticeSubscribe { .. } => this.notices.subscribe(uuid),
+        InternalServiceRequest::NoticeSubscribe { .. } => {
+            this.notices.subscribe(uuid);
+            this.watch_notice_subscriber(uuid);
+        }
         InternalServiceRequest::NoticeSetMuted { cid, muted, .. } => {
             if let Err(e) = this.set_muted(cid, muted).await {
                 let response = InternalServiceResponse::NoticeFailure(NoticeFailure {

@@ -47,7 +47,10 @@ pub use multi_window::{
     AgentCapabilities, AttachProof, ClientCapabilities, SendReliableAccepted, SessionAttached,
     SessionRole, SessionRoleNotification,
 };
-pub use notices::{AccountRow, NativeNotice, NoticeFailure, NoticeKind, NoticeRows, NoticeTarget};
+pub use notices::{
+    AccountRow, NativeNotice, NoticeFailure, NoticeKind, NoticeRows, NoticeTarget,
+    NoticesHeardNotification,
+};
 pub use server_link::{
     ServerConnectionLost, ServerReconnectFailed, ServerReconnected, SignedOutSession,
 };
@@ -1117,6 +1120,7 @@ pub enum InternalServiceResponse {
     NativeNotice(Box<NativeNotice>),
     NoticeRows(NoticeRows),
     NoticeFailure(NoticeFailure),
+    NoticesHeardNotification(NoticesHeardNotification),
     UpdateAvailable(UpdateAvailable),
     UpdateStatus(UpdateStatus),
     UpdateInstall(UpdateInstall),

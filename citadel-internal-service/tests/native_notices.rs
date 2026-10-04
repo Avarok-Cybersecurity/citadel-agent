@@ -189,4 +189,48 @@ mod tests {
             InternalServiceResponse::ConnectionManagementFailure(_)
         ));
     }
+
+    async fn capabilities(window: &mut Conn) -> bool {
+        window.0.send(declare_agent_ilm()).unwrap();
+        match recv_until(&mut window.1, "capabilities", |r| {
+            matches!(r, InternalServiceResponse::AgentCapabilities(_))
+        })
+        .await
+        {
+            InternalServiceResponse::AgentCapabilities(c) => c.notices_heard,
+            _ => unreachable!(),
+        }
+    }
+
+    async fn told_heard(window: &mut Conn) -> bool {
+        match recv_until(&mut window.1, "whether notices are heard", |r| {
+            matches!(r, InternalServiceResponse::NoticesHeardNotification(_))
+        })
+        .await
+        {
+            InternalServiceResponse::NoticesHeardNotification(n) => n.heard,
+            _ => unreachable!(),
+        }
+    }
+
+    /// A window that leaves a hosted message to the agent must know something
+    /// shows it: on declaring, and whenever the menu-bar app comes or goes.
+    /// Windows and Linux have no notifier; there the browser shows it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_window_knows_whether_notices_are_shown() {
+        setup_log();
+        let world = mixed_hosting(ACCOUNT_ILM_OPTIONS).await;
+        let mut window = open_localhost_connection(world.alice_addr).await.unwrap();
+        assert!(!capabilities(&mut window).await, "no menu-bar app yet");
+
+        let mut app = open_localhost_connection(world.alice_addr).await.unwrap();
+        subscribe(&mut app, TEST_NOTICE_TOKEN).await;
+        assert!(told_heard(&mut window).await, "the app subscribed");
+        let mut later = open_localhost_connection(world.alice_addr).await.unwrap();
+        assert!(capabilities(&mut later).await, "a window declaring now");
+
+        drop(app);
+        assert!(!told_heard(&mut window).await, "the app went away");
+        assert!(!told_heard(&mut later).await, "every declared window hears");
+    }
 }

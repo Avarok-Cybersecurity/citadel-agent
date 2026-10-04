@@ -6,7 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-typescript = ["ts-rs"]
+# The SDK's sign-in types (`citadel_types::auth`) are exported beside ours: the published
+# protocol-types package does not carry them yet.
+typescript = ["ts-rs", "citadel_types/typescript"]
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
@@ -15,6 +17,8 @@ bytes = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }
 citadel-internal-service-macros = { workspace = true }
 custom_debug = { workspace = true }
+# Recovery codes are wiped when dropped (src/sign_in.rs). Already in the tree through the SDK.
+zeroize = "1.8"
 
 # TypeScript bindings
 ts-rs = { version = "11", optional = true, features = [

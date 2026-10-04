@@ -46,7 +46,9 @@ mod tests {
         let request_id = Uuid::new_v4();
         let connect_request = InternalServiceRequest::Connect {
             username: "test_user".to_string(),
-            password: vec![].into(), // SecBuffer
+            password: Some(vec![].into()),
+            security_key: false,
+            recovery_code: None,
             connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                 force_login: false,
             },
@@ -55,6 +57,7 @@ mod tests {
             session_security_settings: Default::default(),
             server_password: None,
             request_id,
+            admission_token: None,
         };
 
         sink_a.send(connect_request).await.unwrap();
@@ -90,7 +93,9 @@ mod tests {
         let request_id = Uuid::new_v4();
         let connect_req = InternalServiceRequest::Connect {
             username: "test".to_string(),
-            password: vec![].into(),
+            password: Some(vec![].into()),
+            security_key: false,
+            recovery_code: None,
             connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                 force_login: false,
             },
@@ -99,6 +104,7 @@ mod tests {
             session_security_settings: Default::default(),
             server_password: None,
             request_id,
+            admission_token: None,
         };
 
         // Send request

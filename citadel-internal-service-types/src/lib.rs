@@ -27,6 +27,7 @@ pub use group_responses_more::*;
 mod multi_window;
 mod notices;
 mod server_link;
+mod sign_in;
 mod turn;
 pub use chat_level::{ChatSecurityLevel, PeerSecurityMinimum};
 mod updates;
@@ -47,6 +48,11 @@ pub use multi_window::{
 pub use notices::{AccountRow, NativeNotice, NoticeFailure, NoticeKind, NoticeRows, NoticeTarget};
 pub use server_link::{
     ServerConnectionLost, ServerReconnectFailed, ServerReconnected, SignedOutSession,
+};
+pub use sign_in::{
+    FailureReason, RecoveryCodes, SecurityKeyAnswerFailure, SecurityKeyAnswerSuccess,
+    SecurityKeyChallengeNotification, SecurityKeyPurpose, SignInManagementFailure,
+    SignInManagementSuccess, StepUp,
 };
 pub use turn::{IceServer, P2pPathReport, PeerTurnConfig, TurnPolicy};
 pub use updates::{UpdateAvailable, UpdateInstall, UpdateStatus};
@@ -84,6 +90,14 @@ pub fn plaintext_debug_fmt<T: AsRef<[u8]>>(
     f: &mut std::fmt::Formatter,
 ) -> std::fmt::Result {
     write!(f, "{{Plaintext(len: {}, redacted)}}", val.as_ref().len())
+}
+
+/// For an optional secret: says whether there is one, never what it is.
+pub fn secret_debug_fmt<T>(val: &Option<T>, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    match val {
+        Some(_) => f.write_str("Some(<redacted>)"),
+        None => f.write_str("None"),
+    }
 }
 
 pub fn bytes_debug_fmt<T: std::fmt::Debug + AsRef<[u8]>>(
@@ -190,6 +204,11 @@ pub struct ConnectFailure {
     pub cid: u64,
     pub message: String,
     pub request_id: Option<Uuid>,
+    /// Why, when the UI can act on it: the server's admission check (a Turnstile token) refused
+    /// the attempt. Absent for every other failure, and from an older agent.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub reason_code: Option<FailureReason>,
 }
 
 /// Returned when a Connect request is made for a session that is already active.
@@ -213,6 +232,10 @@ pub struct RegisterSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
     pub request_id: Option<Uuid>,
+    /// The account's recovery codes, to show the user once. Empty for a server without
+    /// post-quantum sign-in. With `connect_after_register` this response is sent before the
+    /// connect's own.
+    pub recovery_codes: RecoveryCodes,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -223,6 +246,11 @@ pub struct RegisterFailure {
     pub cid: u64,
     pub message: String,
     pub request_id: Option<Uuid>,
+    /// Why, when the UI can act on it: the server's admission check (a Turnstile token) refused
+    /// the attempt. Absent for every other failure, and from an older agent.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub reason_code: Option<FailureReason>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1077,6 +1105,11 @@ pub enum InternalServiceResponse {
     UpdateAvailable(UpdateAvailable),
     UpdateStatus(UpdateStatus),
     UpdateInstall(UpdateInstall),
+    SecurityKeyChallengeNotification(SecurityKeyChallengeNotification),
+    SecurityKeyAnswerSuccess(SecurityKeyAnswerSuccess),
+    SecurityKeyAnswerFailure(SecurityKeyAnswerFailure),
+    SignInManagementSuccess(SignInManagementSuccess),
+    SignInManagementFailure(SignInManagementFailure),
     /// Results from a batched request, in the same order as input commands
     BatchedResponse(BatchedResponseData),
 }
@@ -1088,8 +1121,25 @@ pub enum InternalServiceRequest {
     Connect {
         request_id: Uuid,
         username: String,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
-        password: SecBuffer,
+        /// Absent for a `KeyOnly` account and for a recovery-code sign-in.
+        #[cfg_attr(feature = "typescript", ts(type = "number[] | null"))]
+        password: Option<SecBuffer>,
+        /// Whether this window can answer a `SecurityKeyChallengeNotification`. A client from
+        /// before post-quantum sign-in sends neither this nor `recovery_code`.
+        #[serde(default)]
+        #[cfg_attr(feature = "typescript", ts(as = "Option<bool>", optional))]
+        security_key: bool,
+        /// A recovery code as typed. It signs in once, to a session that may only add a
+        /// security key, set the sign-in policy or sign out.
+        #[serde(default)]
+        #[cfg_attr(feature = "typescript", ts(type = "number[] | null", optional))]
+        recovery_code: Option<SecBuffer>,
+        /// A Turnstile token for a server that checks fresh sign-ins (Turnstile action
+        /// `sign-in`). Never logged.
+        #[serde(default)]
+        #[debug(with = secret_debug_fmt)]
+        #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+        admission_token: Option<String>,
         #[cfg_attr(feature = "typescript", ts(type = "ConnectMode"))]
         connect_mode: ConnectMode,
         #[cfg_attr(feature = "typescript", ts(type = "UdpMode"))]
@@ -1142,6 +1192,14 @@ pub enum InternalServiceRequest {
         session_security_settings: SessionSecuritySettings,
         #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
         server_password: Option<PreSharedKey>,
+        /// A Turnstile token for a server that checks fresh registrations (Turnstile action
+        /// `register`). It admits the registration only: Turnstile tokens are single-use, so with
+        /// `connect_after_register` against such a server the connect is refused with
+        /// `admission_required` and the window signs in with a fresh token. Never logged.
+        #[serde(default)]
+        #[debug(with = secret_debug_fmt)]
+        #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+        admission_token: Option<String>,
     },
     Message {
         request_id: Uuid,
@@ -1680,6 +1738,33 @@ pub enum InternalServiceRequest {
         /// "json", "text", "yjs-update", "opaque", "cbor-command", or none.
         compression_hint: Option<String>,
     },
+    /// The touch a `SecurityKeyChallengeNotification` asked for. Only a window the challenge
+    /// was sent to may answer, and only the first valid answer counts.
+    SecurityKeyAnswer {
+        request_id: Uuid,
+        challenge_id: Uuid,
+        credential_id: Vec<u8>,
+        /// The 32-byte WebAuthn PRF output. Handed to the SDK and wiped; never logged.
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        prf_output: SecBuffer,
+    },
+    /// The user cancelled, or the key has no PRF support: the asking request fails now
+    /// instead of at the deadline.
+    SecurityKeyDecline {
+        request_id: Uuid,
+        challenge_id: Uuid,
+        reason: String,
+    },
+    /// List, add, rename or remove the account's sign-in factors, set its policy or replace
+    /// its recovery codes (`citadel_types::auth::SignInManagementOp`). Every change is proven
+    /// with `step_up`; adding a key also asks for the new key's touch.
+    SignInManagement {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        op: citadel_types::auth::SignInManagementOp,
+        step_up: StepUp,
+    },
     /// Execute multiple requests in parallel, returning results in the same order as input.
     /// This enables single-roundtrip batch operations for efficiency.
     Batched {
@@ -1915,6 +2000,7 @@ impl InternalServiceRequest {
             | Self::ConversationPage { cid, .. }
             | Self::SetAccountPreferences { cid, .. }
             | Self::GetAccountPreferences { cid, .. } => Some(*cid),
+            Self::SignInManagement { cid, .. } => Some(*cid),
             // Exhaustive on purpose: no `_` arm.
             //
             // The catch-all made this gate fail OPEN by omission — a variant
@@ -1937,6 +2023,10 @@ impl InternalServiceRequest {
             //   Update*                — the agent's own updater: no session's
             //                            (kernel/updates); UpdateInstallResult is
             //                            gated by the launch token.
+            //   SecurityKeyAnswer /
+            //   SecurityKeyDecline     — a sign-in's challenge has no session yet;
+            //                            gated by the connections the challenge was
+            //                            sent to (kernel/sign_in/key_relay.rs).
             Self::Connect { .. }
             | Self::Register { .. }
             | Self::Batched { .. }
@@ -1949,7 +2039,9 @@ impl InternalServiceRequest {
             | Self::UpdateCheckNow { .. }
             | Self::UpdateApply { .. }
             | Self::UpdateSetSettings { .. }
-            | Self::UpdateInstallResult { .. } => None,
+            | Self::UpdateInstallResult { .. }
+            | Self::SecurityKeyAnswer { .. }
+            | Self::SecurityKeyDecline { .. } => None,
         }
     }
 }
@@ -1957,6 +2049,10 @@ impl InternalServiceRequest {
 #[cfg(test)]
 #[path = "pending_invites_tests.rs"]
 mod pending_invites_tests;
+
+#[cfg(test)]
+#[path = "sign_in_wire_tests.rs"]
+mod sign_in_wire_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1972,6 +2068,7 @@ mod tests {
             cid: 0,
             message: "test".to_string(),
             request_id: None,
+            reason_code: None,
         });
         assert!(!success_response.is_error());
         assert!(error_response.is_error());
@@ -2000,12 +2097,15 @@ mod tests {
         let request = InternalServiceRequest::Connect {
             request_id,
             username: "test".to_string(),
-            password: SecBuffer::from(vec![]),
+            password: Some(SecBuffer::from(vec![])),
+            security_key: false,
+            recovery_code: None,
             connect_mode: ConnectMode::Standard { force_login: false },
             udp_mode: UdpMode::Enabled,
             keep_alive_timeout: None,
             session_security_settings: SessionSecuritySettings::default(),
             server_password: None,
+            admission_token: None,
         };
         assert_eq!(request.request_id(), Some(&request_id));
     }

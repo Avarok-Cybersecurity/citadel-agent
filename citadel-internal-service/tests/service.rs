@@ -194,6 +194,7 @@ mod tests {
             session_security_settings: Default::default(),
             connect_after_register: false,
             server_password: None,
+            admission_token: None,
         };
         sink.send(register_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
@@ -215,6 +216,7 @@ mod tests {
             session_security_settings: Default::default(),
             connect_after_register: false,
             server_password: Some(PreSharedKey::from("IncorrectPassword".as_bytes())),
+            admission_token: None,
         };
         sink.send(register_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
@@ -236,6 +238,7 @@ mod tests {
             session_security_settings: Default::default(),
             connect_after_register: false,
             server_password: Some(PreSharedKey::from("SecretPassword".as_bytes())),
+            admission_token: None,
         };
         sink.send(register_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
@@ -253,12 +256,15 @@ mod tests {
         let connect_command = InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "Username".into(),
-            password: "Password".into(),
+            password: Some("Password".into()),
+            security_key: false,
+            recovery_code: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
             session_security_settings: Default::default(),
             server_password: None,
+            admission_token: None,
         };
         sink.send(connect_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
@@ -277,12 +283,15 @@ mod tests {
         let connect_command = InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "Username".into(),
-            password: "Password".into(),
+            password: Some("Password".into()),
+            security_key: false,
+            recovery_code: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
             session_security_settings: Default::default(),
             server_password: Some(PreSharedKey::from("IncorrectPassword".as_bytes())),
+            admission_token: None,
         };
         sink.send(connect_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
@@ -301,12 +310,15 @@ mod tests {
         let connect_command = InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "Username".into(),
-            password: "Password".into(),
+            password: Some("Password".into()),
+            security_key: false,
+            recovery_code: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
             session_security_settings: Default::default(),
             server_password: Some(PreSharedKey::from("SecretPassword".as_bytes())),
+            admission_token: None,
         };
         sink.send(connect_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
@@ -492,10 +504,18 @@ mod tests {
             connect_after_register: true,
             request_id: Uuid::new_v4(),
             server_password: None,
+            admission_token: None,
         };
 
         send(&mut sink, register_command).await?;
 
+        // The registration's own answer comes first (it carries the recovery codes of a
+        // post-quantum server; none here), then the connect's.
+        let registered = stream.next().await.unwrap();
+        assert!(
+            matches!(registered, InternalServiceResponse::RegisterSuccess(_)),
+            "the registration was not answered first: {registered:?}"
+        );
         let response_packet = stream.next().await.unwrap();
 
         if let InternalServiceResponse::ConnectSuccess(

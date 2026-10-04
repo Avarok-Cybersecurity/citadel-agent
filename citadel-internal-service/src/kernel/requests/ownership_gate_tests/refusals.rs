@@ -1,6 +1,7 @@
 //! Refusals: what a refused request is answered with, and when it is refused.
 use super::{
     gate_decision, refusal_response, requires_owned_session, GateDecision, HandledRequestResult,
+    REFUSED,
 };
 use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
 use uuid::Uuid;
@@ -81,7 +82,7 @@ fn a_refused_sign_out_is_answered_rather_than_dropped() {
             ),
             "{command:?}"
         );
-        let result = refusal_response(&command, mine)
+        let result = refusal_response(&command, mine, REFUSED)
             .unwrap_or_else(|| panic!("no response for {command:?}"));
         assert_eq!(result.uuid, mine);
         let debug = format!("{:?}", result.response);
@@ -106,7 +107,7 @@ fn a_refused_local_db_request_is_answered_with_its_own_request_id() {
     let request_id = Uuid::new_v4();
     let uuid = Uuid::new_v4();
     for command in gated_requests(request_id, 7) {
-        let result = refusal_response(&command, uuid)
+        let result = refusal_response(&command, uuid, REFUSED)
             .unwrap_or_else(|| panic!("no response for {command:?}"));
         assert_eq!(result.uuid, uuid);
         let echoed = match &result.response {
@@ -129,15 +130,18 @@ fn a_refused_local_db_request_is_answered_with_its_own_request_id() {
 fn every_refusal_says_the_same_thing() {
     let messages: Vec<String> = gated_requests(Uuid::new_v4(), 7)
         .iter()
-        .map(
-            |command| match refusal_response(command, Uuid::new_v4()).unwrap().response {
+        .map(|command| {
+            match refusal_response(command, Uuid::new_v4(), REFUSED)
+                .unwrap()
+                .response
+            {
                 InternalServiceResponse::LocalDBSetKVFailure(r) => r.message,
                 InternalServiceResponse::LocalDBDeleteKVFailure(r) => r.message,
                 InternalServiceResponse::LocalDBClearAllKVFailure(r) => r.message,
                 InternalServiceResponse::LocalDBGetAllKVFailure(r) => r.message,
                 other => panic!("wrong response shape: {other:?}"),
-            },
-        )
+            }
+        })
         .collect();
     assert_eq!(
         messages
@@ -172,7 +176,7 @@ fn a_refused_read_is_answered_rather_than_dropped() {
         peer_cid: None,
         key: "k".into(),
     };
-    let answer = refusal_response(&read, Uuid::new_v4());
+    let answer = refusal_response(&read, Uuid::new_v4(), REFUSED);
     assert!(
         matches!(
             answer,
@@ -190,11 +194,11 @@ fn a_refused_read_is_answered_rather_than_dropped() {
         cid: 1,
         peer_cid: Some(2),
     };
-    assert!(refusal_response(&groups, Uuid::new_v4()).is_none());
+    assert!(refusal_response(&groups, Uuid::new_v4(), REFUSED).is_none());
     // Whatever `requires_owned_session` covers, `refusal_response` must
     // answer -- otherwise a variant added to the gate silently hangs again.
     for command in gated_requests(Uuid::new_v4(), 1) {
         assert!(requires_owned_session(&command));
-        assert!(refusal_response(&command, Uuid::new_v4()).is_some());
+        assert!(refusal_response(&command, Uuid::new_v4(), REFUSED).is_some());
     }
 }

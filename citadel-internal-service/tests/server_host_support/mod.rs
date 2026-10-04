@@ -113,6 +113,7 @@ pub async fn register(
             connect_after_register: true,
             session_security_settings: Default::default(),
             server_password: None,
+            admission_token: None,
         },
     )
     .await?;

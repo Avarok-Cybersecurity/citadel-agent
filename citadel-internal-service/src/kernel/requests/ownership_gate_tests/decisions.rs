@@ -1,6 +1,6 @@
 //! Decisions: which sessions refuse, and which proceed.
 use super::refusals::gated_requests;
-use super::{gate_decision, refusal_response, GateDecision};
+use super::{gate_decision, refusal_response, GateDecision, REFUSED};
 use citadel_internal_service_types::InternalServiceRequest;
 use uuid::Uuid;
 
@@ -19,7 +19,7 @@ fn a_refused_request_never_decides_to_proceed() {
             matches!(unmapped, GateDecision::Refuse { .. }),
             "{command:?}"
         );
-        assert!(refusal_response(&command, mine).is_some());
+        assert!(refusal_response(&command, mine, REFUSED).is_some());
         // Mapped to somebody else: refused too.
         assert!(matches!(
             gate_decision(&command, Some(false)),
@@ -103,7 +103,7 @@ fn an_unmapped_session_refuses_a_deregister() {
         gate_decision(&dereg, None),
         GateDecision::Refuse { .. }
     ));
-    assert!(refusal_response(&dereg, Uuid::new_v4()).is_some());
+    assert!(refusal_response(&dereg, Uuid::new_v4(), REFUSED).is_some());
 }
 
 /// An owned session still reads, which is the access ILM actually needs.

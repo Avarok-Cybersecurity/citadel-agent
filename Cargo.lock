@@ -866,7 +866,7 @@ dependencies = [
 [[package]]
 name = "citadel_io"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#26aa6d773fa9ff0e8d4c364e091fb783b689b14c"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#bcfb9390a5df69652e5bc8ee11b4dc386009bb19"
 dependencies = [
  "bytes",
  "citadel_io_macros",
@@ -888,7 +888,7 @@ dependencies = [
 [[package]]
 name = "citadel_io_macros"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#26aa6d773fa9ff0e8d4c364e091fb783b689b14c"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#bcfb9390a5df69652e5bc8ee11b4dc386009bb19"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -898,7 +898,7 @@ dependencies = [
 [[package]]
 name = "citadel_logging"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#26aa6d773fa9ff0e8d4c364e091fb783b689b14c"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#bcfb9390a5df69652e5bc8ee11b4dc386009bb19"
 dependencies = [
  "tracing",
  "tracing-subscriber",

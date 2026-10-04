@@ -98,7 +98,11 @@ pub struct SecurityKeyChallengeNotification {
     #[debug(with = plaintext_debug_fmt)]
     pub prf_salt: Vec<u8>,
     /// How long the SDK waits for the touch. An answer after that is refused.
-    #[cfg_attr(feature = "typescript", ts(type = "number"))]
+    ///
+    /// `bigint`, as every u64 is: the WASM client serializes with
+    /// `serialize_large_number_types_as_bigints`, so a page receives a BigInt here, and a
+    /// `number` type let it do arithmetic that threw (the touch prompt crashed in render).
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub expires_in_ms: u64,
 }
 

@@ -28,14 +28,14 @@ impl Core {
         Vec::new()
     }
 
-    /// A route that has held for `stable_after` forgets its failures.
+    /// A path that has held for `stable_after` forgets its upgrade backoff (the dial backoff
+    /// resets in `lost`, when a stable connection is next lost).
     fn settle(&mut self, now: Millis) {
         let stable = self.policy.stable_after;
         for peer in self.peers.values_mut() {
-            if peer.connected && peer.since.is_some_and(|since| now.since(since) >= stable) {
-                if peer.path != Some(P2pPathReport::ServerRelay) {
-                    peer.upgrade.attempts = 0;
-                }
+            let held = peer.connected && peer.since.is_some_and(|since| now.since(since) >= stable);
+            if held && peer.path != Some(P2pPathReport::ServerRelay) {
+                peer.upgrade.attempts = 0;
             }
         }
     }

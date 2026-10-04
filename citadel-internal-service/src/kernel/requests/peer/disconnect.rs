@@ -1,5 +1,6 @@
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::session_subscribers::SessionSubscribers;
+use crate::kernel::supervisor::Signal;
 use crate::kernel::{CitadelWorkspaceService, Connection, PeerConnection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -330,6 +331,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     // STEP 1: Remove from internal state FIRST, get back the struct
     // The struct stays alive in the enum, preventing RAII Drop from firing during SDK disconnect
     this.prune_cid_scoped_state(cid, peer_cid);
+    if let Some(peer) = peer_cid {
+        // On purpose: the supervisor must not redial it.
+        this.supervisors.signal(cid, Signal::PeerReleased(peer));
+    }
     let Some(disconnected) = cleanup_state(&this.server_connection_map, cid, peer_cid) else {
         // Already removed - shouldn't happen due to earlier checks, but handle gracefully
         citadel_sdk::logging::warn!(

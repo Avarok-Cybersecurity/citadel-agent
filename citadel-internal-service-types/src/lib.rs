@@ -29,6 +29,7 @@ mod notices;
 mod server_link;
 mod sign_in;
 mod sign_in_wire;
+mod supervisor;
 mod turn;
 pub use chat_level::{ChatSecurityLevel, PeerSecurityMinimum};
 mod updates;
@@ -58,6 +59,7 @@ pub use sign_in::{
 pub use sign_in_wire::{
     FactorKind, SignInCredential, SignInManagementOp, SignInManagementOutcome, SignInPolicy,
 };
+pub use supervisor::{SupervisorNotification, SupervisorState};
 pub use turn::{IceServer, P2pPathReport, PeerTurnConfig, TurnPolicy};
 pub use updates::{UpdateAvailable, UpdateInstall, UpdateStatus};
 
@@ -271,15 +273,23 @@ pub struct ServiceConnectionAccepted {
     /// greeting has no such field, which is what `false` means here.
     #[serde(default)]
     pub agent_ilm: bool,
+    /// This agent supervises its hosted accounts' peer connections (redialling them with
+    /// no window open), so a window must not auto-connect for them: it sends
+    /// `ConfigCommand::Interest` instead. Absent from an older agent's greeting, which is
+    /// what `false` means.
+    #[serde(default)]
+    pub supervises_p2p: bool,
 }
 
 impl ServiceConnectionAccepted {
-    /// What this agent says first on every socket: it hosts (0.8.6).
-    pub fn greeting(connection: Uuid) -> InternalServiceResponse {
+    /// What this agent says first on every socket: it hosts (0.8.6), and supervises
+    /// peer connections when `supervises_p2p`.
+    pub fn greeting(connection: Uuid, supervises_p2p: bool) -> InternalServiceResponse {
         InternalServiceResponse::ServiceConnectionAccepted(Self {
             cid: 0,
             request_id: Some(connection),
             agent_ilm: true,
+            supervises_p2p,
         })
     }
 }
@@ -1096,6 +1106,7 @@ pub enum InternalServiceResponse {
     SessionAttached(SessionAttached),
     SessionRoleNotification(SessionRoleNotification),
     AgentCapabilities(AgentCapabilities),
+    SupervisorNotification(SupervisorNotification),
     SendReliableAccepted(SendReliableAccepted),
     ConversationEvent(Box<ConversationEvent>),
     ConversationUpdated(Box<ConversationUpdated>),
@@ -1855,6 +1866,18 @@ pub enum ConfigCommand {
     /// Say what this connection's client can do; answered with `AgentCapabilities`.
     DeclareCapabilities {
         capabilities: ClientCapabilities,
+    },
+    /// This window has `peer_cid` in front of the user (an open chat or call) until `until`,
+    /// Unix milliseconds. The agent keeps that peer connected, redialling it, and the window
+    /// repeats the declaration while it stays open. Instead of dialling itself, for an agent
+    /// that `supervises_p2p`; refused by one that does not.
+    Interest {
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        session_cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        until: u64,
     },
 }
 

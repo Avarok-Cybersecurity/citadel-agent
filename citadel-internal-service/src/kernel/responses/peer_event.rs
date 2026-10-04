@@ -21,6 +21,7 @@
 use crate::kernel::requests::peer::cleanup_state;
 use crate::kernel::session_route::SessionRoute;
 use crate::kernel::session_subscribers::SessionSubscribers;
+use crate::kernel::supervisor::Signal;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -88,6 +89,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 cleanup_state(&this.server_connection_map, session_cid, Some(peer_cid)).inspect(
                     |_| {
                         this.prune_cid_scoped_state(session_cid, Some(peer_cid));
+                        this.supervisors
+                            .signal(session_cid, Signal::PeerLost(peer_cid));
                     },
                 )
             {

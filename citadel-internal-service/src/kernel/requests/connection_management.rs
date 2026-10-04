@@ -120,6 +120,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 return super::notices::report_focus(this, conn_id, request_id, focus);
             }
 
+            interest @ ConfigCommand::Interest { .. } => {
+                return super::notices::declare_p2p_interest(this, conn_id, request_id, interest);
+            }
+
             ConfigCommand::DeclareCapabilities { capabilities } => {
                 this.declare(conn_id, capabilities, request_id).await
             }

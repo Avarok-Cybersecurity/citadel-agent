@@ -8,6 +8,7 @@ use super::policy::{self, DropAction, FailureKind, GiveUp, Next};
 use super::report::{fail, logged, notify};
 use super::sign_in;
 use super::{Credentials, Handoff, LinkState, Reauth, LOG_TARGET};
+use crate::kernel::supervisor::{LinkStatus, Signal};
 use crate::kernel::{group_channels, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{InternalServiceResponse, ServerConnectionLost};
@@ -76,6 +77,8 @@ pub(crate) fn spawn<T: IOInterface + Sync, R: Ratchet>(
             request_id: None,
         }),
     )?;
+    this.supervisors
+        .signal(cid, Signal::Link(LinkStatus::Reconnecting));
     for notice in lost_peers::notices(cid, lost_peers) {
         notify(this, cid, notice)?;
     }

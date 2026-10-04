@@ -42,11 +42,13 @@ impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
     /// orderings. Pruning by `cid` there would discard pending requests from
     /// unrelated peers that are still perfectly live.
     ///
-    /// A session teardown also stops the account's ILM: it ends with its session.
+    /// A session teardown also stops the account's ILM and its supervisor: they end with
+    /// the session.
     /// Its state is durable in LocalDB, so the next sign-in's ILM resumes it.
     pub fn prune_cid_scoped_state(&self, cid: u64, peer_cid: Option<u64>) -> PrunedCidState {
         if peer_cid.is_none() {
             self.ilm_hosts.stop(cid);
+            self.supervisors.stop(cid);
         }
         self.prune_cid_keyed_maps(cid, peer_cid)
     }
@@ -56,7 +58,8 @@ impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
     /// teardown; the ILM does not. The session is not over, and nothing on the
     /// way back starts an ILM again -- stopping it here left a signed-in account
     /// unable to send until a window happened to declare again. Kept running,
-    /// it holds what it has queued until the account's peers are back.
+    /// it holds what it has queued until the account's peers are back. The supervisor
+    /// is the one that brings them back, so it stays too.
     pub fn prune_dropped_link_state(&self, cid: u64) -> PrunedCidState {
         self.prune_cid_keyed_maps(cid, None)
     }

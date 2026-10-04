@@ -107,6 +107,10 @@ pub struct AgentCapabilities {
     pub agent_ilm: bool,
     /// A session may be attached to several connections (`AttachSession`).
     pub multi_window: bool,
+    /// The agent keeps this account's peers connected itself; see
+    /// `ServiceConnectionAccepted::supervises_p2p`.
+    #[serde(default)]
+    pub supervises_p2p: bool,
     pub request_id: Option<Uuid>,
 }
 

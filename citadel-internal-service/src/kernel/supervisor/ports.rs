@@ -21,8 +21,8 @@ pub(crate) trait NetworkWatch: Send + 'static {
 pub(crate) trait ServerLink: Send + Sync + 'static {
     /// One authenticated round trip to the server, bounded by `timeout`.
     fn probe(&self, timeout: Duration) -> BoxFuture<'static, ProbeOutcome>;
-    /// End the link now, so `kernel/reconnect` brings it back as it does for any drop.
-    /// `Err` says why it could not be ended, and leaves it as it was.
+    /// End the link now (no server ack) and reconnect it as a recovered drop is. `Err` says
+    /// why it could not be ended, and leaves it as it was.
     fn force_reconnect(&self) -> BoxFuture<'static, Result<(), String>>;
 }
 

@@ -38,47 +38,52 @@ fn unix_ms() -> u64 {
 /// the protocol keep-alive takes 45 minutes.
 const SILENT_DEATH_BUDGET: Duration = Duration::from_secs(30);
 
-/// A path that dies silently is noticed, and the windows are told, within the budget. What
-/// follows (the SDK ending the dead session locally, so the agent can reconnect at once)
-/// needs an SDK call that does not exist yet, so the path is then let go and the usual
-/// reconnect brings the link back.
+/// A path that dies silently is noticed, the SDK session abandoned, and the link brought
+/// back as a recovered drop is: same CID, no release of the stalled path, then the peer is
+/// redialled and messages flow.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_silent_dead_path_is_noticed_within_thirty_seconds() -> Result<(), Box<dyn Error>> {
+async fn a_silent_dead_path_is_replaced_and_the_peers_come_back() -> Result<(), Box<dyn Error>> {
     let mut pair = pair(Some(AGENT_SUPERVISOR), None).await?;
+    connect_peers(&mut pair).await?;
     let started = Instant::now();
     pair.proxy.stall();
-    let told = tokio::time::timeout(
-        SILENT_DEATH_BUDGET,
+    let mut told = Vec::new();
+    tokio::time::timeout(
+        SILENT_DEATH_BUDGET + RECOVERY_BUDGET,
         expect(&mut pair.a.stream, |response| match response {
-            InternalServiceResponse::SupervisorNotification(n) => Some((n.peer_cid, n.state)),
+            InternalServiceResponse::SupervisorNotification(n) => {
+                told.push((n.peer_cid, n.state));
+                None
+            }
+            InternalServiceResponse::ServerReconnected(r) => Some(r.cid),
             _ => None,
         }),
     )
     .await
-    .map_err(|_| format!("a dead path went unnoticed for {SILENT_DEATH_BUDGET:?}"))??;
-    eprintln!("noticed after {:?}", started.elapsed());
+    .map_err(|_| format!("the dead path was not replaced; told {told:?}"))??;
+    eprintln!("replaced after {:?}", started.elapsed());
     assert_eq!(
-        told,
-        (None, SupervisorState::Healing),
-        "the windows are told the account's link is being healed"
+        told.first(),
+        Some(&(None, SupervisorState::Healing)),
+        "the windows are told first: {told:?}"
     );
-    pair.proxy.release();
-    let mut told = Vec::new();
-    expect(&mut pair.a.stream, |response| match response {
-        InternalServiceResponse::SupervisorNotification(n) => {
-            told.push((n.peer_cid, n.state));
-            ((n.peer_cid, n.state) == (None, SupervisorState::Healed)).then_some(())
-        }
-        _ => None,
-    })
-    .await?;
     let peers = reconnect::list_peers(&mut pair.a.sink, &mut pair.a.stream, pair.a.cid).await?;
     assert!(
         matches!(peers, InternalServiceResponse::ListAllPeersResponse(_)),
-        "the link is back and carries traffic: {peers:?} after {told:?}"
+        "the same session carries traffic again: {peers:?}"
     );
+    let cid_a = pair.a.cid;
+    tokio::time::timeout(
+        REDIAL_BUDGET,
+        delivered_to(&mut pair.b, cid_a, "after the path died"),
+    )
+    .await
+    .map_err(|_| "the peer was not redialled, or its message not delivered")??;
     Ok(())
 }
+
+/// A reconnect and the redial that follows, once the dead path is noticed.
+const RECOVERY_BUDGET: Duration = Duration::from_secs(30);
 
 async fn connect_peers(pair: &mut supervised::Pair) -> Result<(), Box<dyn Error>> {
     let (a, b) = (pair.a.cid, pair.b.cid);

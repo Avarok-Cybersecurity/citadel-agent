@@ -17,6 +17,7 @@
 //! policy.rs decides (pure, tested); task.rs does the SDK I/O.
 
 mod attempt;
+pub(crate) mod force;
 mod link;
 mod lost_peers;
 pub(crate) mod policy;

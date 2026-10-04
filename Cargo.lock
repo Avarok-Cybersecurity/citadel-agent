@@ -292,7 +292,7 @@ dependencies = [
 [[package]]
 name = "async_ip"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#10c82c3ef6f50d794ff626750960691a7366f44a"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#201189b8e1efc04634bdb059b6461032ce315f50"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -852,7 +852,7 @@ dependencies = [
 [[package]]
 name = "citadel_crypt"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#10c82c3ef6f50d794ff626750960691a7366f44a"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#201189b8e1efc04634bdb059b6461032ce315f50"
 dependencies = [
  "arrayvec",
  "async-trait",
@@ -885,7 +885,7 @@ dependencies = [
 [[package]]
 name = "citadel_io"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#10c82c3ef6f50d794ff626750960691a7366f44a"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#201189b8e1efc04634bdb059b6461032ce315f50"
 dependencies = [
  "bytes",
  "citadel_io_macros 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis)",
@@ -929,7 +929,7 @@ dependencies = [
 [[package]]
 name = "citadel_io_macros"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#10c82c3ef6f50d794ff626750960691a7366f44a"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#201189b8e1efc04634bdb059b6461032ce315f50"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -949,7 +949,7 @@ dependencies = [
 [[package]]
 name = "citadel_logging"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#10c82c3ef6f50d794ff626750960691a7366f44a"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#201189b8e1efc04634bdb059b6461032ce315f50"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -967,7 +967,7 @@ dependencies = [
 [[package]]
 name = "citadel_media"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#10c82c3ef6f50d794ff626750960691a7366f44a"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#201189b8e1efc04634bdb059b6461032ce315f50"
 dependencies = [
  "bytes",
 ]
@@ -975,7 +975,7 @@ dependencies = [
 [[package]]
 name = "citadel_pqcrypto"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#10c82c3ef6f50d794ff626750960691a7366f44a"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#201189b8e1efc04634bdb059b6461032ce315f50"
 dependencies = [
  "aes-gcm",
  "ascon-aead",
@@ -1003,7 +1003,7 @@ dependencies = [
 [[package]]
 name = "citadel_proto"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#10c82c3ef6f50d794ff626750960691a7366f44a"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#201189b8e1efc04634bdb059b6461032ce315f50"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1047,7 +1047,7 @@ dependencies = [
 [[package]]
 name = "citadel_sdk"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#10c82c3ef6f50d794ff626750960691a7366f44a"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#201189b8e1efc04634bdb059b6461032ce315f50"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1084,7 +1084,7 @@ dependencies = [
 [[package]]
 name = "citadel_treekem"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#10c82c3ef6f50d794ff626750960691a7366f44a"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#201189b8e1efc04634bdb059b6461032ce315f50"
 dependencies = [
  "arrayvec",
  "bincode",
@@ -1102,7 +1102,7 @@ dependencies = [
 [[package]]
 name = "citadel_types"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#10c82c3ef6f50d794ff626750960691a7366f44a"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#201189b8e1efc04634bdb059b6461032ce315f50"
 dependencies = [
  "bincode",
  "bytes",
@@ -1121,7 +1121,7 @@ dependencies = [
 [[package]]
 name = "citadel_user"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#10c82c3ef6f50d794ff626750960691a7366f44a"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#201189b8e1efc04634bdb059b6461032ce315f50"
 dependencies = [
  "async-trait",
  "bincode",
@@ -1152,7 +1152,7 @@ dependencies = [
 [[package]]
 name = "citadel_wire"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#10c82c3ef6f50d794ff626750960691a7366f44a"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#201189b8e1efc04634bdb059b6461032ce315f50"
 dependencies = [
  "anyhow",
  "async-trait-with-sync",
@@ -3205,7 +3205,7 @@ dependencies = [
 [[package]]
 name = "netbeam"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#10c82c3ef6f50d794ff626750960691a7366f44a"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=feat%2Fconnection-supervisor-apis#201189b8e1efc04634bdb059b6461032ce315f50"
 dependencies = [
  "anyhow",
  "async-stream",

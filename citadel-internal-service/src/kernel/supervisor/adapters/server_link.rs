@@ -1,14 +1,12 @@
 //! `ServerLink` over the account's SDK session.
 
-use crate::kernel::reconnect::LinkState;
+use crate::kernel::reconnect::{force, LinkState};
 use crate::kernel::supervisor::ports::ServerLink;
 use crate::kernel::supervisor::types::ProbeOutcome;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_sdk::logging::info;
-use citadel_sdk::prelude::{
-    ProtocolRemoteExt, ProtocolRemoteTargetExt, Ratchet, ServerProbeOutcome,
-};
+use citadel_sdk::prelude::{ProtocolRemoteExt, Ratchet, ServerProbeOutcome};
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use std::time::Duration;
@@ -45,22 +43,19 @@ impl<T: IOInterface + Sync, R: Ratchet> ServerLink for KernelLink<T, R> {
         .boxed()
     }
 
-    /// Asks the SDK to disconnect the session, which it does only with the server's
-    /// confirmation (up to 30 s). A confirmed disconnect is reported as the drop it is, and
-    /// `kernel/reconnect` brings the session back as for any other. On a path that is
-    /// truly dead nothing confirms it, so the link is left as it was: the SDK has no call
-    /// that ends a session locally, and a reconnect started without one is refused
-    /// ("Session ... already exists") until its give-up signs the account out.
+    /// Abandons the SDK session locally, with no server ack, then runs the reconnect a
+    /// dropped link gets: it signs in again with the stored credentials, keeps the CID, and
+    /// the resume token replaces the server's stale copy. `Err` when the SDK holds no such
+    /// session, and the link is left as it was.
     fn force_reconnect(&self) -> BoxFuture<'static, Result<(), String>> {
-        let remote = self
-            .this
-            .server_connection_map
-            .read()
-            .get(&self.cid)
-            .map(|conn| conn.client_server_remote.clone());
+        let (this, cid) = (self.this.clone(), self.cid);
         async move {
-            let remote = remote.ok_or("the session is gone")?;
-            remote.disconnect().await.map_err(|err| format!("{err:?}"))
+            this.remote()
+                .abandon_session(cid)
+                .await
+                .map_err(|err| format!("{err:?}"))?;
+            force::restart(&this, cid);
+            Ok(())
         }
         .boxed()
     }

@@ -5,6 +5,9 @@ pub mod group;
 pub mod group_rejoin;
 pub mod multi_window;
 mod ports;
+pub mod pq;
+pub mod pq_accounts;
+pub mod pq_window;
 pub use ports::get_free_port;
 
 /// The launch token every test agent's notice plane admits (kernel/notices).
@@ -161,6 +164,7 @@ pub async fn register_and_connect_to_server<
             session_security_settings,
             connect_after_register: false,
             server_password: server_password.clone(),
+            admission_token: None,
         };
         send(&mut sink, register_command).await?;
 
@@ -177,13 +181,16 @@ pub async fn register_and_connect_to_server<
             // now, connect to the server
             let command = InternalServiceRequest::Connect {
                 username,
-                password,
+                password: Some(password),
+                security_key: false,
+                recovery_code: None,
                 connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
                 udp_mode: Default::default(),
                 keep_alive_timeout: None,
                 session_security_settings,
                 request_id: Uuid::new_v4(),
                 server_password: server_password.clone(),
+                admission_token: None,
             };
 
             send(&mut sink, command).await?;

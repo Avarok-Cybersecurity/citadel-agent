@@ -1,19 +1,19 @@
 //! The SDK side of a reconnect: mark the session, retry per the policy, install the
 //! new channel or give up. Every decision is policy.rs's.
 
+use super::attempt;
 use super::link::put_link;
 use super::lost_peers;
-use super::policy::{self, DropAction, FailureKind, GiveUp, Next, ReconnectPolicy};
+use super::policy::{self, DropAction, FailureKind, GiveUp, Next};
 use super::report::{fail, logged, notify};
 use super::sign_in;
-use super::{Credentials, Handoff, LinkState, LOG_TARGET};
+use super::{Credentials, Handoff, LinkState, Reauth, LOG_TARGET};
 use crate::kernel::{group_channels, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{InternalServiceResponse, ServerConnectionLost};
 use citadel_sdk::logging::{info, warn};
 use citadel_sdk::prelude::{
-    AuthenticationRequest, CitadelClientServerConnection, NetworkError, ProtocolRemoteExt,
-    ProtocolRemoteTargetExt, Ratchet,
+    CitadelClientServerConnection, NetworkError, ProtocolRemoteTargetExt, Ratchet,
 };
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -133,12 +133,16 @@ async fn run<T: IOInterface + Sync, R: Ratchet>(
             info!(target: LOG_TARGET, "[Reconnect] {cid} is no longer this run's to reconnect (ended, signed in to, or handed to a newer run); stopping");
             return;
         };
+        let password = match credentials.reauth.clone() {
+            Reauth::Password(password) => password,
+            Reauth::NeedsUser(reason) => return fail(this, cid, generation, reason.to_string()),
+        };
         let policy = this
             .reconnect_policy
             .for_keep_alive(credentials.keep_alive_timeout);
         let connect_request_id = credentials.connect_request_id;
         let settings = credentials.session_security_settings;
-        let failure = match attempt_once(this, &policy, username, credentials).await {
+        let failure = match attempt::once(this, &policy, username, password, credentials).await {
             Ok(connected) if connected.cid == cid => {
                 return install(
                     this,
@@ -201,29 +205,6 @@ fn still_reconnecting<R: Ratchet>(
     let conn = lock.get(&cid)?;
     sign_in::attempt_wanted(conn.link, conn.handoff.generation(), generation)
         .then(|| (conn.username.clone(), conn.reconnect.clone()))
-}
-
-async fn attempt_once<T: IOInterface + Sync, R: Ratchet>(
-    this: &CitadelWorkspaceService<T, R>,
-    policy: &ReconnectPolicy,
-    username: String,
-    credentials: Credentials,
-) -> Result<CitadelClientServerConnection<R>, NetworkError> {
-    let connect = this.remote().connect(
-        AuthenticationRequest::credentialed(username, credentials.password),
-        crate::kernel::requests::connect_mode::server_connect_mode(
-            credentials.connect_mode,
-            crate::kernel::requests::connect_mode::LoginOrigin::AutomaticReconnect,
-        ),
-        credentials.udp_mode,
-        credentials.keep_alive_timeout,
-        credentials.session_security_settings,
-        credentials.server_password,
-    );
-    match tokio::time::timeout(policy.attempt_timeout, connect).await {
-        Ok(result) => result,
-        Err(_) => Err(NetworkError::timeout(policy.attempt_timeout.as_secs())),
-    }
 }
 
 async fn install<T: IOInterface + Sync, R: Ratchet>(

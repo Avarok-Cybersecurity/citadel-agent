@@ -15,6 +15,8 @@ bytes = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }
 citadel-internal-service-macros = { workspace = true }
 custom_debug = { workspace = true }
+# Recovery codes are wiped when dropped (src/sign_in.rs). Already in the tree through the SDK.
+zeroize = "1.8"
 
 # TypeScript bindings
 ts-rs = { version = "11", optional = true, features = [

@@ -21,15 +21,18 @@
 //! - `connect.rs` (this file) → `remote.connect()` → Connects to EXISTING account, SAME CID
 
 use crate::kernel::reconnect::sign_in::{self, SignIn};
-use crate::kernel::reconnect::LinkState;
+use crate::kernel::reconnect::{LinkState, Reauth};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::session_route::SessionRoute;
+use crate::kernel::sign_in::factors;
+use crate::kernel::sign_in::key_relay::Asker;
+use crate::kernel::sign_in::{self as pq_sign_in, SessionSignIn};
 use crate::kernel::{create_client_server_remote, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     ConnectFailure, InternalServiceRequest, InternalServiceResponse,
 };
-use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt, Ratchet};
+use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt, Ratchet, SessionScope};
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
@@ -41,6 +44,9 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         request_id,
         username,
         password,
+        security_key,
+        recovery_code,
+        admission_token,
         connect_mode,
         udp_mode,
         keep_alive_timeout,
@@ -70,6 +76,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 cid: 0,
                 message: format!("Connection already in progress for user {}", username),
                 request_id: Some(request_id),
+                reason_code: None,
             });
             return Some(HandledRequestResult { response, uuid });
         }
@@ -118,6 +125,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                             cid, e
                         ),
                         request_id: Some(request_id),
+                        reason_code: None,
                     });
                     return Some(HandledRequestResult { response, uuid });
                 }
@@ -140,12 +148,13 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         let authorized = match tracked {
             sign_in::Tracked::Stale => false,
             sign_in::Tracked::Live | sign_in::Tracked::Reconnecting => {
-                let presented = crate::kernel::credential_fingerprint::derive(
-                    remote,
-                    &username,
-                    password_for_fingerprint.clone(),
-                )
-                .await;
+                let presented = match password_for_fingerprint.clone() {
+                    Some(password) => {
+                        crate::kernel::credential_fingerprint::derive(remote, &username, password)
+                            .await
+                    }
+                    None => None,
+                };
                 let lock = this.server_connection_map.read();
                 lock.get(&cid).is_some_and(|conn| {
                     crate::kernel::credential_fingerprint::matches(
@@ -172,6 +181,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     cid: 0,
                     message: "Invalid username or password".to_string(),
                     request_id: Some(request_id),
+                    reason_code: None,
                 });
                 return Some(HandledRequestResult { response, uuid });
             }
@@ -194,7 +204,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             SignIn::TakeOverReconnect => {
                 citadel_sdk::logging::info!(target: "citadel", "[Connect] Session {} for user {} is reconnecting; the sign-in takes it over", cid, username);
                 let credentials = crate::kernel::reconnect::Credentials {
-                    password,
+                    reauth: pq_sign_in::reauth(SessionScope::Full, false, password),
                     connect_mode,
                     udp_mode,
                     keep_alive_timeout,
@@ -227,25 +237,46 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
     // Save username for cleanup (will be moved into SDK connect)
     let username_for_cleanup = username.clone();
-    let reconnect_credentials = crate::kernel::reconnect::Credentials {
-        password: password.clone(),
-        connect_mode,
-        udp_mode,
-        keep_alive_timeout,
-        session_security_settings,
-        server_password: server_password.clone(),
-        connect_request_id: request_id,
+    let asker = Asker {
+        audience: vec![uuid],
+        cid: 0,
+        request_id,
+    };
+    let (challenges, clients) = (&this.key_challenges, &this.tx_to_localhost_clients);
+    let offered = factors::begin(
+        challenges,
+        clients,
+        asker,
+        factors::Offer {
+            password: password.clone(),
+            security_key,
+            recovery_code,
+            admission: admission_token,
+        },
+    );
+    let (factors, underway) = match offered {
+        Ok(begun) => begun,
+        Err(message) => {
+            cleanup_username(this, &username_for_cleanup);
+            let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                cid: 0,
+                message,
+                request_id: Some(request_id),
+                reason_code: None,
+            });
+            return Some(HandledRequestResult { response, uuid });
+        }
     };
 
     // Proceed with new connection (no existing session or stale session was cleaned)
     match remote
         .connect(
-            AuthenticationRequest::credentialed(username, password),
+            AuthenticationRequest::sign_in(username, factors),
             connect_mode,
             udp_mode,
             keep_alive_timeout,
             session_security_settings,
-            server_password,
+            server_password.clone(),
         )
         .await
     {
@@ -269,7 +300,29 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             // The liveness check that is actually used elsewhere is
             // `remote.sessions()`, which does not go through a subscription.
 
-            let (sink, stream) = conn_success.split();
+            let scope = underway.scope;
+            let reconnect_credentials = crate::kernel::reconnect::Credentials {
+                reauth: underway.finish(password.clone()),
+                connect_mode,
+                udp_mode,
+                keep_alive_timeout,
+                session_security_settings,
+                server_password,
+                connect_request_id: request_id,
+            };
+            let (sink, stream, handle) = match pq_sign_in::open(conn_success) {
+                Ok(opened) => opened,
+                Err(err) => {
+                    cleanup_username(this, &username_for_cleanup);
+                    let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                        cid,
+                        message: err.into_string(),
+                        request_id: Some(request_id),
+                        reason_code: None,
+                    });
+                    return Some(HandledRequestResult { response, uuid });
+                }
+            };
             let client_server_remote = create_client_server_remote(
                 stream.vconn_type,
                 remote.clone(),
@@ -309,6 +362,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                             cid
                         ),
                         request_id: Some(request_id),
+                        reason_code: None,
                     });
                     return Some(HandledRequestResult { response, uuid });
                 }
@@ -368,6 +422,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                             cid
                         ),
                         request_id: Some(request_id),
+                        reason_code: None,
                     });
                     return Some(HandledRequestResult { response, uuid });
                 }
@@ -389,13 +444,20 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             };
 
             // Recorded from the password the SERVER just accepted, so a later
-            // reuse request has something to prove itself against.
-            let fingerprint = crate::kernel::credential_fingerprint::derive(
-                remote,
-                &username,
-                password_for_fingerprint,
-            )
-            .await;
+            // reuse request has something to prove itself against -- and only when the
+            // password is all the sign-in proved. A session a key or a recovery code opened
+            // records none, so neither a reuse nor an attach can reach it on a password.
+            let fingerprint = match &reconnect_credentials.reauth {
+                Reauth::Password(password) => {
+                    crate::kernel::credential_fingerprint::derive(
+                        remote,
+                        &username,
+                        password.clone(),
+                    )
+                    .await
+                }
+                Reauth::NeedsUser(_) => None,
+            };
 
             let subscribers = crate::kernel::session_subscribers::SessionSubscribers::new(uuid);
             let connection_struct = Connection::new(
@@ -407,6 +469,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 server_host,
                 fingerprint,
                 reconnect_credentials,
+                SessionSignIn { handle, scope },
             );
             {
                 let mut map = this.server_connection_map.write();
@@ -430,7 +493,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 request_id,
             );
 
-            this.host_ilm_for(cid, uuid).await;
+            // A recovery session may not message: the server drops it, so no ILM is hosted.
+            if scope == SessionScope::Full {
+                this.host_ilm_for(cid, uuid).await;
+            }
             cleanup_username(this, &username_for_cleanup);
             Some(HandledRequestResult { response, uuid })
         }
@@ -438,6 +504,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         Err(err) => {
             let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
                 cid: 0,
+                reason_code: pq_sign_in::failure_reason(err.code),
                 message: err.into_string(),
                 request_id: Some(request_id),
             });

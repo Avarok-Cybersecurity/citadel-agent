@@ -16,7 +16,7 @@
 
 use super::link::put_link;
 use super::report::logged;
-use super::{sign_in, task, Credentials, LinkState, LOG_TARGET};
+use super::{sign_in, task, Credentials, LinkState, Reauth, LOG_TARGET};
 use crate::kernel::{CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -44,6 +44,7 @@ pub(crate) async fn take_over<T: IOInterface + Sync, R: Ratchet>(
             cid,
             message,
             request_id: Some(request_id),
+            reason_code: None,
         })
     };
     let success = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
@@ -51,6 +52,13 @@ pub(crate) async fn take_over<T: IOInterface + Sync, R: Ratchet>(
         request_id: Some(request_id),
     });
 
+    // The caller proved the password (its fingerprint matched), so the sign-in is a password
+    // one; nothing else is ever taken over.
+    let Reauth::Password(password) = credentials.reauth.clone() else {
+        return failure(format!(
+            "Session {cid} cannot be taken over without its user"
+        ));
+    };
     let gate = {
         let mut lock = this.server_connection_map.write();
         match lock.get_mut(&cid) {
@@ -95,7 +103,7 @@ pub(crate) async fn take_over<T: IOInterface + Sync, R: Ratchet>(
     let connect = this
         .remote()
         .connect(
-            AuthenticationRequest::credentialed(username, credentials.password.clone()),
+            AuthenticationRequest::credentialed(username, password),
             credentials.connect_mode,
             credentials.udp_mode,
             credentials.keep_alive_timeout,
@@ -166,6 +174,7 @@ fn hand_back<T: IOInterface + Sync, R: Ratchet>(
             cid,
             message: format!("Session {cid} was ended during the sign-in"),
             request_id: Some(request_id),
+            reason_code: None,
         });
     };
     task::resume(this, cid, generation);

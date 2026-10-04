@@ -148,12 +148,15 @@ pub async fn connect_observing(
         InternalServiceRequest::Connect {
             request_id,
             username: username.to_string(),
-            password: password.as_bytes().to_vec().into(),
+            password: Some(password.as_bytes().to_vec().into()),
+            security_key: false,
+            recovery_code: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
             session_security_settings: Default::default(),
             server_password: None,
+            admission_token: None,
         },
     )
     .await?;

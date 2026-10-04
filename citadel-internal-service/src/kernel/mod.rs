@@ -62,6 +62,7 @@ pub(crate) mod server_host;
 pub(crate) mod session_route;
 pub(crate) mod session_subscribers;
 pub(crate) mod session_wait;
+pub(crate) mod sign_in;
 pub(crate) mod store_keys;
 mod tick_updater;
 pub mod updates;
@@ -119,6 +120,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) notices: Arc<notices::NoticeHub>,
     /// The agent's updater, when the shipped binary configured one (kernel/updates).
     pub(crate) updates: Arc<updates::UpdatesSlot>,
+    /// Security-key challenges waiting for a window's touch (kernel/sign_in/key_relay.rs).
+    pub(crate) key_challenges: Arc<sign_in::key_relay::KeyChallenges>,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -141,6 +144,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             client_capabilities: self.client_capabilities.clone(),
             notices: self.notices.clone(),
             updates: self.updates.clone(),
+            key_challenges: self.key_challenges.clone(),
             io: self.io.clone(),
         }
     }
@@ -168,6 +172,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             conversations: Default::default(),
             client_capabilities: Default::default(),
             updates: Default::default(),
+            key_challenges: Default::default(),
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -312,6 +317,8 @@ pub struct Connection<R: Ratchet> {
     /// What the session was opened with, so a server drop can be reconnected.
     /// In memory only. See kernel/reconnect/mod.rs.
     pub(crate) reconnect: reconnect::Credentials,
+    /// What the sign-in proved, and the SDK handle for managing the account's factors.
+    pub(crate) sign_in: sign_in::SessionSignIn<R>,
     pub(crate) link: reconnect::LinkState,
     pub(crate) handoff: reconnect::Handoff,
 }
@@ -371,6 +378,7 @@ impl<R: Ratchet> Connection<R> {
         server_host: Option<String>,
         credential_fingerprint: Option<Vec<u8>>,
         reconnect: reconnect::Credentials,
+        sign_in: sign_in::SessionSignIn<R>,
     ) -> Self {
         Connection {
             peers: HashMap::new(),
@@ -389,6 +397,7 @@ impl<R: Ratchet> Connection<R> {
             credential_fingerprint,
             window_relay: None,
             reconnect,
+            sign_in,
             link: reconnect::LinkState::Up,
             handoff: reconnect::Handoff::default(),
         }

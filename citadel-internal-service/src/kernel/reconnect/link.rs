@@ -28,7 +28,13 @@ pub(super) async fn put_link<T: IOInterface + Sync, R: Ratchet>(
     connect_request_id: Uuid,
     admit: impl FnOnce(&mut Connection<R>) -> bool,
 ) -> bool {
-    let (sink, stream) = connected.split();
+    let (sink, stream, handle) = match crate::kernel::sign_in::open(connected) {
+        Ok(opened) => opened,
+        Err(err) => {
+            logged(cid, "opening the new link", Err(err));
+            return false;
+        }
+    };
     let remote = create_client_server_remote(stream.vconn_type, this.remote().clone(), settings);
     let installed = {
         let mut lock = this.server_connection_map.write();
@@ -36,6 +42,7 @@ pub(super) async fn put_link<T: IOInterface + Sync, R: Ratchet>(
             Some(conn) => admit(conn).then(|| {
                 conn.sink_to_server = Arc::new(tokio::sync::Mutex::new(sink));
                 conn.client_server_remote = remote.clone();
+                conn.sign_in.handle = handle;
                 conn.link = LinkState::Up;
                 conn.subscribers.clone()
             }),

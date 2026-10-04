@@ -9,6 +9,8 @@ vendored = ["citadel_sdk/vendored"]
 
 [dependencies]
 citadel_sdk = { workspace = true }
+# A server with post-quantum sign-in (src/pq.rs): its settings are not in the SDK prelude.
+citadel_user = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt", "macros"] }
 citadel-internal-service = { workspace = true }
 citadel-internal-service-types = { workspace = true }

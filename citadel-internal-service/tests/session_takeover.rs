@@ -285,13 +285,16 @@ mod tests {
         // Connect is refused with SessionManagerSessionAlreadyExists.
         other.0.send(InternalServiceRequest::Connect {
             username: format!("{tag}.0"),
-            password: b"secret_0".to_vec().into(),
+            password: Some(b"secret_0".to_vec().into()),
+            security_key: false,
+            recovery_code: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
             session_security_settings: Default::default(),
             request_id: Uuid::new_v4(),
             server_password: None,
+            admission_token: None,
         })?;
 
         let deadline = tokio::time::Instant::now() + ARRIVES;

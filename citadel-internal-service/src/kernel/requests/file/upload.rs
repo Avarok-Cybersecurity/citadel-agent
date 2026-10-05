@@ -1,3 +1,4 @@
+use super::transfer_root::BrowserTransferRoot;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -11,6 +12,7 @@ use citadel_sdk::prelude::{
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -60,30 +62,21 @@ const MAX_BYTE_CONTENTS_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
 /// 256 MiB ≈ 16 concurrent max-size uploads in flight.
 const MAX_BROWSER_TRANSFER_TOTAL_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB
 
-/// Bytes of in-flight `ByteContents` uploads currently being written (between
-/// the aggregate-cap reservation and the write completing). Added to the
-/// on-disk total when enforcing `MAX_BROWSER_TRANSFER_TOTAL_BYTES` so that
-/// concurrent uploads cannot all observe the same on-disk size and
-/// collectively blow past the cap. Process-wide; resets to 0 on restart (the
-/// startup sweep reclaims any crash leftovers).
-static IN_FLIGHT_BROWSER_TRANSFER_BYTES: AtomicU64 = AtomicU64::new(0);
-
-/// RAII guard that releases an in-flight byte reservation on drop, so the
-/// reservation is returned even if the writing task panics/unwinds (not just
-/// on the normal return paths). Created only AFTER a reservation is accepted.
-struct InFlightReservation(u64);
+/// RAII guard that releases an in-flight byte reservation (the bytes of an
+/// upload being written, counted with the root's on-disk total so concurrent
+/// uploads cannot all observe the same size and collectively pass the cap) on
+/// drop, so it is returned even if the writing task panics/unwinds. Created
+/// only AFTER a reservation is accepted. Each root counts its own
+/// (transfer_root.rs); each request gets a UUID-named subdirectory of the root
+/// containing one file (preserving the user's filename), removed by a
+/// delayed-cleanup task scheduled when the file is created.
+struct InFlightReservation(Arc<AtomicU64>, u64);
 
 impl Drop for InFlightReservation {
     fn drop(&mut self) {
-        IN_FLIGHT_BROWSER_TRANSFER_BYTES.fetch_sub(self.0, Ordering::SeqCst);
+        self.0.fetch_sub(self.1, Ordering::SeqCst);
     }
 }
-
-/// Subdirectory under `std::env::temp_dir()` where browser-uploaded payloads
-/// are materialised. Each request gets its own UUID-named subdirectory
-/// containing one file (preserving the user's filename), removed by a
-/// delayed-cleanup task scheduled when the file is created.
-const BROWSER_TRANSFER_SUBDIR: &str = "citadel-browser-transfers";
 
 /// How long a `ByteContents` temp file persists before the cleanup task
 /// removes it.
@@ -383,11 +376,8 @@ fn browser_transfer_root_bytes(root: &Path) -> u64 {
 /// blocking I/O does not park a worker that another task is waiting
 /// on. Errors are logged but not propagated — a sweep failure must
 /// not block service startup.
-pub fn sweep_stale_browser_transfers() {
-    sweep_browser_transfers_in(
-        &std::env::temp_dir().join(BROWSER_TRANSFER_SUBDIR),
-        TEMP_FILE_TTL,
-    );
+pub fn sweep_stale_browser_transfers(root: &BrowserTransferRoot) {
+    sweep_browser_transfers_in(root.path(), TEMP_FILE_TTL);
 }
 
 /// Inner sweep that operates on an arbitrary root path. Split out so
@@ -506,27 +496,12 @@ fn schedule_temp_dir_cleanup(dir: PathBuf) {
 /// OR failure), so partial states like "directory created but write failed"
 /// do not leak the empty subdir.
 async fn materialize_byte_contents(
+    transfers: &BrowserTransferRoot,
     file_name: &str,
     data: Vec<u8>,
 ) -> Result<PathBuf, NetworkError> {
-    materialize_byte_contents_in(
-        &std::env::temp_dir().join(BROWSER_TRANSFER_SUBDIR),
-        file_name,
-        data,
-    )
-    .await
-}
-
-/// Inner materialise that writes under an arbitrary `root`. Split out (like
-/// `sweep_browser_transfers_in`) so tests can use an isolated, private
-/// per-test root instead of the shared production
-/// `$TMPDIR/citadel-browser-transfers/` — which other processes (or a stale
-/// pre-upgrade directory) may have left at non-private perms.
-async fn materialize_byte_contents_in(
-    root: &Path,
-    file_name: &str,
-    data: Vec<u8>,
-) -> Result<PathBuf, NetworkError> {
+    let root = transfers.path();
+    let in_flight = transfers.in_flight().clone();
     let safe_name = sanitize_file_name(file_name);
 
     // Each request gets its own UUID-named subdirectory under the shared
@@ -557,14 +532,13 @@ async fn materialize_byte_contents_in(
         // a later racer sees the earlier racers' reservations included in
         // `in_flight_before` and is rejected if there's no room.
         let reserve = data.len() as u64;
-        let in_flight_before =
-            IN_FLIGHT_BROWSER_TRANSFER_BYTES.fetch_add(reserve, Ordering::SeqCst);
+        let in_flight_before = in_flight.fetch_add(reserve, Ordering::SeqCst);
         // RAII release so the reservation is given back on EVERY exit from
         // here on — normal return, early error, or a panic that unwinds the
         // spawn_blocking task (which surfaces as a JoinError the closure never
         // gets to clean up). Without this a panicked upload would leak its
         // reservation forever, permanently shrinking the effective cap.
-        let _reservation = InFlightReservation(reserve);
+        let _reservation = InFlightReservation(in_flight, reserve);
         let on_disk = browser_transfer_root_bytes(&root_for_blocking);
         if on_disk
             .saturating_add(in_flight_before)
@@ -776,7 +750,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     MAX_BYTE_CONTENTS_BYTES
                 )))
             } else {
-                materialize_byte_contents(&file_name, data).await
+                materialize_byte_contents(&this.browser_transfers, &file_name, data).await
             }
         }
     };
@@ -954,7 +928,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
 #[cfg(test)]
 mod tests {
-    use super::{materialize_byte_contents_in, sanitize_file_name};
+    use super::super::transfer_root::BrowserTransferRoot;
+    use super::{materialize_byte_contents, sanitize_file_name};
 
     #[test]
     fn sanitize_strips_path_components() {
@@ -1145,7 +1120,12 @@ mod tests {
         let root_as_file = base.join("not-a-dir");
         std::fs::write(&root_as_file, b"x").expect("create regular file at root path");
 
-        let result = materialize_byte_contents_in(&root_as_file, "file.bin", vec![1, 2, 3]).await;
+        let result = materialize_byte_contents(
+            &BrowserTransferRoot::at(root_as_file.clone()),
+            "file.bin",
+            vec![1, 2, 3],
+        )
+        .await;
         assert!(
             result.is_err(),
             "expected IO error when root is a file, got Ok({:?})",
@@ -1182,9 +1162,13 @@ mod tests {
     #[tokio::test]
     async fn materialize_writes_payload_to_temp_path() {
         let (root, _guard) = isolated_private_root("materialize_ok");
-        let path = materialize_byte_contents_in(&root, "hello.bin", vec![0xDE, 0xAD, 0xBE, 0xEF])
-            .await
-            .expect("materialize should succeed");
+        let path = materialize_byte_contents(
+            &BrowserTransferRoot::at(root.clone()),
+            "hello.bin",
+            vec![0xDE, 0xAD, 0xBE, 0xEF],
+        )
+        .await
+        .expect("materialize should succeed");
 
         // Path lives under the root we provided.
         assert!(

@@ -83,8 +83,12 @@ fn spawn(_kind: Server, admission: Option<Arc<dyn AdmissionPolicy>>) -> SocketAd
 /// at once: the socket is bound before this returns, and opening waits for the greeting.
 pub async fn spawn_agent() -> Result<SocketAddr, Box<dyn Error>> {
     let bind: SocketAddr = format!("127.0.0.1:{}", crate::get_free_port()).parse()?;
-    let kernel =
-        CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind, SERVER_RECONNECT).await?;
+    let kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+        bind,
+        SERVER_RECONNECT,
+        crate::test_transfers(),
+    )
+    .await?;
     let node = test_stun_servers()
         .apply(&mut NodeBuilder::<StackedRatchet>::default())
         .with_backend(test_backend())

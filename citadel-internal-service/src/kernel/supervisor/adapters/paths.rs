@@ -59,8 +59,11 @@ mod tests {
 
     #[tokio::test]
     async fn re_arming_a_peer_with_no_live_connection_is_refused_not_ignored() {
-        let (_connector, this): (_, Svc) =
-            CitadelWorkspaceService::new_in_memory(crate::SERVER_RECONNECT);
+        let transfers = tempfile::tempdir().unwrap();
+        let (_connector, this): (_, Svc) = CitadelWorkspaceService::new_in_memory(
+            crate::SERVER_RECONNECT,
+            crate::BrowserTransferRoot::at(transfers.path().to_path_buf()),
+        );
         let paths = SdkPaths {
             supervisors: this.supervisors.clone(),
             this,

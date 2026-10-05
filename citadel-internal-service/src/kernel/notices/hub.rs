@@ -2,7 +2,7 @@
 
 use crate::kernel::session_route::{deliver, Clients};
 use citadel_internal_service_types::{InternalServiceResponse, NativeNotice, NoticeRows};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -40,6 +40,8 @@ pub(crate) struct NoticeHub {
     /// connection -> (account, conversation it shows, if any)
     focus: RwLock<HashMap<Uuid, (u64, Option<u64>)>>,
     notifiers: Vec<Arc<dyn Notifier>>,
+    /// What the declared windows were last told `is_heard` is.
+    told_heard: Mutex<bool>,
 }
 
 type Subscribers = Arc<RwLock<HashSet<Uuid>>>;
@@ -103,6 +105,7 @@ impl NoticeHub {
             subscribers,
             focus: RwLock::default(),
             notifiers,
+            told_heard: Mutex::new(false),
         }
     }
 
@@ -144,6 +147,19 @@ impl NoticeHub {
         } else if focus.get(&connection).is_some_and(|(held, _)| *held == cid) {
             focus.remove(&connection);
         }
+    }
+
+    /// `is_heard` now, if it is not what the windows were last told; recorded as told.
+    ///
+    /// Read and recorded under one lock, so two callers racing on one change
+    /// cannot both report it, nor report it out of order.
+    pub(crate) fn heard_changed(&self) -> Option<bool> {
+        let mut told = self.told_heard.lock();
+        let now = self.is_heard();
+        (now != *told).then(|| {
+            *told = now;
+            now
+        })
     }
 
     /// What every focused, still-connected window of `cid` shows.

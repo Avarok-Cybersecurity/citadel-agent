@@ -93,3 +93,21 @@ pub struct NoticeFailure {
     pub message: String,
     pub request_id: Option<Uuid>,
 }
+
+/// Whether anything on the agent's side shows its native notices, told to every
+/// window that declared it hosts no ILM of its own: on declaring (in
+/// `AgentCapabilities::notices_heard`) and here whenever it changes -- the
+/// menu-bar app subscribed, or its connection went away.
+///
+/// A window that leaves a hosted message to the agent must know someone will
+/// show it: Windows and Linux have no notifier, so there the window shows it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct NoticesHeardNotification {
+    /// 0: the notice plane is the agent's, not a session's.
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    pub heard: bool,
+    pub request_id: Option<Uuid>,
+}

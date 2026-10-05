@@ -116,6 +116,7 @@ export * from './NoticeFailure.js';
 export * from './NoticeKind.js';
 export * from './NoticeRows.js';
 export * from './NoticeTarget.js';
+export * from './NoticesHeardNotification.js';
 export * from './NotificationPreview.js';
 export * from './P2pPathReport.js';
 export * from './PageTimestamps.js';

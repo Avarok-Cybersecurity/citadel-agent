@@ -57,8 +57,11 @@ const MAX_BYTE_CONTENTS_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
 /// reject the request if it would push the total past this bound. It is a
 /// best-effort guard (a concurrent racer can briefly overshoot), not a hard
 /// quota — the intent is to deny disk-exhaustion, not to meter to the byte.
-/// 256 MiB ≈ 16 concurrent max-size uploads in flight.
-const MAX_BROWSER_TRANSFER_TOTAL_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB
+/// It equals the ceiling on one staged browser file (kernel/staged_uploads.rs),
+/// so a file at that ceiling always fits an otherwise empty root; payloads
+/// leave the root when their transfer ends (browser_payload.rs).
+pub(super) const MAX_BROWSER_TRANSFER_TOTAL_BYTES: u64 =
+    crate::kernel::staged_uploads::MAX_STAGED_UPLOAD_BYTES;
 
 /// RAII guard that releases an in-flight byte reservation (the bytes of an
 /// upload being written, counted with the root's on-disk total so concurrent
@@ -90,7 +93,7 @@ impl Drop for InFlightReservation {
 /// window even without an external sweeper. The bound matters because the
 /// 16 MiB per-file cap (`MAX_BYTE_CONTENTS_BYTES`) keeps the worst-case
 /// leak bounded in absolute terms.
-const TEMP_FILE_TTL: Duration = Duration::from_secs(600);
+pub(super) const TEMP_FILE_TTL: Duration = Duration::from_secs(600);
 
 /// Windows device names reserved by the OS (case-insensitive, with or without
 /// an extension). Creating a file with one of these stems triggers cryptic
@@ -122,7 +125,7 @@ const WINDOWS_RESERVED_NAMES: [&str; 22] = [
 /// The original name is only ever used as the *basename* inside a UUID-named
 /// per-request directory, so this is robustness/cross-platform hygiene rather
 /// than the path-traversal defense (the UUID dir already provides that).
-fn sanitize_file_name(raw: &str) -> String {
+pub(super) fn sanitize_file_name(raw: &str) -> String {
     // Reduce to the basename by splitting on BOTH separators regardless of the
     // host platform. `Path::file_name` only treats the *current* platform's
     // separator as one, so on a Unix service a browser-supplied Windows path
@@ -276,7 +279,7 @@ fn classify_root(root: &Path) -> RootState {
 /// classic create-time TOCTOU. A benign lost race (two concurrent first
 /// uploads) surfaces as `AlreadyExists`, which we resolve by re-classifying:
 /// proceed only if the winner created a private root, else fail closed.
-fn ensure_private_root(root: &Path) -> std::io::Result<()> {
+pub(super) fn ensure_private_root(root: &Path) -> std::io::Result<()> {
     match classify_root(root) {
         RootState::Safe => Ok(()),
         RootState::Unsafe(reason) => Err(std::io::Error::new(
@@ -300,7 +303,7 @@ fn ensure_private_root(root: &Path) -> std::io::Result<()> {
 /// Create a single directory with `0700` perms, failing if it already exists
 /// (non-recursive; the parent `$TMPDIR` is assumed present). The exclusivity
 /// is what makes root creation symlink-plant resistant.
-fn create_private_dir_exclusive(dir: &Path) -> std::io::Result<()> {
+pub(super) fn create_private_dir_exclusive(dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
@@ -338,7 +341,7 @@ fn write_private_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
 /// (one file per per-request subdir). Best-effort: unreadable entries are
 /// skipped rather than failing the caller. Used to enforce the aggregate
 /// disk cap before a new materialisation.
-fn browser_transfer_root_bytes(root: &Path) -> u64 {
+pub(super) fn browser_transfer_root_bytes(root: &Path) -> u64 {
     let mut total = 0u64;
     let Ok(entries) = std::fs::read_dir(root) else {
         return 0;
@@ -464,7 +467,7 @@ fn sweep_browser_transfers_in(root: &Path, max_age: Duration) {
 ///
 /// We remove the per-request directory rather than just the file so a
 /// stray subdirectory doesn't leak even on partial cleanup failure.
-fn schedule_temp_dir_cleanup(dir: PathBuf) {
+pub(super) fn schedule_temp_dir_cleanup(dir: PathBuf) {
     tokio::spawn(async move {
         tokio::time::sleep(TEMP_FILE_TTL).await;
         // Usually already gone: removed when its transfer ended.
@@ -640,7 +643,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     // here; ByteContents materialisation deliberately does its disk I/O
     // OUTSIDE any lock so concurrent connection-map writers are not
     // stalled by the spawn_blocking write.
-    let is_browser_payload = matches!(source, FileSource::ByteContents { .. });
+    let is_browser_payload = matches!(
+        source,
+        FileSource::ByteContents { .. } | FileSource::StagedUpload { .. }
+    );
     let resolved_path: Result<PathBuf, NetworkError> = match source {
         // Confined to paths THIS session picked. Accepting the path verbatim
         // meant whatever absolute path arrived on the socket was opened and
@@ -727,6 +733,19 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 )),
             }
         }
+        // A browser file staged chunk by chunk (staged_upload.rs), complete. Taken
+        // from this session's table, so no other session can send it.
+        FileSource::StagedUpload { upload_id } => this
+            .server_connection_map
+            .write()
+            .get_mut(&cid)
+            .ok_or_else(|| NetworkError::msg("upload: Server Connection Not Found"))
+            .and_then(|conn| {
+                conn.staged_uploads
+                    .take_complete(&upload_id)
+                    .map(|upload| upload.path)
+                    .map_err(NetworkError::msg)
+            }),
         FileSource::ByteContents { file_name, data } => {
             // Size guard: fail fast before any I/O.
             if data.len() > MAX_BYTE_CONTENTS_BYTES {

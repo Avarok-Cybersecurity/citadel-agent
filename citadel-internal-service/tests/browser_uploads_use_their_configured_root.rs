@@ -24,8 +24,9 @@ use std::path::Path;
 use std::time::Duration;
 use uuid::Uuid;
 
-/// The aggregate cap `requests/file/upload.rs` enforces.
-const CAP: u64 = 256 * 1024 * 1024;
+/// The aggregate cap `requests/file/upload.rs` enforces: the staged-upload ceiling
+/// (kernel/staged_uploads.rs).
+const CAP: u64 = 2 * 1024 * 1024 * 1024;
 
 async fn agent_with(transfers: BrowserTransferRoot) -> SocketAddr {
     let addr: SocketAddr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();

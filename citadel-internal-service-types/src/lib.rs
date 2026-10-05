@@ -615,6 +615,38 @@ pub enum FileSource {
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
         data: Vec<u8>,
     },
+    /// A browser file this session staged on the agent with `StageUploadChunk`,
+    /// complete. The staged copy is removed when the transfer ends.
+    StagedUpload { upload_id: Uuid },
+}
+
+/// One chunk of a browser file being staged on the agent, so a file of any size
+/// up to the staging ceiling can be sent without being held whole in one frame.
+/// Chunks arrive in order (`offset` equals what the agent has received) and the
+/// browser sends the next only after this one is acknowledged: that wait is the
+/// backpressure.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct StageUploadChunkSuccess {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    pub upload_id: Uuid,
+    /// Bytes of the file the agent now holds.
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub received: u64,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct StageUploadChunkFailure {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    pub upload_id: Uuid,
+    pub message: String,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1028,6 +1060,8 @@ pub enum InternalServiceResponse {
     DeregisterFailure(DeregisterFailure),
     SendFileRequestSuccess(SendFileRequestSuccess),
     SendFileRequestFailure(SendFileRequestFailure),
+    StageUploadChunkSuccess(StageUploadChunkSuccess),
+    StageUploadChunkFailure(StageUploadChunkFailure),
     FileTransferRequestNotification(FileTransferRequestNotification),
     FileTransferStatusNotification(FileTransferStatusNotification),
     FileTransferTickNotification(FileTransferTickNotification),
@@ -1312,6 +1346,21 @@ pub enum InternalServiceRequest {
         chunk_size: Option<usize>,
         #[cfg_attr(feature = "typescript", ts(type = "TransferType"))]
         transfer_type: TransferType,
+    },
+    /// See `StageUploadChunkSuccess`.
+    StageUploadChunk {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        upload_id: Uuid,
+        file_name: String,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        total_size: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        offset: u64,
+        #[debug(with = bytes_debug_fmt)]
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        data: Vec<u8>,
     },
     RespondFileTransfer {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
@@ -1996,6 +2045,7 @@ impl InternalServiceRequest {
             Self::DownloadFile { cid, .. } => Some(*cid),
             Self::DeleteVirtualFile { cid, .. } => Some(*cid),
             Self::PickFile { cid, .. } => Some(*cid),
+            Self::StageUploadChunk { cid, .. } => Some(*cid),
             Self::ListAllPeers { cid, .. } => Some(*cid),
             Self::ListRegisteredPeers { cid, .. } => Some(*cid),
             Self::PeerConnect { cid, .. } => Some(*cid),

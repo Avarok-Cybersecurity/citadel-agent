@@ -14,4 +14,4 @@ export type FileSource = { "Path": string } | { "PickFileRef": { pick_file_reque
 /**
  * Raw payload bytes of the file.
  */
-data: number[], } };
+data: number[], } } | { "StagedUpload": { upload_id: string, } };

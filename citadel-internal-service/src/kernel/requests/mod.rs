@@ -245,6 +245,10 @@ where
             file::pick_file::handle(this, uuid, command).await
         }
 
+        InternalServiceRequest::StageUploadChunk { .. } => {
+            file::staged_upload::handle(this, uuid, command).await
+        }
+
         InternalServiceRequest::ListRegisteredPeers { .. } => {
             peer::list_registered::handle(this, uuid, command).await
         }
@@ -884,6 +888,17 @@ fn refusal_response(
             request_id, cid, ..
         } => InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
             cid: *cid,
+            message: message.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::StageUploadChunk {
+            request_id,
+            cid,
+            upload_id,
+            ..
+        } => InternalServiceResponse::StageUploadChunkFailure(StageUploadChunkFailure {
+            cid: *cid,
+            upload_id: *upload_id,
             message: message.to_string(),
             request_id: Some(*request_id),
         }),

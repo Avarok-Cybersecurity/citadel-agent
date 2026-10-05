@@ -15,4 +15,11 @@ agent_ilm: boolean,
  * `ConfigCommand::Interest` instead. Absent from an older agent's greeting, which is
  * what `false` means.
  */
-supervises_p2p: boolean, };
+supervises_p2p: boolean, 
+/**
+ * This agent stages a browser file in chunks (`StageUploadChunk`) and sends it with
+ * `FileSource::StagedUpload`, up to its staging ceiling. Absent from an older agent's
+ * greeting, which is what `false` means: such an agent takes a browser file only
+ * inline, as `ByteContents`, up to 16 MiB.
+ */
+stages_uploads: boolean, };

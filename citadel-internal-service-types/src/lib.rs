@@ -282,17 +282,24 @@ pub struct ServiceConnectionAccepted {
     /// what `false` means.
     #[serde(default)]
     pub supervises_p2p: bool,
+    /// This agent stages a browser file in chunks (`StageUploadChunk`) and sends it with
+    /// `FileSource::StagedUpload`, up to its staging ceiling. Absent from an older agent's
+    /// greeting, which is what `false` means: such an agent takes a browser file only
+    /// inline, as `ByteContents`, up to 16 MiB.
+    #[serde(default)]
+    pub stages_uploads: bool,
 }
 
 impl ServiceConnectionAccepted {
-    /// What this agent says first on every socket: it hosts (0.8.6), and supervises
-    /// peer connections when `supervises_p2p`.
+    /// What this agent says first on every socket: it hosts (0.8.6), stages browser
+    /// uploads, and supervises peer connections when `supervises_p2p`.
     pub fn greeting(connection: Uuid, supervises_p2p: bool) -> InternalServiceResponse {
         InternalServiceResponse::ServiceConnectionAccepted(Self {
             cid: 0,
             request_id: Some(connection),
             agent_ilm: true,
             supervises_p2p,
+            stages_uploads: true,
         })
     }
 }
@@ -2135,6 +2142,8 @@ mod pending_invites_tests;
 #[cfg(test)]
 #[path = "sign_in_wire_tests.rs"]
 mod sign_in_wire_tests;
+#[cfg(test)]
+mod staged_upload_wire_tests;
 
 #[cfg(test)]
 mod tests {

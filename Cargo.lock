@@ -292,7 +292,7 @@ dependencies = [
 [[package]]
 name = "async_ip"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#dc39293718fc50731f6ffe10a28e705b3d30a625"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#c8235c3bef2cb9979f475b1e8e8b59da19749c05"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -852,7 +852,7 @@ dependencies = [
 [[package]]
 name = "citadel_crypt"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#dc39293718fc50731f6ffe10a28e705b3d30a625"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#c8235c3bef2cb9979f475b1e8e8b59da19749c05"
 dependencies = [
  "arrayvec",
  "async-trait",
@@ -885,7 +885,7 @@ dependencies = [
 [[package]]
 name = "citadel_io"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#dc39293718fc50731f6ffe10a28e705b3d30a625"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#c8235c3bef2cb9979f475b1e8e8b59da19749c05"
 dependencies = [
  "bytes",
  "citadel_io_macros",
@@ -907,7 +907,7 @@ dependencies = [
 [[package]]
 name = "citadel_io_macros"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#dc39293718fc50731f6ffe10a28e705b3d30a625"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#c8235c3bef2cb9979f475b1e8e8b59da19749c05"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -917,7 +917,7 @@ dependencies = [
 [[package]]
 name = "citadel_logging"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#dc39293718fc50731f6ffe10a28e705b3d30a625"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#c8235c3bef2cb9979f475b1e8e8b59da19749c05"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -926,7 +926,7 @@ dependencies = [
 [[package]]
 name = "citadel_media"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#dc39293718fc50731f6ffe10a28e705b3d30a625"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#c8235c3bef2cb9979f475b1e8e8b59da19749c05"
 dependencies = [
  "bytes",
 ]
@@ -934,7 +934,7 @@ dependencies = [
 [[package]]
 name = "citadel_pqcrypto"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#dc39293718fc50731f6ffe10a28e705b3d30a625"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#c8235c3bef2cb9979f475b1e8e8b59da19749c05"
 dependencies = [
  "aes-gcm",
  "ascon-aead",
@@ -962,7 +962,7 @@ dependencies = [
 [[package]]
 name = "citadel_proto"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#dc39293718fc50731f6ffe10a28e705b3d30a625"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#c8235c3bef2cb9979f475b1e8e8b59da19749c05"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1006,7 +1006,7 @@ dependencies = [
 [[package]]
 name = "citadel_sdk"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#dc39293718fc50731f6ffe10a28e705b3d30a625"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#c8235c3bef2cb9979f475b1e8e8b59da19749c05"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1043,7 +1043,7 @@ dependencies = [
 [[package]]
 name = "citadel_treekem"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#dc39293718fc50731f6ffe10a28e705b3d30a625"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#c8235c3bef2cb9979f475b1e8e8b59da19749c05"
 dependencies = [
  "arrayvec",
  "bincode",
@@ -1061,7 +1061,7 @@ dependencies = [
 [[package]]
 name = "citadel_types"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#dc39293718fc50731f6ffe10a28e705b3d30a625"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#c8235c3bef2cb9979f475b1e8e8b59da19749c05"
 dependencies = [
  "bincode",
  "bytes",
@@ -1080,7 +1080,7 @@ dependencies = [
 [[package]]
 name = "citadel_user"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#dc39293718fc50731f6ffe10a28e705b3d30a625"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#c8235c3bef2cb9979f475b1e8e8b59da19749c05"
 dependencies = [
  "async-trait",
  "bincode",
@@ -1111,7 +1111,7 @@ dependencies = [
 [[package]]
 name = "citadel_wire"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#dc39293718fc50731f6ffe10a28e705b3d30a625"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#c8235c3bef2cb9979f475b1e8e8b59da19749c05"
 dependencies = [
  "anyhow",
  "async-trait-with-sync",
@@ -3164,7 +3164,7 @@ dependencies = [
 [[package]]
 name = "netbeam"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#dc39293718fc50731f6ffe10a28e705b3d30a625"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=fix%2Fpeer-layer-keeps-a-replacing-sessions-state#c8235c3bef2cb9979f475b1e8e8b59da19749c05"
 dependencies = [
  "anyhow",
  "async-stream",

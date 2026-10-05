@@ -1,3 +1,4 @@
+use crate::kernel::reconnect::instance::{self, Instance, PeerReport};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::session_subscribers::SessionSubscribers;
 use crate::kernel::supervisor::Signal;
@@ -142,26 +143,8 @@ pub fn cleanup_state<R: Ratchet>(
     peer_cid: Option<u64>,
 ) -> Option<DisconnectedConnection<R>> {
     if let Some(target_cid) = peer_cid {
-        // P2P cleanup - remove peer from session
-        let mut lock = server_connection_map.write();
-        if let Some(sess) = lock.get_mut(&cid) {
-            if let Some(peer_conn) = sess.peers.remove(&target_cid) {
-                let subscribers = peer_conn.subscribers.clone();
-                citadel_sdk::logging::info!(
-                    "[cleanup_state] Removed peer {target_cid} from session {cid}"
-                );
-                return Some(DisconnectedConnection::P2P {
-                    peer_connection: Box::new(peer_conn),
-                    cid,
-                    peer_cid: target_cid,
-                    subscribers,
-                });
-            }
-        }
-        citadel_sdk::logging::warn!(
-            "[cleanup_state] Peer {target_cid} already removed from session {cid}"
-        );
-        None
+        // Asked for by the user: whichever connection the peer has now.
+        cleanup_reported_peer(server_connection_map, cid, target_cid, None)
     } else {
         // C2S cleanup - remove entire session
         let mut lock = server_connection_map.write();
@@ -190,6 +173,44 @@ pub fn cleanup_state<R: Ratchet>(
         citadel_sdk::logging::warn!("[cleanup_state] Session {cid} already removed (not in map)");
         None
     }
+}
+
+/// Removes `target_cid` from `cid`'s peers, unless `reported` names a connection other than
+/// the one the peer has now: a late report of a connection the peer replaced (a redial) must
+/// not take the new one with it. `None` removes whichever it has.
+pub fn cleanup_reported_peer<R: Ratchet>(
+    server_connection_map: &Arc<RwLock<HashMap<u64, Connection<R>>>>,
+    cid: u64,
+    target_cid: u64,
+    reported: Option<Instance>,
+) -> Option<DisconnectedConnection<R>> {
+    let mut lock = server_connection_map.write();
+    let peers = &mut lock.get_mut(&cid)?.peers;
+    let peer_conn = match instance::take_reported_peer(peers, target_cid, reported, |peer| {
+        peer.instance
+    }) {
+        PeerReport::Removed(peer_conn) => peer_conn,
+        PeerReport::Replaced { current } => {
+            citadel_sdk::logging::info!(
+                "[cleanup_state] {cid}: the report is of a connection to {target_cid} that was replaced ({reported:?}, now {current:?}); keeping it"
+            );
+            return None;
+        }
+        PeerReport::Absent => {
+            citadel_sdk::logging::warn!(
+                "[cleanup_state] Peer {target_cid} already removed from session {cid}"
+            );
+            return None;
+        }
+    };
+    let subscribers = peer_conn.subscribers.clone();
+    citadel_sdk::logging::info!("[cleanup_state] Removed peer {target_cid} from session {cid}");
+    Some(DisconnectedConnection::P2P {
+        peer_connection: Box::new(peer_conn),
+        cid,
+        peer_cid: target_cid,
+        subscribers,
+    })
 }
 
 /// Disconnects a removed connection at the SDK layer.

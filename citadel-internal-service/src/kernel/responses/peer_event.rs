@@ -16,9 +16,9 @@
 //! - C2S: `NodeResult::Disconnect` - entire session terminated
 //! - P2P: `PeerSignal::Disconnect` - single peer connection terminated
 //!
-//! Both use the shared `cleanup_state()` function for DRY state management.
+//! Both remove the peer through `requests/peer/disconnect.rs`; a report only when it names the connection the peer has now.
 
-use crate::kernel::requests::peer::cleanup_state;
+use crate::kernel::requests::peer::cleanup_reported_peer;
 use crate::kernel::session_route::SessionRoute;
 use crate::kernel::session_subscribers::SessionSubscribers;
 use crate::kernel::supervisor::Signal;
@@ -72,6 +72,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     session_cid,
                     peer_cid,
                 },
+            disconnect_token,
             ..
         } => {
             // SDK is source of truth - clean up P2P peer state to mirror SDK
@@ -85,15 +86,17 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             // Use shared cleanup function (DRY)
             // NOTE: For SDK-initiated P2P disconnect events, the SDK has already disconnected.
             // We just remove from our map and let the struct drop (RAII is harmless).
-            if let Some(disconnected) =
-                cleanup_state(&this.server_connection_map, session_cid, Some(peer_cid)).inspect(
-                    |_| {
-                        this.prune_cid_scoped_state(session_cid, Some(peer_cid));
-                        this.supervisors
-                            .signal(session_cid, Signal::PeerLost(peer_cid));
-                    },
-                )
-            {
+            if let Some(disconnected) = cleanup_reported_peer(
+                &this.server_connection_map,
+                session_cid,
+                peer_cid,
+                disconnect_token.map(|token| token.connection_id),
+            )
+            .inspect(|_| {
+                this.prune_cid_scoped_state(session_cid, Some(peer_cid));
+                this.supervisors
+                    .signal(session_cid, Signal::PeerLost(peer_cid));
+            }) {
                 let subscribers = disconnected.subscribers().clone();
                 // Let the struct drop - SDK already disconnected so RAII is harmless
                 drop(disconnected);

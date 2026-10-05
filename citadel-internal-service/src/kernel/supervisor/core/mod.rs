@@ -13,6 +13,8 @@ mod tests_link;
 #[cfg(test)]
 mod tests_paths;
 #[cfg(test)]
+mod tests_peer_redial;
+#[cfg(test)]
 mod tests_peers;
 #[cfg(test)]
 mod tests_stale_drop;

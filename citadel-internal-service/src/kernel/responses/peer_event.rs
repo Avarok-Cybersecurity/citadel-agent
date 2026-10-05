@@ -18,6 +18,7 @@
 //!
 //! Both remove the peer through `requests/peer/disconnect.rs`; a report only when it names the connection the peer has now.
 
+use crate::kernel::reconnect::instance::PeerEnd;
 use crate::kernel::requests::peer::cleanup_reported_peer;
 use crate::kernel::session_route::SessionRoute;
 use crate::kernel::session_subscribers::SessionSubscribers;
@@ -90,7 +91,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 &this.server_connection_map,
                 session_cid,
                 peer_cid,
-                disconnect_token.map(|token| token.connection_id),
+                PeerEnd::Reported(disconnect_token.map(|token| token.connection_id)),
             )
             .inspect(|_| {
                 this.prune_cid_scoped_state(session_cid, Some(peer_cid));

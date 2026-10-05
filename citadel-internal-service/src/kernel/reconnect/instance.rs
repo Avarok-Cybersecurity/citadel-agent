@@ -43,30 +43,53 @@ pub(crate) fn names_this_instance(current: Option<Instance>, reported: Option<In
     }
 }
 
-/// What a peer's disconnect report did to the session's peers.
+/// Why a peer's connection is to be ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PeerEnd {
+    /// The user ended it: whichever connection the peer has.
+    Requested,
+    /// The SDK reported an end naming this connection, or none
+    /// (Citadel-Protocol `PeerSignal::Disconnect::disconnect_token`). A named report ends only
+    /// the connection it names. An unnamed one (the server's notice that the peer's whole
+    /// session ended, or a peer whose SDK names none) ends only a connection that is itself
+    /// unnamed: a named connection's own end is always reported, named, so an unnamed report
+    /// arriving after a redial must not take the new connection with it.
+    Reported(Option<Instance>),
+}
+
+/// Whether `end` ends the connection that is `current`.
+pub(crate) fn ends_this_connection(current: Option<Instance>, end: PeerEnd) -> bool {
+    match (end, current) {
+        (PeerEnd::Requested, _) | (PeerEnd::Reported(_), None) => true,
+        (PeerEnd::Reported(Some(reported)), Some(current)) => reported == current,
+        (PeerEnd::Reported(None), Some(_)) => false,
+    }
+}
+
+/// What ending a peer's connection did to the session's peers.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum PeerReport<P> {
-    /// It named the connection the peer has: the peer is gone.
+    /// It ended the connection the peer has: the peer is gone.
     Removed(P),
-    /// It named a connection the peer replaced (a redial); the peer is kept.
-    Replaced { current: Option<Instance> },
+    /// It is not about the connection the peer has now (a redial replaced the one it names, or
+    /// it names none); the peer is kept.
+    Kept { current: Option<Instance> },
     /// The peer was not there.
     Absent,
 }
 
-/// Remove `peer` for a disconnect report that names `reported`, unless the peer's connection
-/// (`instance_of`) is another.
+/// Remove `peer` for `end`, unless it is not about the peer's connection (`instance_of`).
 pub(crate) fn take_reported_peer<P>(
     peers: &mut HashMap<u64, P>,
     peer: u64,
-    reported: Option<Instance>,
+    end: PeerEnd,
     instance_of: impl FnOnce(&P) -> Option<Instance>,
 ) -> PeerReport<P> {
     let Some(current) = peers.get(&peer).map(instance_of) else {
         return PeerReport::Absent;
     };
-    if !names_this_instance(current, reported) {
-        return PeerReport::Replaced { current };
+    if !ends_this_connection(current, end) {
+        return PeerReport::Kept { current };
     }
     peers
         .remove(&peer)

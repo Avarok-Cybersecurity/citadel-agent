@@ -1,4 +1,4 @@
-use crate::kernel::reconnect::instance::{self, Instance, PeerReport};
+use crate::kernel::reconnect::instance::{self, PeerEnd, PeerReport};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::session_subscribers::SessionSubscribers;
 use crate::kernel::supervisor::Signal;
@@ -144,7 +144,7 @@ pub fn cleanup_state<R: Ratchet>(
 ) -> Option<DisconnectedConnection<R>> {
     if let Some(target_cid) = peer_cid {
         // Asked for by the user: whichever connection the peer has now.
-        cleanup_reported_peer(server_connection_map, cid, target_cid, None)
+        cleanup_reported_peer(server_connection_map, cid, target_cid, PeerEnd::Requested)
     } else {
         // C2S cleanup - remove entire session
         let mut lock = server_connection_map.write();
@@ -175,24 +175,23 @@ pub fn cleanup_state<R: Ratchet>(
     }
 }
 
-/// Removes `target_cid` from `cid`'s peers, unless `reported` names a connection other than
-/// the one the peer has now: a late report of a connection the peer replaced (a redial) must
-/// not take the new one with it. `None` removes whichever it has.
+/// Removes `target_cid` from `cid`'s peers, unless `end` is not about the connection the peer
+/// has now (see `instance::PeerEnd`): a late report of a connection the peer replaced (a
+/// redial), or one naming no connection, must not take the new one with it.
 pub fn cleanup_reported_peer<R: Ratchet>(
     server_connection_map: &Arc<RwLock<HashMap<u64, Connection<R>>>>,
     cid: u64,
     target_cid: u64,
-    reported: Option<Instance>,
+    end: PeerEnd,
 ) -> Option<DisconnectedConnection<R>> {
     let mut lock = server_connection_map.write();
     let peers = &mut lock.get_mut(&cid)?.peers;
-    let peer_conn = match instance::take_reported_peer(peers, target_cid, reported, |peer| {
-        peer.instance
-    }) {
+    let peer_conn = match instance::take_reported_peer(peers, target_cid, end, |peer| peer.instance)
+    {
         PeerReport::Removed(peer_conn) => peer_conn,
-        PeerReport::Replaced { current } => {
+        PeerReport::Kept { current } => {
             citadel_sdk::logging::info!(
-                "[cleanup_state] {cid}: the report is of a connection to {target_cid} that was replaced ({reported:?}, now {current:?}); keeping it"
+                "[cleanup_state] {cid}: {end:?} is not about the connection to {target_cid} it has now ({current:?}); keeping it"
             );
             return None;
         }

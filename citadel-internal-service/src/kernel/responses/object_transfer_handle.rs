@@ -1,3 +1,4 @@
+use crate::kernel::tick_updater::StreamHooks;
 use crate::kernel::{spawn_tick_updater, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{FileTransferRequestNotification, InternalServiceResponse};
@@ -102,7 +103,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     &mut server_connection_map,
                     this.tx_to_localhost_clients.clone(),
                     request_id,
-                    Some(on_pulled),
+                    StreamHooks {
+                        on_pulled: Some(on_pulled),
+                        on_end: None,
+                    },
                 );
             } else if matches!(
                 metadata.transfer_type,
@@ -135,7 +139,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                             &mut server_connection_map,
                             this.tx_to_localhost_clients.clone(),
                             None,
-                            None,
+                            StreamHooks::default(),
                         );
                     }
                     Err(err) => {
@@ -217,9 +221,16 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         // (kernel/send_correlation.rs). None when this node did not ask for the
         // transfer -- it is answering a peer's RE-VFS pull -- and then the ticks
         // name no request, rather than one the browser could mistake for its own.
-        let request_id = server_connection_map
+        let send = server_connection_map
             .get_mut(&implicated_cid)
             .and_then(|conn| conn.send_correlations.take(ticket.0));
+        let request_id = send.as_ref().map(|send| send.request_id);
+        // The SDK has the payload open; once the stream ends it is done with it.
+        let on_end = send.and_then(|send| send.payload_dir).map(|dir| {
+            Box::new(move || {
+                crate::kernel::requests::file::browser_payload::remove_request_dir_soon(dir)
+            }) as Box<dyn FnOnce() + Send>
+        });
         spawn_tick_updater(
             object_transfer_handler,
             implicated_cid,
@@ -227,7 +238,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             &mut server_connection_map,
             this.tx_to_localhost_clients.clone(),
             request_id,
-            None,
+            StreamHooks {
+                on_pulled: None,
+                on_end,
+            },
         );
     }
 

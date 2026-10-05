@@ -68,7 +68,7 @@ pub(crate) mod session_subscribers;
 pub(crate) mod session_wait;
 pub(crate) mod sign_in;
 pub(crate) mod store_keys;
-mod tick_updater;
+pub(crate) mod tick_updater;
 pub mod updates;
 pub(crate) use tick_updater::spawn_tick_updater;
 

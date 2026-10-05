@@ -38,7 +38,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         &mut server_connection_map,
                         this.tx_to_localhost_clients.clone(),
                         Some(request_id),
-                        None,
+                        crate::kernel::tick_updater::StreamHooks::default(),
                     );
 
                     accept_result

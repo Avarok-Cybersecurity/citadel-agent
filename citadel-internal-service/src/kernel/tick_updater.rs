@@ -13,6 +13,16 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 
+/// What a stream's task does besides reporting ticks.
+#[derive(Default)]
+pub(crate) struct StreamHooks {
+    /// Told the local output of a RE-VFS pull once it is complete.
+    pub on_pulled: Option<PulledFileHook>,
+    /// Run once the stream has ended, however it ended (completed, failed, or
+    /// the SDK dropped it): e.g. removing the browser payload a send read.
+    pub on_end: Option<Box<dyn FnOnce() + Send>>,
+}
+
 pub(crate) fn spawn_tick_updater<R: Ratchet>(
     object_transfer_handler: ObjectTransferHandler,
     implicated_cid: u64,
@@ -20,8 +30,9 @@ pub(crate) fn spawn_tick_updater<R: Ratchet>(
     server_connection_map: &mut HashMap<u64, Connection<R>>,
     tcp_connection_map: Arc<RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
     request_id: Option<Uuid>,
-    on_pulled: Option<PulledFileHook>,
+    hooks: StreamHooks,
 ) {
+    let StreamHooks { on_pulled, on_end } = hooks;
     let mut handle_inner = object_transfer_handler.inner;
     if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
         // The REQUEST id is frozen -- it names the request that started the
@@ -75,9 +86,15 @@ pub(crate) fn spawn_tick_updater<R: Ratchet>(
                 }
             }
             info!(target:"citadel", "Spawned Tick Updater has ended for {implicated_cid:?}");
+            if let Some(on_end) = on_end {
+                on_end();
+            }
         };
         tokio::task::spawn(sender_status_updater);
     } else {
-        info!(target: "citadel", "tick_updater: Server Connection Not Found")
+        info!(target: "citadel", "tick_updater: Server Connection Not Found");
+        if let Some(on_end) = on_end {
+            on_end();
+        }
     }
 }

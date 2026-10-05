@@ -467,21 +467,8 @@ fn sweep_browser_transfers_in(root: &Path, max_age: Duration) {
 fn schedule_temp_dir_cleanup(dir: PathBuf) {
     tokio::spawn(async move {
         tokio::time::sleep(TEMP_FILE_TTL).await;
-        match tokio::fs::remove_dir_all(&dir).await {
-            Ok(()) => {
-                info!(target: "citadel", "Cleaned up browser temp dir {:?}", dir);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // Already gone (operator sweep, prior cleanup) - fine.
-            }
-            Err(e) => {
-                warn!(
-                    target: "citadel",
-                    "Failed to clean up browser temp dir {:?}: {}",
-                    dir, e
-                );
-            }
-        }
+        // Usually already gone: removed when its transfer ended.
+        super::browser_payload::remove_request_dir(&dir).await;
     });
 }
 
@@ -653,6 +640,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     // here; ByteContents materialisation deliberately does its disk I/O
     // OUTSIDE any lock so concurrent connection-map writers are not
     // stalled by the spawn_blocking write.
+    let is_browser_payload = matches!(source, FileSource::ByteContents { .. });
     let resolved_path: Result<PathBuf, NetworkError> = match source {
         // Confined to paths THIS session picked. Accepting the path verbatim
         // meant whatever absolute path arrived on the socket was opened and
@@ -753,6 +741,19 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         }
     };
 
+    // A browser payload is removed as soon as its transfer ends, whichever way
+    // (requests/file/browser_payload.rs); the timer set when it was written is
+    // only the backstop.
+    let payload_dir: Option<PathBuf> = match &resolved_path {
+        Ok(path) if is_browser_payload => super::browser_payload::request_dir_of(path),
+        _ => None,
+    };
+    let discard_payload = |dir: &Option<PathBuf>| {
+        if let Some(dir) = dir.clone() {
+            super::browser_payload::remove_request_dir_soon(dir);
+        }
+    };
+
     // Build the NodeRequest under a brief lock, then drop the lock
     // before any await (the SDK `remote.send` below is async and must not
     // happen while the RwLock is held).
@@ -819,7 +820,13 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     // this request. See kernel/send_correlation.rs.
                     let ticket = subscription.callback_key().ticket.0;
                     if let Some(conn) = this.server_connection_map.write().get_mut(&cid) {
-                        conn.send_correlations.register(ticket, request_id);
+                        conn.send_correlations.register(
+                            ticket,
+                            crate::kernel::send_correlation::PendingSend {
+                                request_id,
+                                payload_dir: payload_dir.clone(),
+                            },
+                        );
                     }
                     let response =
                         InternalServiceResponse::SendFileRequestSuccess(SendFileRequestSuccess {
@@ -846,10 +853,13 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                         if let Some(evt) = first {
                             match super::refusal(&evt) {
                                 Some(message) => {
-                                    if let Some(conn) =
-                                        this.server_connection_map.write().get_mut(&cid)
-                                    {
-                                        let _ = conn.send_correlations.take(ticket);
+                                    let refused = this
+                                        .server_connection_map
+                                        .write()
+                                        .get_mut(&cid)
+                                        .and_then(|conn| conn.send_correlations.take(ticket));
+                                    if let Some(dir) = refused.and_then(|send| send.payload_dir) {
+                                        super::browser_payload::remove_request_dir_soon(dir);
                                     }
                                     let _ = crate::kernel::send_response_to_tcp_client(
                                         &this.tx_to_localhost_clients,
@@ -875,6 +885,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 }
                 Err(err) => {
                     error!(target: "citadel","InternalServiceRequest Send File Failure");
+                    discard_payload(&payload_dir);
                     let response =
                         InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
                             cid,
@@ -886,6 +897,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
         }
         Err(err) => {
+            discard_payload(&payload_dir);
             let response =
                 InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
                     cid,

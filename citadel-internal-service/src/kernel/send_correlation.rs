@@ -17,45 +17,62 @@
 //! keeps its own state for that transfer.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use uuid::Uuid;
+
+/// What a send left to be finished when its transfer ends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingSend {
+    pub request_id: Uuid,
+    /// The browser payload's request directory, for a `ByteContents` send: removed
+    /// when the transfer ends (requests/file/browser_payload.rs).
+    pub payload_dir: Option<PathBuf>,
+}
 
 #[derive(Default)]
 pub struct SendCorrelations {
-    by_ticket: HashMap<u128, Uuid>,
+    by_ticket: HashMap<u128, PendingSend>,
 }
 
 impl SendCorrelations {
-    pub fn register(&mut self, ticket: u128, request_id: Uuid) {
-        self.by_ticket.insert(ticket, request_id);
+    pub fn register(&mut self, ticket: u128, send: PendingSend) {
+        self.by_ticket.insert(ticket, send);
     }
 
-    /// The request a Sender handle with `ticket` belongs to. `None` for a
+    /// The send a Sender handle with `ticket` belongs to. `None` for a
     /// handle this session did not request -- e.g. this node answering a
     /// peer's RE-VFS pull, which arrives under the PEER's ticket.
-    pub fn take(&mut self, ticket: u128) -> Option<Uuid> {
+    pub fn take(&mut self, ticket: u128) -> Option<PendingSend> {
         self.by_ticket.remove(&ticket)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::SendCorrelations;
+    use super::{PendingSend, SendCorrelations};
     use uuid::Uuid;
+
+    fn send(request_id: Uuid) -> PendingSend {
+        PendingSend {
+            request_id,
+            payload_dir: None,
+        }
+    }
 
     #[test]
     fn a_handle_finds_its_send_regardless_of_order() {
         let mut c = SendCorrelations::default();
         let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
-        c.register(1, first);
-        c.register(2, second);
-        assert_eq!(c.take(2), Some(second));
-        assert_eq!(c.take(1), Some(first));
+        c.register(1, send(first));
+        c.register(2, send(second));
+        assert_eq!(c.take(2), Some(send(second)));
+        assert_eq!(c.take(1), Some(send(first)));
     }
 
     #[test]
     fn a_handle_is_joined_once() {
         let mut c = SendCorrelations::default();
-        c.register(7, Uuid::new_v4());
+        c.register(7, send(Uuid::new_v4()));
         assert!(c.take(7).is_some());
         assert_eq!(c.take(7), None);
     }
@@ -63,7 +80,7 @@ mod tests {
     #[test]
     fn an_unrequested_handle_names_nothing() {
         let mut c = SendCorrelations::default();
-        c.register(7, Uuid::new_v4());
+        c.register(7, send(Uuid::new_v4()));
         assert_eq!(c.take(8), None);
         assert!(
             c.take(7).is_some(),

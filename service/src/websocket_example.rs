@@ -55,6 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = CitadelWorkspaceService::<_, RatchetType>::new(
         websocket_interface,
         citadel_internal_service::SERVER_RECONNECT,
+        citadel_internal_service::BrowserTransferRoot::in_system_temp_dir(),
     );
 
     // Build and run the internal service node

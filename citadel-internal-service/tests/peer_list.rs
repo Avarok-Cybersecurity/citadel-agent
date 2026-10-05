@@ -32,6 +32,7 @@ mod tests {
         let internal_service_kernel_1 = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             bind_addr_1,
             citadel_internal_service::SERVER_RECONNECT,
+            crate::common::test_transfers(),
         )
         .await?;
         let internal_service_1 = NodeBuilder::default()
@@ -43,6 +44,7 @@ mod tests {
         let internal_service_kernel_2 = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             bind_addr_2,
             citadel_internal_service::SERVER_RECONNECT,
+            crate::common::test_transfers(),
         )
         .await?;
         let internal_service_2 = NodeBuilder::default()
@@ -168,6 +170,7 @@ mod tests {
         let internal_service_kernel_1 = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             bind_addr_1,
             citadel_internal_service::SERVER_RECONNECT,
+            crate::common::test_transfers(),
         )
         .await?;
         let internal_service_1 = NodeBuilder::default()
@@ -179,6 +182,7 @@ mod tests {
         let internal_service_kernel_2 = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             bind_addr_2,
             citadel_internal_service::SERVER_RECONNECT,
+            crate::common::test_transfers(),
         )
         .await?;
         let internal_service_2 = NodeBuilder::default()
@@ -289,6 +293,7 @@ mod tests {
         let internal_service_kernel_1 = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             bind_addr_1,
             citadel_internal_service::SERVER_RECONNECT,
+            crate::common::test_transfers(),
         )
         .await?;
         let internal_service_1 = NodeBuilder::default()
@@ -300,6 +305,7 @@ mod tests {
         let internal_service_kernel_2 = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             bind_addr_2,
             citadel_internal_service::SERVER_RECONNECT,
+            crate::common::test_transfers(),
         )
         .await?;
         let internal_service_2 = NodeBuilder::default()

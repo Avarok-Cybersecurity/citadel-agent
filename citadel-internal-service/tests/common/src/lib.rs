@@ -49,6 +49,20 @@ use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
+/// A browser-transfer root of this test's own: a fresh temporary directory, never the
+/// shared `$TMPDIR/citadel-browser-transfers`, whose 256 MiB cap every earlier run's leftovers
+/// counted against. Call it inside the test's runtime: a task of that runtime holds the
+/// directory, so it is removed when the test ends and the runtime drops its tasks.
+pub fn test_transfers() -> citadel_internal_service::BrowserTransferRoot {
+    let dir = tempfile::tempdir().expect("a temporary directory for the test's browser transfers");
+    let root = citadel_internal_service::BrowserTransferRoot::at(dir.path().join("transfers"));
+    drop(tokio::spawn(async move {
+        let _dir = dir;
+        std::future::pending::<()>().await
+    }));
+    root
+}
+
 pub fn setup_log() {
     citadel_sdk::logging::setup_log();
     std::panic::set_hook(Box::new(|info| {
@@ -240,6 +254,7 @@ pub async fn services_connected_to_one_server<R: Ratchet>(
         let internal_service_kernel = CitadelWorkspaceService::<_, R>::new_tcp(
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
+            crate::test_transfers(),
         )
         .await?
         .with_notice_token(test_notice_token());
@@ -1186,6 +1201,7 @@ pub async fn sessions_on_one_service_reaching(
     let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
         service_addr,
         citadel_internal_service::SERVER_RECONNECT,
+        crate::test_transfers(),
     )
     .await?;
     let internal_service = test_stun_servers()

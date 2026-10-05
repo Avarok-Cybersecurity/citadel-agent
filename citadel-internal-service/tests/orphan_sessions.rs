@@ -28,6 +28,7 @@ mod tests {
         let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
+            crate::common::test_transfers(),
         )
         .await?;
         let internal_service = NodeBuilder::default()
@@ -109,6 +110,7 @@ mod tests {
         let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
+            crate::common::test_transfers(),
         )
         .await?;
         let internal_service = NodeBuilder::default()
@@ -199,6 +201,7 @@ mod tests {
         let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
+            crate::common::test_transfers(),
         )
         .await?;
         let internal_service = NodeBuilder::default()

@@ -2,6 +2,7 @@ use crate::kernel::ext::IOInterfaceExt;
 use crate::kernel::media::{
     media_lane, MediaLaneTx, PeerMediaSession, UdpState, MEDIA_LANE_CAPACITY,
 };
+pub use crate::kernel::requests::file::transfer_root::BrowserTransferRoot;
 use crate::kernel::requests::{handle_request, HandledRequestResult};
 use crate::kernel::session_route::Clients;
 use crate::kernel::session_subscribers::SessionSubscribers;
@@ -127,6 +128,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) updates: Arc<updates::UpdatesSlot>,
     /// Security-key challenges waiting for a window's touch (kernel/sign_in/key_relay.rs).
     pub(crate) key_challenges: Arc<sign_in::key_relay::KeyChallenges>,
+    /// Where browser uploads are written before they are sent (requests/file/transfer_root.rs).
+    pub(crate) browser_transfers: BrowserTransferRoot,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -152,6 +155,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             notices: self.notices.clone(),
             updates: self.updates.clone(),
             key_challenges: self.key_challenges.clone(),
+            browser_transfers: self.browser_transfers.clone(),
             io: self.io.clone(),
         }
     }
@@ -159,8 +163,13 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
 
 impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
     /// `reconnect_policy` is how a session its server dropped is brought back; the
-    /// agent's is `SERVER_RECONNECT`. Required, so every caller states it.
-    pub fn new(io: T, reconnect_policy: ReconnectPolicy) -> Self {
+    /// agent's is `SERVER_RECONNECT`. Required, so every caller states it; so is
+    /// `browser_transfers`, where browser uploads are written.
+    pub fn new(
+        io: T,
+        reconnect_policy: ReconnectPolicy,
+        browser_transfers: BrowserTransferRoot,
+    ) -> Self {
         let clients: Clients = Arc::new(RwLock::new(Default::default()));
         CitadelWorkspaceService {
             remote: None,
@@ -182,6 +191,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             client_capabilities: Default::default(),
             updates: Default::default(),
             key_challenges: Default::default(),
+            browser_transfers,
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -202,9 +212,14 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
     pub async fn new_tcp(
         bind_address: SocketAddr,
         reconnect_policy: ReconnectPolicy,
+        browser_transfers: BrowserTransferRoot,
     ) -> std::io::Result<CitadelWorkspaceService<TcpIOInterface, R>> {
         let io = TcpIOInterface::new(bind_address).await?;
-        Ok(CitadelWorkspaceService::new(io, reconnect_policy))
+        Ok(CitadelWorkspaceService::new(
+            io,
+            reconnect_policy,
+            browser_transfers,
+        ))
     }
 
     #[cfg(feature = "websockets")]
@@ -215,9 +230,14 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
         bind_address: SocketAddr,
         origins: OriginPolicy,
         reconnect_policy: ReconnectPolicy,
+        browser_transfers: BrowserTransferRoot,
     ) -> std::io::Result<CitadelWorkspaceService<WebSocketInterface, R>> {
         let ws_server_io = WebSocketInterface::new(bind_address, origins).await?;
-        Ok(CitadelWorkspaceService::new(ws_server_io, reconnect_policy))
+        Ok(CitadelWorkspaceService::new(
+            ws_server_io,
+            reconnect_policy,
+            browser_transfers,
+        ))
     }
 
     #[cfg(feature = "websockets")]
@@ -234,11 +254,16 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
         certificate_chain: &[u8],
         private_key: &[u8],
         reconnect_policy: ReconnectPolicy,
+        browser_transfers: BrowserTransferRoot,
     ) -> std::io::Result<CitadelWorkspaceService<WebSocketInterface, R>> {
         let ws_server_io =
             WebSocketInterface::new_tls(bind_address, origins, certificate_chain, private_key)
                 .await?;
-        Ok(CitadelWorkspaceService::new(ws_server_io, reconnect_policy))
+        Ok(CitadelWorkspaceService::new(
+            ws_server_io,
+            reconnect_policy,
+            browser_transfers,
+        ))
     }
 }
 
@@ -247,6 +272,7 @@ impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {
     /// networking to connect between the application and the internal service
     pub fn new_in_memory(
         reconnect_policy: ReconnectPolicy,
+        browser_transfers: BrowserTransferRoot,
     ) -> (
         InternalServiceConnector<InMemoryInterface>,
         CitadelWorkspaceService<InMemoryInterface, R>,
@@ -263,7 +289,7 @@ impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {
             sink: Some(tx_to_consumer),
             stream: Some(rx_from_svc),
         };
-        let kernel = CitadelWorkspaceService::new(io, reconnect_policy);
+        let kernel = CitadelWorkspaceService::new(io, reconnect_policy, browser_transfers);
         (connector, kernel)
     }
 }

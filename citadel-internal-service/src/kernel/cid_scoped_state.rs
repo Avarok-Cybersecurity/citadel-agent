@@ -116,9 +116,11 @@ mod tests {
         }
     }
 
-    fn seeded() -> Svc {
+    fn seeded() -> (Svc, tempfile::TempDir) {
+        let transfers = tempfile::tempdir().unwrap();
         let (_c, svc): (_, Svc) = CitadelWorkspaceService::new_in_memory(
             crate::kernel::reconnect::policy::SERVER_RECONNECT,
+            crate::BrowserTransferRoot::at(transfers.path().to_path_buf()),
         );
         {
             let mut m = svc.pending_peer_registrations.write();
@@ -136,7 +138,7 @@ mod tests {
             m.insert((1, 2), "bob".into());
             m.insert((3, 4), "carol".into());
         }
-        svc
+        (svc, transfers)
     }
 
     /// A session teardown must clear the CID from BOTH sides of the key: entries
@@ -144,7 +146,7 @@ mod tests {
     /// holding a request from it.
     #[test]
     fn session_teardown_prunes_both_sides_and_spares_others() {
-        let svc = seeded();
+        let (svc, _transfers) = seeded();
         let pruned = svc.prune_cid_scoped_state(1, None);
         assert_eq!(pruned.pending_registrations, 2, "both (1,2) and (3,1)");
         assert_eq!(pruned.pending_connects, 1);
@@ -159,7 +161,7 @@ mod tests {
     /// discard live requests from unrelated peers. Only the pair goes.
     #[test]
     fn p2p_teardown_prunes_only_that_pair() {
-        let svc = seeded();
+        let (svc, _transfers) = seeded();
         let pruned = svc.prune_cid_scoped_state(1, Some(2));
         assert_eq!(pruned.pending_registrations, 1);
         assert_eq!(pruned.total(), 3, "one entry per map for the (1,2) pair");
@@ -176,7 +178,7 @@ mod tests {
     /// session, and outlived even deregistration.
     #[test]
     fn nothing_survives_a_deregistration() {
-        let svc = seeded();
+        let (svc, _transfers) = seeded();
         svc.prune_cid_scoped_state(1, None);
         svc.prune_cid_scoped_state(3, None);
         svc.prune_cid_scoped_state(4, None);

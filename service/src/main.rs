@@ -41,7 +41,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         opts.bind,
         citadel_internal_service::SERVER_RECONNECT,
     )
-    .await?;
+    .await?
+    .with_supervisor(citadel_internal_service::AGENT_SUPERVISOR);
 
     // Resolve the SDK backend from CLI + env (env takes precedence so docker
     // operators can flip backends without rebuilding). `filesystem` is required

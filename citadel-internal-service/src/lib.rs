@@ -7,6 +7,7 @@ pub use updater::UpdaterConfig;
 
 pub use kernel::reconnect::policy::{ReconnectPolicy, SERVER_RECONNECT};
 pub use kernel::reconnect::LOG_TARGET as RECONNECT_LOG_TARGET;
+pub use kernel::supervisor::{Backoff, SupervisorPolicy, AGENT_SUPERVISOR};
 
 // Re-export the browser-transfer startup sweep so the binary entrypoint
 // can call it before the runtime spins up, without exposing the full

@@ -17,6 +17,12 @@ where
     T: IOInterface + Sync,
     R: Ratchet,
 {
+    /// Whether the agent keeps its hosted accounts' peers connected itself, so a window
+    /// must not dial for them.
+    pub(crate) fn supervises_p2p(&self) -> bool {
+        self.supervisor.is_some_and(|policy| policy.dial_peers)
+    }
+
     /// Whether `connection`'s client declared that the agent hosts its ILM.
     pub(crate) fn wants_agent_ilm(&self, connection: Uuid) -> bool {
         self.client_capabilities
@@ -50,6 +56,7 @@ where
             cid: 0,
             agent_ilm: true,
             multi_window: true,
+            supervises_p2p: self.supervises_p2p(),
             request_id: Some(request_id),
         })
     }
@@ -65,7 +72,10 @@ where
         }
         let io: Arc<dyn HostIo> = Arc::new(self.clone());
         match self.ilm_hosts.ensure(cid, io).await {
-            Ok(_) => self.displace_older_pages(cid),
+            Ok(_) => {
+                self.displace_older_pages(cid);
+                self.supervise(cid);
+            }
             Err(err) => warn!(target: "citadel", "[ILM-HOST] {cid}: not hosted: {err}"),
         }
     }

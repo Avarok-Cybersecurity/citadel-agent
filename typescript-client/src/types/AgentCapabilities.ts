@@ -15,4 +15,9 @@ agent_ilm: boolean,
 /**
  * A session may be attached to several connections (`AttachSession`).
  */
-multi_window: boolean, request_id: string | null, };
+multi_window: boolean, 
+/**
+ * The agent keeps this account's peers connected itself; see
+ * `ServiceConnectionAccepted::supervises_p2p`.
+ */
+supervises_p2p: boolean, request_id: string | null, };

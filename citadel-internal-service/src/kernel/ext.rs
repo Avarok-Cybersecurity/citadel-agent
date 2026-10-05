@@ -30,10 +30,11 @@ pub trait IOInterfaceExt: IOInterface {
         server_connection_map: Arc<RwLock<HashMap<u64, Connection<R>>>>,
         orphan_sessions: Arc<RwLock<HashMap<Uuid, bool>>>,
         capabilities: Arc<RwLock<HashMap<Uuid, ClientCapabilities>>>,
+        supervises_p2p: bool,
     ) {
         tokio::task::spawn(async move {
             let write_task = async {
-                let response = ServiceConnectionAccepted::greeting(conn_id);
+                let response = ServiceConnectionAccepted::greeting(conn_id, supervises_p2p);
 
                 if let Err(err) = sink_send_payload::<Self>(response, &mut sink).await {
                     error!(target: "citadel", "Failed to send to client: {err:?}");

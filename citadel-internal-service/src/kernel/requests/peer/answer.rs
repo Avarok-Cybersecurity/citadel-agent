@@ -15,6 +15,12 @@ use citadel_sdk::responses;
 /// nothing: duplicate accepts (multi-tab races) must not fail after the first
 /// one succeeded. A refusal is never short-circuited that way -- it would be
 /// reported delivered while the peer stayed connected.
+///
+/// Only while no offer is waiting. A peer that offers a connection does not have the
+/// one this side still lists: its link dropped without this side hearing of it (a
+/// reset the server never relayed), and "already connected" answered nothing, so the
+/// peer's dial waited out the SDK's timeout and tried again, for as long as the stale
+/// entry lived. The accept goes out, and the new channel replaces the entry.
 pub(crate) async fn answer_offer<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     cid: u64,
@@ -28,7 +34,11 @@ pub(crate) async fn answer_offer<T: IOInterface, R: Ratchet>(
         .read()
         .get(&cid)
         .is_some_and(|conn| conn.peers.contains_key(&peer_cid));
-    if accept && already_connected {
+    let offer_waiting = this
+        .pending_peer_connect_signals
+        .read()
+        .contains_key(&(cid, peer_cid));
+    if accept && already_connected && !offer_waiting {
         info!(target: "citadel", "[PeerConnectAccept] Peer {peer_cid} already connected to {cid} - idempotent success");
         return Ok(());
     }

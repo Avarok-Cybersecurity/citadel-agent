@@ -17,6 +17,10 @@ native-dialogs = ["rfd"]
 deadlock-detection = []
 
 [dependencies]
+# The supervisor's NetworkWatch (kernel/supervisor/adapters/network.rs): route sockets on
+# macOS, netlink on Linux, IP Helper on Windows, in pure Rust, so every agent platform hears
+# an address change without a per-OS shim of our own.
+if-watch = { version = "3.2.2", features = ["tokio"] }
 citadel_sdk = { workspace = true, features=["multi-threaded"] }
 # `ErrorCode`: which failed reconnects are refusals (kernel/reconnect/policy.rs).
 citadel_io = { workspace = true }

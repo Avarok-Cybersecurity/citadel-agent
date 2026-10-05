@@ -252,3 +252,54 @@ mod no_media_reporting {
         assert!(!should_report_no_media(false, 0, 29));
     }
 }
+
+/// A call whose path fell back and was restored keeps going on the new channel: its next
+/// outbound frame leaves by the new sink and the new stream's frames reach the client.
+#[tokio::test]
+async fn a_call_moves_to_a_restored_transport() {
+    let (old_tx, mut old_out) = tokio::sync::mpsc::unbounded_channel();
+    let (_old_datagrams, old_rx) = futures_mpsc::unbounded::<SecBuffer>();
+    let (client_tx, _client_rx) = client_channel();
+    let (lane_tx, mut lane_rx) = media_lane(8);
+    let mut session = MediaSession::start(
+        MediaOutbound::new(FakeSink(old_tx)).expect("outbound"),
+        old_rx,
+        1,
+        2,
+        Uuid::new_v4(),
+        client_tx,
+        lane_tx,
+    );
+    let send = |session: &MediaSession<_, FakeSink>| {
+        session
+            .outbound()
+            .lock()
+            .send_frame(0, TrackKind::Audio as u8, 0, 0, vec![1u8; 100])
+            .expect("send_frame");
+    };
+    send(&session);
+    assert!(
+        old_out.try_recv().is_ok(),
+        "before the move, the old sink carries it"
+    );
+
+    let (new_tx, mut new_out) = tokio::sync::mpsc::unbounded_channel();
+    let (new_datagrams, new_rx) = futures_mpsc::unbounded::<SecBuffer>();
+    session.rebind_transport(FakeSink(new_tx), new_rx, 1, 2);
+    assert!(session.pump_alive());
+    send(&session);
+    assert!(
+        new_out.try_recv().is_ok(),
+        "after the move, the new sink carries it"
+    );
+    assert!(old_out.try_recv().is_err(), "and the old one nothing more");
+
+    feed_two_frames(&new_datagrams).await;
+    let delivered = tokio::time::timeout(Duration::from_secs(5), lane_rx.recv())
+        .await
+        .expect("the new stream's frame reaches the client");
+    assert!(matches!(
+        delivered,
+        Some(InternalServiceResponse::MediaFrameNotification(_))
+    ));
+}

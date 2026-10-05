@@ -74,8 +74,12 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             disconnect.message
         );
 
-        match task::begin(&this.server_connection_map, cid) {
+        let reported = disconnect.disconnect_token.map(|token| token.connection_id);
+        match task::begin(&this.server_connection_map, cid, reported) {
             Began::NotTracked => {}
+            Began::NotThisLink => {
+                citadel_sdk::logging::info!(target: LOG_TARGET, "[Disconnect Response] {cid}: the report is of a session this link replaced ({reported:?}); ignoring it");
+            }
             Began::AlreadyReconnecting => {
                 citadel_sdk::logging::info!(target: LOG_TARGET, "[Disconnect Response] {cid} is already reconnecting");
             }

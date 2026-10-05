@@ -2,6 +2,7 @@
 //! new channel or give up. Every decision is policy.rs's.
 
 use super::attempt;
+use super::instance::{self, Instance};
 use super::link::put_link;
 use super::lost_peers;
 use super::policy::{self, DropAction, FailureKind, GiveUp, Next};
@@ -29,6 +30,8 @@ pub(crate) enum Began {
         lost_peers: Vec<u64>,
     },
     AlreadyReconnecting,
+    /// The report is of an SDK session this entry no longer is (reconnect/instance.rs).
+    NotThisLink,
     /// Being ended by its user: the caller removes it as it always did.
     Remove,
     /// Not in the map: nothing to keep.
@@ -36,13 +39,21 @@ pub(crate) enum Began {
 }
 
 /// Decide, and if it is a reconnect, mark the session before anything else can see it
-/// `Up`. Its peers, groups and C2S transfers belonged to the dead link and go.
-pub(crate) fn begin<R: Ratchet>(map: &Arc<RwLock<HashMap<u64, Connection<R>>>>, cid: u64) -> Began {
+/// `Up`. Its peers, groups and C2S transfers belonged to the dead link and go. `reported`
+/// is the instance the drop report names, if it names one.
+pub(crate) fn begin<R: Ratchet>(
+    map: &Arc<RwLock<HashMap<u64, Connection<R>>>>,
+    cid: u64,
+    reported: Option<Instance>,
+) -> Began {
     let mut lock = map.write();
     let Some(conn) = lock.get_mut(&cid) else {
         return Began::NotTracked;
     };
-    match policy::on_unrequested_drop(conn.link) {
+    let Some(action) = instance::on_reported_drop(conn.link, conn.instance, reported) else {
+        return Began::NotThisLink;
+    };
+    match action {
         DropAction::AlreadyReconnecting => Began::AlreadyReconnecting,
         DropAction::Remove => Began::Remove,
         DropAction::Reconnect => {

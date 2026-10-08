@@ -13,7 +13,7 @@ pub mod respond_register;
 pub mod turn;
 
 // Re-export for use by response handlers
-pub use disconnect::cleanup_state;
+pub use disconnect::{cleanup_reported_peer, cleanup_state};
 
 use citadel_internal_service_types::PeerInformation;
 use citadel_sdk::prelude::{

@@ -371,6 +371,9 @@ pub struct Connection<R: Ratchet> {
 #[allow(dead_code)]
 pub struct PeerConnection<R: Ratchet> {
     pub sink: AsyncSink<R>,
+    /// The SDK's P2P connection the sink is; a disconnect report of another is not this
+    /// peer's. See kernel/reconnect/instance.rs.
+    pub(crate) instance: Option<reconnect::instance::Instance>,
     /// Optional PeerRemote for advanced operations (file transfers, etc.)
     /// May be None for acceptor-side connections where we only have the channel.
     remote: Option<PeerRemote<R>>,
@@ -484,6 +487,7 @@ impl<R: Ratchet> Connection<R> {
         match self.peers.entry(peer_cid) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 let peer = entry.get_mut();
+                peer.instance = sink.connection_id();
                 peer.sink = Arc::new(tokio::sync::Mutex::new(sink));
                 if remote.is_some() {
                     peer.remote = remote;
@@ -506,6 +510,7 @@ impl<R: Ratchet> Connection<R> {
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert(PeerConnection {
+                    instance: sink.connection_id(),
                     sink: Arc::new(tokio::sync::Mutex::new(sink)),
                     remote,
                     handler_map: HashMap::new(),

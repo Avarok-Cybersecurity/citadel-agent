@@ -14,6 +14,8 @@ mod tests_link;
 mod tests_paths;
 #[cfg(test)]
 mod tests_peers;
+#[cfg(test)]
+mod tests_stale_drop;
 
 use super::policy::SupervisorPolicy;
 use super::types::{Cid, Command, Input, LinkStatus, Millis};

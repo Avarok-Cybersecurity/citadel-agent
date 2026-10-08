@@ -18,6 +18,7 @@
 
 mod attempt;
 pub(crate) mod force;
+pub(crate) mod instance;
 mod link;
 mod lost_peers;
 pub(crate) mod policy;

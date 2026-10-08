@@ -336,6 +336,9 @@ pub struct Connection<R: Ratchet> {
     /// What the sign-in proved, and the SDK handle for managing the account's factors.
     pub(crate) sign_in: sign_in::SessionSignIn<R>,
     pub(crate) link: reconnect::LinkState,
+    /// The SDK session the link is; a drop report of another is not this link's.
+    /// See kernel/reconnect/instance.rs.
+    pub(crate) instance: reconnect::instance::Instance,
     pub(crate) handoff: reconnect::Handoff,
 }
 
@@ -398,6 +401,7 @@ impl<R: Ratchet> Connection<R> {
     ) -> Self {
         Connection {
             peers: HashMap::new(),
+            instance: sink.channel_id(),
             sink_to_server: Arc::new(tokio::sync::Mutex::new(sink)),
             client_server_remote,
             subscribers,

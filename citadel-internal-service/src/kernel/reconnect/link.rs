@@ -37,11 +37,13 @@ pub(super) async fn put_link<T: IOInterface + Sync, R: Ratchet>(
         }
     };
     let remote = create_client_server_remote(stream.vconn_type, this.remote().clone(), settings);
+    let instance = sink.channel_id();
     let installed = {
         let mut lock = this.server_connection_map.write();
         match lock.get_mut(&cid) {
             Some(conn) => admit(conn).then(|| {
                 conn.sink_to_server = Arc::new(tokio::sync::Mutex::new(sink));
+                conn.instance = instance;
                 conn.client_server_remote = remote.clone();
                 conn.sign_in.handle = handle;
                 conn.link = LinkState::Up;

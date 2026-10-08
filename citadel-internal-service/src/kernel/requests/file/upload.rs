@@ -7,9 +7,7 @@ use citadel_internal_service_types::{
     SendFileRequestSuccess,
 };
 use citadel_sdk::logging::{error, info, warn};
-use citadel_sdk::prelude::{
-    NetworkError, NodeRequest, Ratchet, SendObject, TransferType, VirtualTargetType,
-};
+use citadel_sdk::prelude::{NetworkError, NodeRequest, Ratchet, SendObject, VirtualTargetType};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -469,21 +467,8 @@ fn sweep_browser_transfers_in(root: &Path, max_age: Duration) {
 fn schedule_temp_dir_cleanup(dir: PathBuf) {
     tokio::spawn(async move {
         tokio::time::sleep(TEMP_FILE_TTL).await;
-        match tokio::fs::remove_dir_all(&dir).await {
-            Ok(()) => {
-                info!(target: "citadel", "Cleaned up browser temp dir {:?}", dir);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // Already gone (operator sweep, prior cleanup) - fine.
-            }
-            Err(e) => {
-                warn!(
-                    target: "citadel",
-                    "Failed to clean up browser temp dir {:?}: {}",
-                    dir, e
-                );
-            }
-        }
+        // Usually already gone: removed when its transfer ended.
+        super::browser_payload::remove_request_dir(&dir).await;
     });
 }
 
@@ -655,6 +640,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     // here; ByteContents materialisation deliberately does its disk I/O
     // OUTSIDE any lock so concurrent connection-map writers are not
     // stalled by the spawn_blocking write.
+    let is_browser_payload = matches!(source, FileSource::ByteContents { .. });
     let resolved_path: Result<PathBuf, NetworkError> = match source {
         // Confined to paths THIS session picked. Accepting the path verbatim
         // meant whatever absolute path arrived on the socket was opened and
@@ -755,28 +741,26 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         }
     };
 
-    // A REVFS push needs its completion reported back to the requesting
-    // browser: `SendFileRequestSuccess` below only means "queued", so the
-    // browser waits for the Sender-side TransferComplete tick — which must
-    // carry this request_id. `SendObject` has no field to thread it through,
-    // so it is registered here and consumed when the Sender handle arrives
-    // (responses/object_transfer_handle.rs). The Sender-handle scope key is
-    // the peer's cid for P2P, and — because a c2s Sender handle carries
-    // source == receiver == session_cid — the session's own cid for c2s.
-    let is_revfs_push = matches!(
-        transfer_type,
-        TransferType::RemoteEncryptedVirtualFilesystem { .. }
-    );
-    let correlation_scope = peer_cid.unwrap_or(cid);
+    // A browser payload is removed as soon as its transfer ends, whichever way
+    // (requests/file/browser_payload.rs); the timer set when it was written is
+    // only the backstop.
+    let payload_dir: Option<PathBuf> = match &resolved_path {
+        Ok(path) if is_browser_payload => super::browser_payload::request_dir_of(path),
+        _ => None,
+    };
+    let discard_payload = |dir: &Option<PathBuf>| {
+        if let Some(dir) = dir.clone() {
+            super::browser_payload::remove_request_dir_soon(dir);
+        }
+    };
 
     // Build the NodeRequest under a brief lock, then drop the lock
     // before any await (the SDK `remote.send` below is async and must not
-    // happen while the RwLock is held). Write lock: REVFS pushes also
-    // register their tick correlation here (see above).
+    // happen while the RwLock is held).
     let send_request: Result<NodeRequest, NetworkError> = match resolved_path {
         Ok(file_path) => {
-            let mut lock = this.server_connection_map.write();
-            match lock.get_mut(&cid) {
+            let lock = this.server_connection_map.read();
+            match lock.get(&cid) {
                 Some(conn) => {
                     if let Some(peer_cid) = peer_cid {
                         if conn.peers.contains_key(&peer_cid) {
@@ -793,10 +777,6 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                             // direction whenever the sender wasn't also the
                             // P2P initiator. Same shape we already use for
                             // messaging via the sink works for SendObject too.
-                            if is_revfs_push {
-                                conn.revfs_correlations
-                                    .register_push(correlation_scope, request_id);
-                            }
                             Ok(NodeRequest::SendObject(SendObject {
                                 source: Box::new(file_path),
                                 chunk_size,
@@ -811,10 +791,6 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
-                        if is_revfs_push {
-                            conn.revfs_correlations
-                                .register_push(correlation_scope, request_id);
-                        }
                         Ok(NodeRequest::SendObject(SendObject {
                             source: Box::new(file_path),
                             chunk_size,
@@ -839,6 +815,19 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             match result {
                 Ok(mut subscription) => {
                     info!(target: "citadel","InternalServiceRequest Send File Success");
+                    // `SendFileRequestSuccess` only means "queued": the browser
+                    // follows the transfer by its Sender ticks, which must name
+                    // this request. See kernel/send_correlation.rs.
+                    let ticket = subscription.callback_key().ticket.0;
+                    if let Some(conn) = this.server_connection_map.write().get_mut(&cid) {
+                        conn.send_correlations.register(
+                            ticket,
+                            crate::kernel::send_correlation::PendingSend {
+                                request_id,
+                                payload_dir: payload_dir.clone(),
+                            },
+                        );
+                    }
                     let response =
                         InternalServiceResponse::SendFileRequestSuccess(SendFileRequestSuccess {
                             cid,
@@ -864,13 +853,13 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                         if let Some(evt) = first {
                             match super::refusal(&evt) {
                                 Some(message) => {
-                                    if is_revfs_push {
-                                        if let Some(conn) =
-                                            this.server_connection_map.write().get_mut(&cid)
-                                        {
-                                            conn.revfs_correlations
-                                                .cancel_push(correlation_scope, request_id);
-                                        }
+                                    let refused = this
+                                        .server_connection_map
+                                        .write()
+                                        .get_mut(&cid)
+                                        .and_then(|conn| conn.send_correlations.take(ticket));
+                                    if let Some(dir) = refused.and_then(|send| send.payload_dir) {
+                                        super::browser_payload::remove_request_dir_soon(dir);
                                     }
                                     let _ = crate::kernel::send_response_to_tcp_client(
                                         &this.tx_to_localhost_clients,
@@ -896,14 +885,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 }
                 Err(err) => {
                     error!(target: "citadel","InternalServiceRequest Send File Failure");
-                    // The push never went out — its correlation entry must
-                    // not sit in the FIFO and claim the NEXT push's ticks.
-                    if is_revfs_push {
-                        if let Some(conn) = this.server_connection_map.write().get_mut(&cid) {
-                            conn.revfs_correlations
-                                .cancel_push(correlation_scope, request_id);
-                        }
-                    }
+                    discard_payload(&payload_dir);
                     let response =
                         InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
                             cid,
@@ -915,6 +897,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
         }
         Err(err) => {
+            discard_payload(&payload_dir);
             let response =
                 InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
                     cid,

@@ -25,6 +25,8 @@ use citadel_internal_service_connector::connector::{
     InternalServiceConnector, WrappedSink, WrappedStream,
 };
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
+pub mod browser_caller;
+pub use browser_caller::BindableInterface;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     FileTransferTickNotification, InternalServiceRequest, InternalServiceResponse, P2pPathReport,
@@ -236,6 +238,15 @@ pub async fn services_connected_to_one_server<R: Ratchet>(
     int_svc_addrs: Vec<SocketAddr>,
     server_session_password: Option<PreSharedKey>,
 ) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
+    services_connected_to_one_server_on::<R, TcpIOInterface>(int_svc_addrs, server_session_password)
+        .await
+}
+
+/// As above, with the agents' clients on interface `I` (see browser_caller.rs).
+pub async fn services_connected_to_one_server_on<R: Ratchet, I: BindableInterface>(
+    int_svc_addrs: Vec<SocketAddr>,
+    server_session_password: Option<PreSharedKey>,
+) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
     // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
     let (server, server_bind_address) = if server_session_password.is_some() {
         server_info_skip_cert_verification_with_password::<R>(
@@ -251,12 +262,11 @@ pub async fn services_connected_to_one_server<R: Ratchet>(
     for int_svc_addr_iter in int_svc_addrs.clone() {
         let bind_address_internal_service = int_svc_addr_iter;
         info!(target: "citadel", "Internal Service Spawning");
-        let internal_service_kernel = CitadelWorkspaceService::<_, R>::new_tcp(
-            bind_address_internal_service,
+        let internal_service_kernel = CitadelWorkspaceService::<I, R>::new(
+            I::bind(bind_address_internal_service).await?,
             citadel_internal_service::SERVER_RECONNECT,
             crate::test_transfers(),
         )
-        .await?
         .with_notice_token(test_notice_token());
         let internal_service = test_stun_servers()
             .apply(&mut NodeBuilder::default())
@@ -322,9 +332,29 @@ pub async fn register_and_connect_to_server_then_peers_with_udp<R: Ratchet>(
     peer_session_password: Option<PreSharedKey>,
     udp_mode: citadel_sdk::prelude::UdpMode,
 ) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
-    let mut returned_service_info =
+    let returned_service_info =
         services_connected_to_one_server::<R>(int_svc_addrs, server_session_password).await?;
+    connect_every_pair(returned_service_info, peer_session_password, udp_mode).await
+}
 
+/// Two or more agents whose clients are treated like a browser page: a client
+/// cannot name a file by path unless the agent handed that path out.
+pub async fn register_and_connect_to_server_then_peers_as_browser<R: Ratchet>(
+    int_svc_addrs: Vec<SocketAddr>,
+) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
+    let services = services_connected_to_one_server_on::<R, browser_caller::BrowserLikeTcp>(
+        int_svc_addrs,
+        None,
+    )
+    .await?;
+    connect_every_pair(services, None, Default::default()).await
+}
+
+async fn connect_every_pair(
+    mut returned_service_info: Vec<PeerReturnHandle>,
+    peer_session_password: Option<PreSharedKey>,
+    udp_mode: citadel_sdk::prelude::UdpMode,
+) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
     info!(
         target = "citadel",
         "Starting Registration and Connection between peers"

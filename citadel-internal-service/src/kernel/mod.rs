@@ -47,6 +47,7 @@ pub(crate) mod media;
 pub(crate) mod peer_path;
 pub(crate) mod pending_group_invites;
 pub(crate) mod picked_files;
+pub(crate) mod pulled_files;
 pub(crate) mod reconnect;
 pub mod supervisor;
 
@@ -59,6 +60,7 @@ pub mod notices;
 pub(crate) mod requests;
 pub(crate) mod responses;
 pub(crate) mod revfs_correlation;
+pub(crate) mod send_correlation;
 pub(crate) mod server_address;
 pub(crate) mod server_host;
 pub(crate) mod session_route;
@@ -66,7 +68,7 @@ pub(crate) mod session_subscribers;
 pub(crate) mod session_wait;
 pub(crate) mod sign_in;
 pub(crate) mod store_keys;
-mod tick_updater;
+pub(crate) mod tick_updater;
 pub mod updates;
 pub(crate) use tick_updater::spawn_tick_updater;
 
@@ -342,11 +344,13 @@ pub struct Connection<R: Ratchet> {
     /// Key is the request_id from the PickFile request.
     /// Used to resolve FileSource::PickFileRef in SendFile commands.
     pub picked_files: HashMap<Uuid, PickedFileInfo>,
-    /// Pending REVFS pull/push request ids, consumed when the matching
-    /// ObjectTransferHandle arrives so its ticks carry the browser's
-    /// request_id instead of the meaningless TCP-connection uuid fallback.
+    /// Pending REVFS pull request ids, consumed when the matching Receiver
+    /// handle arrives so its ticks carry the browser's request_id.
     /// See kernel/revfs_correlation.rs for the mechanism.
     pub revfs_correlations: revfs_correlation::RevfsCorrelations,
+    /// Pending SendFile request ids by SDK ticket, consumed when the Sender
+    /// handle arrives. See kernel/send_correlation.rs.
+    pub send_correlations: send_correlation::SendCorrelations,
     /// The client-side password hash this session was opened with.
     ///
     /// Consulted when a later `Connect` names this session's username, so the
@@ -443,6 +447,7 @@ impl<R: Ratchet> Connection<R> {
             server_host,
             picked_files: HashMap::new(),
             revfs_correlations: revfs_correlation::RevfsCorrelations::default(),
+            send_correlations: send_correlation::SendCorrelations::default(),
             credential_fingerprint,
             window_relay: None,
             reconnect,

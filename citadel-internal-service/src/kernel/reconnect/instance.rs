@@ -33,3 +33,13 @@ pub(crate) fn on_reported_drop(
         .is_none_or(|reported| reported == current)
         .then(|| policy::on_unrequested_drop(link))
 }
+
+/// Whether the supervisor may abandon the entry's link for the probes that went unanswered
+/// on `probed`. The SDK abandons by CID, so once a reconnect replaced the probed link (or
+/// is replacing it) an abandon would end a link nobody has found dead.
+pub(crate) fn probed_link_is_current(
+    current: Option<(LinkState, Instance)>,
+    probed: Instance,
+) -> bool {
+    current == Some((LinkState::Up, probed))
+}

@@ -801,6 +801,7 @@ dependencies = [
  "citadel_sdk",
  "citadel_user",
  "futures",
+ "tempfile",
  "tokio 1.50.0",
  "uuid",
 ]

@@ -16,6 +16,8 @@ citadel-internal-service = { workspace = true }
 citadel-internal-service-types = { workspace = true }
 citadel-internal-service-connector = { workspace = true }
 futures = { workspace = true }
+# Each test's own browser-transfer root (`test_transfers`).
+tempfile = "3"
 uuid = { workspace = true, features = [
     "v4",                # Lets you generate random UUIDs
     "fast-rng",          # Use a faster (but still sufficiently random) RNG

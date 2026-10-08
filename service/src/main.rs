@@ -2,7 +2,7 @@ mod data_format;
 
 use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service::stun::{StunServers, STUN_SERVERS_ENV};
-use citadel_internal_service::sweep_stale_browser_transfers;
+use citadel_internal_service::{sweep_stale_browser_transfers, BrowserTransferRoot};
 use citadel_sdk::prelude::{BackendType, NodeBuilder, NodeType, StackedRatchet};
 use std::error::Error;
 use std::net::SocketAddr;
@@ -19,7 +19,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // file; without this sweep, repeated crashes accumulate orphaned
     // upload bytes unboundedly. Safe to run before the runtime is
     // built because the helper uses blocking `std::fs`.
-    sweep_stale_browser_transfers();
+    let browser_transfers = BrowserTransferRoot::in_system_temp_dir();
+    sweep_stale_browser_transfers(&browser_transfers);
 
     // Initialize deadlock detector if feature is enabled
     #[cfg(feature = "deadlock-detection")]
@@ -40,6 +41,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
         opts.bind,
         citadel_internal_service::SERVER_RECONNECT,
+        browser_transfers,
     )
     .await?
     .with_supervisor(citadel_internal_service::AGENT_SUPERVISOR);

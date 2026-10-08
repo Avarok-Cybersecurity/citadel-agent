@@ -38,6 +38,7 @@ async fn spawn_agent(backend: BackendType) -> SocketAddr {
     let kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
         addr,
         citadel_internal_service::SERVER_RECONNECT,
+        crate::common::test_transfers(),
     )
     .await
     .unwrap();

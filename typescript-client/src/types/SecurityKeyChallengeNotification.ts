@@ -20,5 +20,9 @@ challenge_id: string, purpose: SecurityKeyPurpose, allowed_credential_ids: Array
 prf_salt: Array<number>, 
 /**
  * How long the SDK waits for the touch. An answer after that is refused.
+ *
+ * `bigint`, as every u64 is: the WASM client serializes with
+ * `serialize_large_number_types_as_bigints`, so a page receives a BigInt here, and a
+ * `number` type let it do arithmetic that threw (the touch prompt crashed in render).
  */
-expires_in_ms: number, };
+expires_in_ms: bigint, };

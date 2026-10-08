@@ -44,7 +44,25 @@ jobs:
           && fromJSON('["self-hosted","macOS","ARM64","apple-48gb-metal"]')
           || matrix.os }}
     timeout-minutes: 60
+    env:
+      # The ubuntu leg ran out of disk linking the test binaries ("ld terminated
+      # with signal 7 [Bus error]", then "No space left on device"): every
+      # integration test is its own binary, each carrying full debug info.
+      # Line tables keep file:line in backtraces at a fraction of the size, and
+      # incremental state is never reused on a fresh runner.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: 0
     steps:
+      # Hosted ubuntu images ship ~30 GB of toolchains this job never uses
+      # (.NET, Android SDK, GHC, CodeQL bundles). Removing them is the headroom;
+      # the df lines on either side of the build are the measurement.
+      - name: Free disk (ubuntu)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: Avarok-Cybersecurity/gh-actions-deps@master
       - uses: taiki-e/install-action@nextest
       - uses: actions/checkout@v4
@@ -81,6 +99,12 @@ jobs:
           # would pile up between jobs, so point it at the per-job temp dir the
           # runner empties.
           TMPDIR: ${{ runner.temp }}
+      - name: Disk after the build
+        if: always()
+        shell: bash
+        run: |
+          df -h . || true
+          du -sh target 2>/dev/null || true
 
   fork-safety:
     name: No fork's pull request can reach the self-hosted Mac

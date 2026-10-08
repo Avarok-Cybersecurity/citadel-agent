@@ -58,6 +58,7 @@ impl<T: IOInterface + Sync, R: Ratchet> CitadelWorkspaceService<T, R> {
                 link: Arc::new(server_link::KernelLink {
                     this: self.clone(),
                     cid,
+                    probed: Arc::default(),
                 }),
                 dialer: Arc::new(dialer::KernelDialer {
                     this: self.clone(),

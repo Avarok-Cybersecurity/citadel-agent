@@ -9,6 +9,8 @@ mod peer;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_force_target;
+#[cfg(test)]
 mod tests_link;
 #[cfg(test)]
 mod tests_paths;

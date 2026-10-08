@@ -95,3 +95,13 @@ pub(crate) fn take_reported_peer<P>(
         .remove(&peer)
         .map_or(PeerReport::Absent, PeerReport::Removed)
 }
+
+/// Whether the supervisor may abandon the entry's link for the probes that went unanswered
+/// on `probed`. The SDK abandons by CID, so once a reconnect replaced the probed link (or
+/// is replacing it) an abandon would end a link nobody has found dead.
+pub(crate) fn probed_link_is_current(
+    current: Option<(LinkState, Instance)>,
+    probed: Instance,
+) -> bool {
+    current == Some((LinkState::Up, probed))
+}

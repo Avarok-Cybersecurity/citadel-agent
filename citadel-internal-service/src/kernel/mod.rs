@@ -67,6 +67,7 @@ pub(crate) mod session_route;
 pub(crate) mod session_subscribers;
 pub(crate) mod session_wait;
 pub(crate) mod sign_in;
+pub(crate) mod staged_uploads;
 pub(crate) mod store_keys;
 pub(crate) mod tick_updater;
 pub mod updates;
@@ -351,6 +352,8 @@ pub struct Connection<R: Ratchet> {
     /// Pending SendFile request ids by SDK ticket, consumed when the Sender
     /// handle arrives. See kernel/send_correlation.rs.
     pub send_correlations: send_correlation::SendCorrelations,
+    /// Browser files being staged chunk by chunk. See kernel/staged_uploads.rs.
+    pub staged_uploads: staged_uploads::StagedUploads,
     /// The client-side password hash this session was opened with.
     ///
     /// Consulted when a later `Connect` names this session's username, so the
@@ -448,6 +451,7 @@ impl<R: Ratchet> Connection<R> {
             picked_files: HashMap::new(),
             revfs_correlations: revfs_correlation::RevfsCorrelations::default(),
             send_correlations: send_correlation::SendCorrelations::default(),
+            staged_uploads: staged_uploads::StagedUploads::default(),
             credential_fingerprint,
             window_relay: None,
             reconnect,

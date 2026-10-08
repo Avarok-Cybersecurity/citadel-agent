@@ -1,3 +1,4 @@
+use super::transfer_root::BrowserTransferRoot;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -6,11 +7,10 @@ use citadel_internal_service_types::{
     SendFileRequestSuccess,
 };
 use citadel_sdk::logging::{error, info, warn};
-use citadel_sdk::prelude::{
-    NetworkError, NodeRequest, Ratchet, SendObject, TransferType, VirtualTargetType,
-};
+use citadel_sdk::prelude::{NetworkError, NodeRequest, Ratchet, SendObject, VirtualTargetType};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -57,33 +57,27 @@ const MAX_BYTE_CONTENTS_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
 /// reject the request if it would push the total past this bound. It is a
 /// best-effort guard (a concurrent racer can briefly overshoot), not a hard
 /// quota — the intent is to deny disk-exhaustion, not to meter to the byte.
-/// 256 MiB ≈ 16 concurrent max-size uploads in flight.
-const MAX_BROWSER_TRANSFER_TOTAL_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB
+/// It equals the ceiling on one staged browser file (kernel/staged_uploads.rs),
+/// so a file at that ceiling always fits an otherwise empty root; payloads
+/// leave the root when their transfer ends (browser_payload.rs).
+pub(super) const MAX_BROWSER_TRANSFER_TOTAL_BYTES: u64 =
+    crate::kernel::staged_uploads::MAX_STAGED_UPLOAD_BYTES;
 
-/// Bytes of in-flight `ByteContents` uploads currently being written (between
-/// the aggregate-cap reservation and the write completing). Added to the
-/// on-disk total when enforcing `MAX_BROWSER_TRANSFER_TOTAL_BYTES` so that
-/// concurrent uploads cannot all observe the same on-disk size and
-/// collectively blow past the cap. Process-wide; resets to 0 on restart (the
-/// startup sweep reclaims any crash leftovers).
-static IN_FLIGHT_BROWSER_TRANSFER_BYTES: AtomicU64 = AtomicU64::new(0);
-
-/// RAII guard that releases an in-flight byte reservation on drop, so the
-/// reservation is returned even if the writing task panics/unwinds (not just
-/// on the normal return paths). Created only AFTER a reservation is accepted.
-struct InFlightReservation(u64);
+/// RAII guard that releases an in-flight byte reservation (the bytes of an
+/// upload being written, counted with the root's on-disk total so concurrent
+/// uploads cannot all observe the same size and collectively pass the cap) on
+/// drop, so it is returned even if the writing task panics/unwinds. Created
+/// only AFTER a reservation is accepted. Each root counts its own
+/// (transfer_root.rs); each request gets a UUID-named subdirectory of the root
+/// containing one file (preserving the user's filename), removed by a
+/// delayed-cleanup task scheduled when the file is created.
+struct InFlightReservation(Arc<AtomicU64>, u64);
 
 impl Drop for InFlightReservation {
     fn drop(&mut self) {
-        IN_FLIGHT_BROWSER_TRANSFER_BYTES.fetch_sub(self.0, Ordering::SeqCst);
+        self.0.fetch_sub(self.1, Ordering::SeqCst);
     }
 }
-
-/// Subdirectory under `std::env::temp_dir()` where browser-uploaded payloads
-/// are materialised. Each request gets its own UUID-named subdirectory
-/// containing one file (preserving the user's filename), removed by a
-/// delayed-cleanup task scheduled when the file is created.
-const BROWSER_TRANSFER_SUBDIR: &str = "citadel-browser-transfers";
 
 /// How long a `ByteContents` temp file persists before the cleanup task
 /// removes it.
@@ -99,7 +93,7 @@ const BROWSER_TRANSFER_SUBDIR: &str = "citadel-browser-transfers";
 /// window even without an external sweeper. The bound matters because the
 /// 16 MiB per-file cap (`MAX_BYTE_CONTENTS_BYTES`) keeps the worst-case
 /// leak bounded in absolute terms.
-const TEMP_FILE_TTL: Duration = Duration::from_secs(600);
+pub(super) const TEMP_FILE_TTL: Duration = Duration::from_secs(600);
 
 /// Windows device names reserved by the OS (case-insensitive, with or without
 /// an extension). Creating a file with one of these stems triggers cryptic
@@ -131,7 +125,7 @@ const WINDOWS_RESERVED_NAMES: [&str; 22] = [
 /// The original name is only ever used as the *basename* inside a UUID-named
 /// per-request directory, so this is robustness/cross-platform hygiene rather
 /// than the path-traversal defense (the UUID dir already provides that).
-fn sanitize_file_name(raw: &str) -> String {
+pub(super) fn sanitize_file_name(raw: &str) -> String {
     // Reduce to the basename by splitting on BOTH separators regardless of the
     // host platform. `Path::file_name` only treats the *current* platform's
     // separator as one, so on a Unix service a browser-supplied Windows path
@@ -285,7 +279,7 @@ fn classify_root(root: &Path) -> RootState {
 /// classic create-time TOCTOU. A benign lost race (two concurrent first
 /// uploads) surfaces as `AlreadyExists`, which we resolve by re-classifying:
 /// proceed only if the winner created a private root, else fail closed.
-fn ensure_private_root(root: &Path) -> std::io::Result<()> {
+pub(super) fn ensure_private_root(root: &Path) -> std::io::Result<()> {
     match classify_root(root) {
         RootState::Safe => Ok(()),
         RootState::Unsafe(reason) => Err(std::io::Error::new(
@@ -309,7 +303,7 @@ fn ensure_private_root(root: &Path) -> std::io::Result<()> {
 /// Create a single directory with `0700` perms, failing if it already exists
 /// (non-recursive; the parent `$TMPDIR` is assumed present). The exclusivity
 /// is what makes root creation symlink-plant resistant.
-fn create_private_dir_exclusive(dir: &Path) -> std::io::Result<()> {
+pub(super) fn create_private_dir_exclusive(dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
@@ -347,7 +341,7 @@ fn write_private_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
 /// (one file per per-request subdir). Best-effort: unreadable entries are
 /// skipped rather than failing the caller. Used to enforce the aggregate
 /// disk cap before a new materialisation.
-fn browser_transfer_root_bytes(root: &Path) -> u64 {
+pub(super) fn browser_transfer_root_bytes(root: &Path) -> u64 {
     let mut total = 0u64;
     let Ok(entries) = std::fs::read_dir(root) else {
         return 0;
@@ -383,11 +377,8 @@ fn browser_transfer_root_bytes(root: &Path) -> u64 {
 /// blocking I/O does not park a worker that another task is waiting
 /// on. Errors are logged but not propagated — a sweep failure must
 /// not block service startup.
-pub fn sweep_stale_browser_transfers() {
-    sweep_browser_transfers_in(
-        &std::env::temp_dir().join(BROWSER_TRANSFER_SUBDIR),
-        TEMP_FILE_TTL,
-    );
+pub fn sweep_stale_browser_transfers(root: &BrowserTransferRoot) {
+    sweep_browser_transfers_in(root.path(), TEMP_FILE_TTL);
 }
 
 /// Inner sweep that operates on an arbitrary root path. Split out so
@@ -476,24 +467,11 @@ fn sweep_browser_transfers_in(root: &Path, max_age: Duration) {
 ///
 /// We remove the per-request directory rather than just the file so a
 /// stray subdirectory doesn't leak even on partial cleanup failure.
-fn schedule_temp_dir_cleanup(dir: PathBuf) {
+pub(super) fn schedule_temp_dir_cleanup(dir: PathBuf) {
     tokio::spawn(async move {
         tokio::time::sleep(TEMP_FILE_TTL).await;
-        match tokio::fs::remove_dir_all(&dir).await {
-            Ok(()) => {
-                info!(target: "citadel", "Cleaned up browser temp dir {:?}", dir);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // Already gone (operator sweep, prior cleanup) - fine.
-            }
-            Err(e) => {
-                warn!(
-                    target: "citadel",
-                    "Failed to clean up browser temp dir {:?}: {}",
-                    dir, e
-                );
-            }
-        }
+        // Usually already gone: removed when its transfer ended.
+        super::browser_payload::remove_request_dir(&dir).await;
     });
 }
 
@@ -506,27 +484,12 @@ fn schedule_temp_dir_cleanup(dir: PathBuf) {
 /// OR failure), so partial states like "directory created but write failed"
 /// do not leak the empty subdir.
 async fn materialize_byte_contents(
+    transfers: &BrowserTransferRoot,
     file_name: &str,
     data: Vec<u8>,
 ) -> Result<PathBuf, NetworkError> {
-    materialize_byte_contents_in(
-        &std::env::temp_dir().join(BROWSER_TRANSFER_SUBDIR),
-        file_name,
-        data,
-    )
-    .await
-}
-
-/// Inner materialise that writes under an arbitrary `root`. Split out (like
-/// `sweep_browser_transfers_in`) so tests can use an isolated, private
-/// per-test root instead of the shared production
-/// `$TMPDIR/citadel-browser-transfers/` — which other processes (or a stale
-/// pre-upgrade directory) may have left at non-private perms.
-async fn materialize_byte_contents_in(
-    root: &Path,
-    file_name: &str,
-    data: Vec<u8>,
-) -> Result<PathBuf, NetworkError> {
+    let root = transfers.path();
+    let in_flight = transfers.in_flight().clone();
     let safe_name = sanitize_file_name(file_name);
 
     // Each request gets its own UUID-named subdirectory under the shared
@@ -557,14 +520,13 @@ async fn materialize_byte_contents_in(
         // a later racer sees the earlier racers' reservations included in
         // `in_flight_before` and is rejected if there's no room.
         let reserve = data.len() as u64;
-        let in_flight_before =
-            IN_FLIGHT_BROWSER_TRANSFER_BYTES.fetch_add(reserve, Ordering::SeqCst);
+        let in_flight_before = in_flight.fetch_add(reserve, Ordering::SeqCst);
         // RAII release so the reservation is given back on EVERY exit from
         // here on — normal return, early error, or a panic that unwinds the
         // spawn_blocking task (which surfaces as a JoinError the closure never
         // gets to clean up). Without this a panicked upload would leak its
         // reservation forever, permanently shrinking the effective cap.
-        let _reservation = InFlightReservation(reserve);
+        let _reservation = InFlightReservation(in_flight, reserve);
         let on_disk = browser_transfer_root_bytes(&root_for_blocking);
         if on_disk
             .saturating_add(in_flight_before)
@@ -681,6 +643,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     // here; ByteContents materialisation deliberately does its disk I/O
     // OUTSIDE any lock so concurrent connection-map writers are not
     // stalled by the spawn_blocking write.
+    let is_browser_payload = matches!(
+        source,
+        FileSource::ByteContents { .. } | FileSource::StagedUpload { .. }
+    );
     let resolved_path: Result<PathBuf, NetworkError> = match source {
         // Confined to paths THIS session picked. Accepting the path verbatim
         // meant whatever absolute path arrived on the socket was opened and
@@ -767,6 +733,19 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 )),
             }
         }
+        // A browser file staged chunk by chunk (staged_upload.rs), complete. Taken
+        // from this session's table, so no other session can send it.
+        FileSource::StagedUpload { upload_id } => this
+            .server_connection_map
+            .write()
+            .get_mut(&cid)
+            .ok_or_else(|| NetworkError::msg("upload: Server Connection Not Found"))
+            .and_then(|conn| {
+                conn.staged_uploads
+                    .take_complete(&upload_id)
+                    .map(|upload| upload.path)
+                    .map_err(NetworkError::msg)
+            }),
         FileSource::ByteContents { file_name, data } => {
             // Size guard: fail fast before any I/O.
             if data.len() > MAX_BYTE_CONTENTS_BYTES {
@@ -776,33 +755,31 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     MAX_BYTE_CONTENTS_BYTES
                 )))
             } else {
-                materialize_byte_contents(&file_name, data).await
+                materialize_byte_contents(&this.browser_transfers, &file_name, data).await
             }
         }
     };
 
-    // A REVFS push needs its completion reported back to the requesting
-    // browser: `SendFileRequestSuccess` below only means "queued", so the
-    // browser waits for the Sender-side TransferComplete tick — which must
-    // carry this request_id. `SendObject` has no field to thread it through,
-    // so it is registered here and consumed when the Sender handle arrives
-    // (responses/object_transfer_handle.rs). The Sender-handle scope key is
-    // the peer's cid for P2P, and — because a c2s Sender handle carries
-    // source == receiver == session_cid — the session's own cid for c2s.
-    let is_revfs_push = matches!(
-        transfer_type,
-        TransferType::RemoteEncryptedVirtualFilesystem { .. }
-    );
-    let correlation_scope = peer_cid.unwrap_or(cid);
+    // A browser payload is removed as soon as its transfer ends, whichever way
+    // (requests/file/browser_payload.rs); the timer set when it was written is
+    // only the backstop.
+    let payload_dir: Option<PathBuf> = match &resolved_path {
+        Ok(path) if is_browser_payload => super::browser_payload::request_dir_of(path),
+        _ => None,
+    };
+    let discard_payload = |dir: &Option<PathBuf>| {
+        if let Some(dir) = dir.clone() {
+            super::browser_payload::remove_request_dir_soon(dir);
+        }
+    };
 
     // Build the NodeRequest under a brief lock, then drop the lock
     // before any await (the SDK `remote.send` below is async and must not
-    // happen while the RwLock is held). Write lock: REVFS pushes also
-    // register their tick correlation here (see above).
+    // happen while the RwLock is held).
     let send_request: Result<NodeRequest, NetworkError> = match resolved_path {
         Ok(file_path) => {
-            let mut lock = this.server_connection_map.write();
-            match lock.get_mut(&cid) {
+            let lock = this.server_connection_map.read();
+            match lock.get(&cid) {
                 Some(conn) => {
                     if let Some(peer_cid) = peer_cid {
                         if conn.peers.contains_key(&peer_cid) {
@@ -819,10 +796,6 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                             // direction whenever the sender wasn't also the
                             // P2P initiator. Same shape we already use for
                             // messaging via the sink works for SendObject too.
-                            if is_revfs_push {
-                                conn.revfs_correlations
-                                    .register_push(correlation_scope, request_id);
-                            }
                             Ok(NodeRequest::SendObject(SendObject {
                                 source: Box::new(file_path),
                                 chunk_size,
@@ -837,10 +810,6 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
-                        if is_revfs_push {
-                            conn.revfs_correlations
-                                .register_push(correlation_scope, request_id);
-                        }
                         Ok(NodeRequest::SendObject(SendObject {
                             source: Box::new(file_path),
                             chunk_size,
@@ -865,6 +834,19 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             match result {
                 Ok(mut subscription) => {
                     info!(target: "citadel","InternalServiceRequest Send File Success");
+                    // `SendFileRequestSuccess` only means "queued": the browser
+                    // follows the transfer by its Sender ticks, which must name
+                    // this request. See kernel/send_correlation.rs.
+                    let ticket = subscription.callback_key().ticket.0;
+                    if let Some(conn) = this.server_connection_map.write().get_mut(&cid) {
+                        conn.send_correlations.register(
+                            ticket,
+                            crate::kernel::send_correlation::PendingSend {
+                                request_id,
+                                payload_dir: payload_dir.clone(),
+                            },
+                        );
+                    }
                     let response =
                         InternalServiceResponse::SendFileRequestSuccess(SendFileRequestSuccess {
                             cid,
@@ -890,13 +872,13 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                         if let Some(evt) = first {
                             match super::refusal(&evt) {
                                 Some(message) => {
-                                    if is_revfs_push {
-                                        if let Some(conn) =
-                                            this.server_connection_map.write().get_mut(&cid)
-                                        {
-                                            conn.revfs_correlations
-                                                .cancel_push(correlation_scope, request_id);
-                                        }
+                                    let refused = this
+                                        .server_connection_map
+                                        .write()
+                                        .get_mut(&cid)
+                                        .and_then(|conn| conn.send_correlations.take(ticket));
+                                    if let Some(dir) = refused.and_then(|send| send.payload_dir) {
+                                        super::browser_payload::remove_request_dir_soon(dir);
                                     }
                                     let _ = crate::kernel::send_response_to_tcp_client(
                                         &this.tx_to_localhost_clients,
@@ -922,14 +904,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 }
                 Err(err) => {
                     error!(target: "citadel","InternalServiceRequest Send File Failure");
-                    // The push never went out — its correlation entry must
-                    // not sit in the FIFO and claim the NEXT push's ticks.
-                    if is_revfs_push {
-                        if let Some(conn) = this.server_connection_map.write().get_mut(&cid) {
-                            conn.revfs_correlations
-                                .cancel_push(correlation_scope, request_id);
-                        }
-                    }
+                    discard_payload(&payload_dir);
                     let response =
                         InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
                             cid,
@@ -941,6 +916,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
         }
         Err(err) => {
+            discard_payload(&payload_dir);
             let response =
                 InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
                     cid,
@@ -954,7 +930,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
 #[cfg(test)]
 mod tests {
-    use super::{materialize_byte_contents_in, sanitize_file_name};
+    use super::super::transfer_root::BrowserTransferRoot;
+    use super::{materialize_byte_contents, sanitize_file_name};
 
     #[test]
     fn sanitize_strips_path_components() {
@@ -1145,7 +1122,12 @@ mod tests {
         let root_as_file = base.join("not-a-dir");
         std::fs::write(&root_as_file, b"x").expect("create regular file at root path");
 
-        let result = materialize_byte_contents_in(&root_as_file, "file.bin", vec![1, 2, 3]).await;
+        let result = materialize_byte_contents(
+            &BrowserTransferRoot::at(root_as_file.clone()),
+            "file.bin",
+            vec![1, 2, 3],
+        )
+        .await;
         assert!(
             result.is_err(),
             "expected IO error when root is a file, got Ok({:?})",
@@ -1182,9 +1164,13 @@ mod tests {
     #[tokio::test]
     async fn materialize_writes_payload_to_temp_path() {
         let (root, _guard) = isolated_private_root("materialize_ok");
-        let path = materialize_byte_contents_in(&root, "hello.bin", vec![0xDE, 0xAD, 0xBE, 0xEF])
-            .await
-            .expect("materialize should succeed");
+        let path = materialize_byte_contents(
+            &BrowserTransferRoot::at(root.clone()),
+            "hello.bin",
+            vec![0xDE, 0xAD, 0xBE, 0xEF],
+        )
+        .await
+        .expect("materialize should succeed");
 
         // Path lives under the root we provided.
         assert!(

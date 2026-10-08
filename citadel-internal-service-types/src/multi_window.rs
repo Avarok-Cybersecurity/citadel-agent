@@ -111,6 +111,11 @@ pub struct AgentCapabilities {
     /// `ServiceConnectionAccepted::supervises_p2p`.
     #[serde(default)]
     pub supervises_p2p: bool,
+    /// Something on the agent's side shows its native notices: the menu-bar app
+    /// is subscribed. Kept current by `NoticesHeardNotification`. Absent from an
+    /// older agent, which is what `false` means here.
+    #[serde(default)]
+    pub notices_heard: bool,
     pub request_id: Option<Uuid>,
 }
 

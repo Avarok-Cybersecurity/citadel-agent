@@ -62,7 +62,7 @@ pub enum PickLookupFailure {
 }
 
 /// Store a pick, sweeping anything already past its TTL and enforcing the cap.
-#[cfg_attr(not(feature = "native-dialogs"), allow(dead_code))]
+/// Also records a RE-VFS pull's finished output (kernel/pulled_files.rs).
 pub fn store(
     picked_files: &mut HashMap<Uuid, PickedFileInfo>,
     request_id: Uuid,

@@ -20,4 +20,10 @@ multi_window: boolean,
  * The agent keeps this account's peers connected itself; see
  * `ServiceConnectionAccepted::supervises_p2p`.
  */
-supervises_p2p: boolean, request_id: string | null, };
+supervises_p2p: boolean, 
+/**
+ * Something on the agent's side shows its native notices: the menu-bar app
+ * is subscribed. Kept current by `NoticesHeardNotification`. Absent from an
+ * older agent, which is what `false` means here.
+ */
+notices_heard: boolean, request_id: string | null, };

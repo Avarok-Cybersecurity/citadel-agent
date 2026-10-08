@@ -45,8 +45,11 @@ fn post_connect_to_dialler(invitee_response: Option<PeerResponse>) -> PeerEvent 
 
 #[tokio::test]
 async fn a_declined_answer_is_not_stored_as_an_incoming_offer() {
-    let (_connector, svc): (_, Svc) =
-        CitadelWorkspaceService::new_in_memory(crate::SERVER_RECONNECT);
+    let transfers = tempfile::tempdir().unwrap();
+    let (_connector, svc): (_, Svc) = CitadelWorkspaceService::new_in_memory(
+        crate::SERVER_RECONNECT,
+        crate::BrowserTransferRoot::at(transfers.path().to_path_buf()),
+    );
     handle(&svc, post_connect_to_dialler(Some(PeerResponse::Decline)))
         .await
         .unwrap();
@@ -60,8 +63,11 @@ async fn a_declined_answer_is_not_stored_as_an_incoming_offer() {
 /// above is measuring the response, not a handler that stores nothing.
 #[tokio::test]
 async fn an_offer_is_stored_for_acceptance() {
-    let (_connector, svc): (_, Svc) =
-        CitadelWorkspaceService::new_in_memory(crate::SERVER_RECONNECT);
+    let transfers = tempfile::tempdir().unwrap();
+    let (_connector, svc): (_, Svc) = CitadelWorkspaceService::new_in_memory(
+        crate::SERVER_RECONNECT,
+        crate::BrowserTransferRoot::at(transfers.path().to_path_buf()),
+    );
     handle(&svc, post_connect_to_dialler(None)).await.unwrap();
     assert!(svc
         .pending_peer_connect_signals

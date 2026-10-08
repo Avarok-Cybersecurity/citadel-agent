@@ -120,3 +120,22 @@ fn focus_is_per_window_and_leaves_with_it() {
         "a closed window still held focus"
     );
 }
+
+/// The windows are told when whether anything hears notices changes, and only then.
+#[test]
+fn a_change_in_who_hears_is_reported_once() {
+    let (hub, clients) = hub("token");
+    assert_eq!(hub.heard_changed(), None, "nothing heard, nothing told");
+    let (app, rx) = window(&clients);
+    hub.subscribe(app);
+    assert_eq!(hub.heard_changed(), Some(true));
+    assert_eq!(hub.heard_changed(), None, "said once");
+    clients.write().remove(&app);
+    drop(rx);
+    assert_eq!(
+        hub.heard_changed(),
+        Some(false),
+        "the app's connection went away"
+    );
+    assert_eq!(hub.heard_changed(), None);
+}

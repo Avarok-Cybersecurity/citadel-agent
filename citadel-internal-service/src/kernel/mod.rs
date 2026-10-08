@@ -2,6 +2,7 @@ use crate::kernel::ext::IOInterfaceExt;
 use crate::kernel::media::{
     media_lane, MediaLaneTx, PeerMediaSession, UdpState, MEDIA_LANE_CAPACITY,
 };
+pub use crate::kernel::requests::file::transfer_root::BrowserTransferRoot;
 use crate::kernel::requests::{handle_request, HandledRequestResult};
 use crate::kernel::session_route::Clients;
 use crate::kernel::session_subscribers::SessionSubscribers;
@@ -46,6 +47,7 @@ pub(crate) mod media;
 pub(crate) mod peer_path;
 pub(crate) mod pending_group_invites;
 pub(crate) mod picked_files;
+pub(crate) mod pulled_files;
 pub(crate) mod reconnect;
 pub mod supervisor;
 
@@ -58,14 +60,16 @@ pub mod notices;
 pub(crate) mod requests;
 pub(crate) mod responses;
 pub(crate) mod revfs_correlation;
+pub(crate) mod send_correlation;
 pub(crate) mod server_address;
 pub(crate) mod server_host;
 pub(crate) mod session_route;
 pub(crate) mod session_subscribers;
 pub(crate) mod session_wait;
 pub(crate) mod sign_in;
+pub(crate) mod staged_uploads;
 pub(crate) mod store_keys;
-mod tick_updater;
+pub(crate) mod tick_updater;
 pub mod updates;
 pub(crate) use tick_updater::spawn_tick_updater;
 
@@ -127,6 +131,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) updates: Arc<updates::UpdatesSlot>,
     /// Security-key challenges waiting for a window's touch (kernel/sign_in/key_relay.rs).
     pub(crate) key_challenges: Arc<sign_in::key_relay::KeyChallenges>,
+    /// Where browser uploads are written before they are sent (requests/file/transfer_root.rs).
+    pub(crate) browser_transfers: BrowserTransferRoot,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -152,6 +158,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             notices: self.notices.clone(),
             updates: self.updates.clone(),
             key_challenges: self.key_challenges.clone(),
+            browser_transfers: self.browser_transfers.clone(),
             io: self.io.clone(),
         }
     }
@@ -159,8 +166,13 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
 
 impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
     /// `reconnect_policy` is how a session its server dropped is brought back; the
-    /// agent's is `SERVER_RECONNECT`. Required, so every caller states it.
-    pub fn new(io: T, reconnect_policy: ReconnectPolicy) -> Self {
+    /// agent's is `SERVER_RECONNECT`. Required, so every caller states it; so is
+    /// `browser_transfers`, where browser uploads are written.
+    pub fn new(
+        io: T,
+        reconnect_policy: ReconnectPolicy,
+        browser_transfers: BrowserTransferRoot,
+    ) -> Self {
         let clients: Clients = Arc::new(RwLock::new(Default::default()));
         CitadelWorkspaceService {
             remote: None,
@@ -182,6 +194,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             client_capabilities: Default::default(),
             updates: Default::default(),
             key_challenges: Default::default(),
+            browser_transfers,
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -202,9 +215,14 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
     pub async fn new_tcp(
         bind_address: SocketAddr,
         reconnect_policy: ReconnectPolicy,
+        browser_transfers: BrowserTransferRoot,
     ) -> std::io::Result<CitadelWorkspaceService<TcpIOInterface, R>> {
         let io = TcpIOInterface::new(bind_address).await?;
-        Ok(CitadelWorkspaceService::new(io, reconnect_policy))
+        Ok(CitadelWorkspaceService::new(
+            io,
+            reconnect_policy,
+            browser_transfers,
+        ))
     }
 
     #[cfg(feature = "websockets")]
@@ -215,9 +233,14 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
         bind_address: SocketAddr,
         origins: OriginPolicy,
         reconnect_policy: ReconnectPolicy,
+        browser_transfers: BrowserTransferRoot,
     ) -> std::io::Result<CitadelWorkspaceService<WebSocketInterface, R>> {
         let ws_server_io = WebSocketInterface::new(bind_address, origins).await?;
-        Ok(CitadelWorkspaceService::new(ws_server_io, reconnect_policy))
+        Ok(CitadelWorkspaceService::new(
+            ws_server_io,
+            reconnect_policy,
+            browser_transfers,
+        ))
     }
 
     #[cfg(feature = "websockets")]
@@ -234,11 +257,16 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
         certificate_chain: &[u8],
         private_key: &[u8],
         reconnect_policy: ReconnectPolicy,
+        browser_transfers: BrowserTransferRoot,
     ) -> std::io::Result<CitadelWorkspaceService<WebSocketInterface, R>> {
         let ws_server_io =
             WebSocketInterface::new_tls(bind_address, origins, certificate_chain, private_key)
                 .await?;
-        Ok(CitadelWorkspaceService::new(ws_server_io, reconnect_policy))
+        Ok(CitadelWorkspaceService::new(
+            ws_server_io,
+            reconnect_policy,
+            browser_transfers,
+        ))
     }
 }
 
@@ -247,6 +275,7 @@ impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {
     /// networking to connect between the application and the internal service
     pub fn new_in_memory(
         reconnect_policy: ReconnectPolicy,
+        browser_transfers: BrowserTransferRoot,
     ) -> (
         InternalServiceConnector<InMemoryInterface>,
         CitadelWorkspaceService<InMemoryInterface, R>,
@@ -263,7 +292,7 @@ impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {
             sink: Some(tx_to_consumer),
             stream: Some(rx_from_svc),
         };
-        let kernel = CitadelWorkspaceService::new(io, reconnect_policy);
+        let kernel = CitadelWorkspaceService::new(io, reconnect_policy, browser_transfers);
         (connector, kernel)
     }
 }
@@ -316,11 +345,15 @@ pub struct Connection<R: Ratchet> {
     /// Key is the request_id from the PickFile request.
     /// Used to resolve FileSource::PickFileRef in SendFile commands.
     pub picked_files: HashMap<Uuid, PickedFileInfo>,
-    /// Pending REVFS pull/push request ids, consumed when the matching
-    /// ObjectTransferHandle arrives so its ticks carry the browser's
-    /// request_id instead of the meaningless TCP-connection uuid fallback.
+    /// Pending REVFS pull request ids, consumed when the matching Receiver
+    /// handle arrives so its ticks carry the browser's request_id.
     /// See kernel/revfs_correlation.rs for the mechanism.
     pub revfs_correlations: revfs_correlation::RevfsCorrelations,
+    /// Pending SendFile request ids by SDK ticket, consumed when the Sender
+    /// handle arrives. See kernel/send_correlation.rs.
+    pub send_correlations: send_correlation::SendCorrelations,
+    /// Browser files being staged chunk by chunk. See kernel/staged_uploads.rs.
+    pub staged_uploads: staged_uploads::StagedUploads,
     /// The client-side password hash this session was opened with.
     ///
     /// Consulted when a later `Connect` names this session's username, so the
@@ -336,12 +369,18 @@ pub struct Connection<R: Ratchet> {
     /// What the sign-in proved, and the SDK handle for managing the account's factors.
     pub(crate) sign_in: sign_in::SessionSignIn<R>,
     pub(crate) link: reconnect::LinkState,
+    /// The SDK session the link is; a drop report of another is not this link's.
+    /// See kernel/reconnect/instance.rs.
+    pub(crate) instance: reconnect::instance::Instance,
     pub(crate) handoff: reconnect::Handoff,
 }
 
 #[allow(dead_code)]
 pub struct PeerConnection<R: Ratchet> {
     pub sink: AsyncSink<R>,
+    /// The SDK's P2P connection the sink is; a disconnect report of another is not this
+    /// peer's. See kernel/reconnect/instance.rs.
+    pub(crate) instance: Option<reconnect::instance::Instance>,
     /// Optional PeerRemote for advanced operations (file transfers, etc.)
     /// May be None for acceptor-side connections where we only have the channel.
     remote: Option<PeerRemote<R>>,
@@ -398,6 +437,7 @@ impl<R: Ratchet> Connection<R> {
     ) -> Self {
         Connection {
             peers: HashMap::new(),
+            instance: sink.channel_id(),
             sink_to_server: Arc::new(tokio::sync::Mutex::new(sink)),
             client_server_remote,
             subscribers,
@@ -410,6 +450,8 @@ impl<R: Ratchet> Connection<R> {
             server_host,
             picked_files: HashMap::new(),
             revfs_correlations: revfs_correlation::RevfsCorrelations::default(),
+            send_correlations: send_correlation::SendCorrelations::default(),
+            staged_uploads: staged_uploads::StagedUploads::default(),
             credential_fingerprint,
             window_relay: None,
             reconnect,
@@ -454,6 +496,7 @@ impl<R: Ratchet> Connection<R> {
         match self.peers.entry(peer_cid) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 let peer = entry.get_mut();
+                peer.instance = sink.connection_id();
                 peer.sink = Arc::new(tokio::sync::Mutex::new(sink));
                 if remote.is_some() {
                     peer.remote = remote;
@@ -476,6 +519,7 @@ impl<R: Ratchet> Connection<R> {
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert(PeerConnection {
+                    instance: sink.connection_id(),
                     sink: Arc::new(tokio::sync::Mutex::new(sink)),
                     remote,
                     handler_map: HashMap::new(),

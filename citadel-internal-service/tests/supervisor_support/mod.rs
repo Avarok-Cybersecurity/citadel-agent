@@ -40,8 +40,12 @@ pub async fn spawn_agent(
     policy: Option<SupervisorPolicy>,
 ) -> Result<(SocketAddr, JoinHandle<()>), Box<dyn Error>> {
     let bind: SocketAddr = format!("127.0.0.1:{}", common::get_free_port()).parse()?;
-    let mut kernel =
-        CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind, SERVER_RECONNECT).await?;
+    let mut kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+        bind,
+        SERVER_RECONNECT,
+        citadel_internal_service_test_common::test_transfers(),
+    )
+    .await?;
     if let Some(policy) = policy {
         kernel = kernel.with_supervisor(policy);
     }

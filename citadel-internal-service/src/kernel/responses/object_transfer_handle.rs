@@ -1,3 +1,4 @@
+use crate::kernel::tick_updater::StreamHooks;
 use crate::kernel::{spawn_tick_updater, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{FileTransferRequestNotification, InternalServiceResponse};
@@ -32,6 +33,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     object_transfer_handle: ObjectTransferHandle,
 ) -> Result<(), NetworkError> {
+    let ticket = object_transfer_handle.ticket;
     let metadata = object_transfer_handle.handle.metadata.clone();
     let object_id = metadata.object_id;
     let implicated_cid = object_transfer_handle.session_cid;
@@ -77,6 +79,23 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 // registered under: the peer's cid for P2P, 0 for c2s
                 // (handle.source == C2S_IDENTITY_CID).
                 let request_id = connection.revfs_correlations.take_pull(peer_cid);
+                // The file the pull writes is this session's to send on
+                // (kernel/pulled_files.rs): how an owner shares a file from
+                // peer storage with the peer who holds it.
+                let connections = this.server_connection_map.clone();
+                let pick_key = request_id.unwrap_or_else(Uuid::new_v4);
+                let on_pulled: crate::kernel::pulled_files::PulledFileHook =
+                    Box::new(move |info| {
+                        if let Some(conn) = connections.write().get_mut(&implicated_cid) {
+                            let now = info.picked_at;
+                            crate::kernel::picked_files::store(
+                                &mut conn.picked_files,
+                                pick_key,
+                                info,
+                                now,
+                            );
+                        }
+                    });
                 spawn_tick_updater(
                     object_transfer_handler,
                     implicated_cid,
@@ -84,6 +103,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     &mut server_connection_map,
                     this.tx_to_localhost_clients.clone(),
                     request_id,
+                    StreamHooks {
+                        on_pulled: Some(on_pulled),
+                        on_end: None,
+                    },
                 );
             } else if matches!(
                 metadata.transfer_type,
@@ -106,9 +129,9 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 match handler.accept() {
                     Ok(()) => {
                         info!(target: "citadel", "Auto-accepted inbound REVFS push from peer {peer_cid} for cid {implicated_cid}");
-                        // Drain the status stream so reception completes; the
-                        // receiving browser issued no request, so there is no
-                        // request_id to stamp these ticks with.
+                        // Drain the status stream so reception completes. The
+                        // receiving browser issued no request, so the ticks name
+                        // none: this is storage, not a transfer it can follow.
                         spawn_tick_updater(
                             handler,
                             implicated_cid,
@@ -116,6 +139,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                             &mut server_connection_map,
                             this.tx_to_localhost_clients.clone(),
                             None,
+                            StreamHooks::default(),
                         );
                     }
                     Err(err) => {
@@ -193,24 +217,20 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         // we know the opposite node agreed to the connection thus we can spawn
         let mut server_connection_map = this.server_connection_map.write();
         info!(target: "citadel", "Sender Obtained ObjectTransferHandler");
-        // A REVFS push's Sender ticks are the uploader's ONLY completion
-        // signal (SendFileRequestSuccess just means "queued"), so reclaim the
-        // browser's SendFile request_id registered in requests/file/upload.rs.
-        // The scope key mirrors upload.rs: for a c2s push the handle carries
-        // source == receiver == session_cid, so the computed `peer_cid` here
-        // IS `implicated_cid` — which is what upload.rs registered under
-        // (`peer_cid.unwrap_or(cid)`). Standard file transfers register
-        // nothing, so they keep the legacy TCP-uuid fallback.
-        let request_id = if matches!(
-            object_transfer_handler.metadata.transfer_type,
-            TransferType::RemoteEncryptedVirtualFilesystem { .. }
-        ) {
-            server_connection_map
-                .get_mut(&implicated_cid)
-                .and_then(|conn| conn.revfs_correlations.take_push(peer_cid))
-        } else {
-            None
-        };
+        // The SendFile this handle answers, joined by the request's ticket
+        // (kernel/send_correlation.rs). None when this node did not ask for the
+        // transfer -- it is answering a peer's RE-VFS pull -- and then the ticks
+        // name no request, rather than one the browser could mistake for its own.
+        let send = server_connection_map
+            .get_mut(&implicated_cid)
+            .and_then(|conn| conn.send_correlations.take(ticket.0));
+        let request_id = send.as_ref().map(|send| send.request_id);
+        // The SDK has the payload open; once the stream ends it is done with it.
+        let on_end = send.and_then(|send| send.payload_dir).map(|dir| {
+            Box::new(move || {
+                crate::kernel::requests::file::browser_payload::remove_request_dir_soon(dir)
+            }) as Box<dyn FnOnce() + Send>
+        });
         spawn_tick_updater(
             object_transfer_handler,
             implicated_cid,
@@ -218,6 +238,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             &mut server_connection_map,
             this.tx_to_localhost_clients.clone(),
             request_id,
+            StreamHooks {
+                on_pulled: None,
+                on_end,
+            },
         );
     }
 

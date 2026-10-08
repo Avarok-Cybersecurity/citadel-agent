@@ -15,7 +15,9 @@ pub(crate) fn restart<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     cid: u64,
 ) {
-    let Began::Reconnecting { lost_peers } = task::begin(&this.server_connection_map, cid) else {
+    // The abandon ended whichever instance the entry's link was: no other to name.
+    let Began::Reconnecting { lost_peers } = task::begin(&this.server_connection_map, cid, None)
+    else {
         info!(target: LOG_TARGET, "[Reconnect] {cid}: already reconnecting, or not a live link");
         return;
     };

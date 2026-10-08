@@ -87,7 +87,7 @@ flags: number, payload: number[], } } | { "MediaClose": { request_id: string, ci
  * Use FileSource::Path for direct file paths, or FileSource::PickFileRef
  * to reference a previously picked file via its request_id.
  */
-source: FileSource, cid: bigint, peer_cid: bigint | null, chunk_size: number | null, transfer_type: TransferType, } } | { "RespondFileTransfer": { cid: bigint, peer_cid: bigint, object_id: ObjectId, accept: boolean, download_location: string | null, request_id: string, } } | { "DownloadFile": { virtual_directory: string, security_level: SecurityLevel | null, delete_on_pull: boolean, cid: bigint, peer_cid: bigint | null, request_id: string, } } | { "DeleteVirtualFile": { virtual_directory: string, cid: bigint, peer_cid: bigint | null, request_id: string, } } | { "PickFile": { request_id: string, cid: bigint, 
+source: FileSource, cid: bigint, peer_cid: bigint | null, chunk_size: number | null, transfer_type: TransferType, } } | { "StageUploadChunk": { request_id: string, cid: bigint, upload_id: string, file_name: string, total_size: bigint, offset: bigint, data: number[], } } | { "RespondFileTransfer": { cid: bigint, peer_cid: bigint, object_id: ObjectId, accept: boolean, download_location: string | null, request_id: string, } } | { "DownloadFile": { virtual_directory: string, security_level: SecurityLevel | null, delete_on_pull: boolean, cid: bigint, peer_cid: bigint | null, request_id: string, } } | { "DeleteVirtualFile": { virtual_directory: string, cid: bigint, peer_cid: bigint | null, request_id: string, } } | { "PickFile": { request_id: string, cid: bigint, 
 /**
  * Optional title for the file picker dialog
  */

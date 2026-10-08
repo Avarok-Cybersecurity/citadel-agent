@@ -296,6 +296,7 @@ mod tests {
             let kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
                 addr,
                 citadel_internal_service::SERVER_RECONNECT,
+                crate::common::test_transfers(),
             )
             .await?;
             let node = NodeBuilder::default()

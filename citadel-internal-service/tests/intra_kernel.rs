@@ -28,6 +28,7 @@ mod tests {
         let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             service_addr,
             citadel_internal_service::SERVER_RECONNECT,
+            crate::common::test_transfers(),
         )
         .await?;
 
@@ -102,6 +103,7 @@ mod tests {
         let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             service_addr,
             citadel_internal_service::SERVER_RECONNECT,
+            crate::common::test_transfers(),
         )
         .await?;
 
@@ -212,6 +214,7 @@ mod tests {
         let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             service_addr,
             citadel_internal_service::SERVER_RECONNECT,
+            crate::common::test_transfers(),
         )
         .await?;
 
@@ -357,6 +360,7 @@ mod tests {
         let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             service_addr,
             citadel_internal_service::SERVER_RECONNECT,
+            crate::common::test_transfers(),
         )
         .await?;
 

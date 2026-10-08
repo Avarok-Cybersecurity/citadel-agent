@@ -43,8 +43,11 @@ const SILENT_DEATH_BUDGET: Duration = Duration::from_secs(30);
 /// redialled and messages flow.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_silent_dead_path_is_replaced_and_the_peers_come_back() -> Result<(), Box<dyn Error>> {
+    let mut phases = Phases::new();
     let mut pair = pair(Some(AGENT_SUPERVISOR), None).await?;
+    phases.mark("two agents signed in");
     connect_peers(&mut pair).await?;
+    phases.mark("peers connected");
     let started = Instant::now();
     pair.proxy.stall();
     let mut told = Vec::new();
@@ -60,7 +63,8 @@ async fn a_silent_dead_path_is_replaced_and_the_peers_come_back() -> Result<(), 
         }),
     )
     .await
-    .map_err(|_| format!("the dead path was not replaced; told {told:?}"))??;
+    .map_err(|_| phases.failed(&format!("the dead path was not replaced; told {told:?}")))??;
+    phases.mark("dead path replaced (ServerReconnected)");
     eprintln!("replaced after {:?}", started.elapsed());
     assert_eq!(
         told.first(),
@@ -72,14 +76,47 @@ async fn a_silent_dead_path_is_replaced_and_the_peers_come_back() -> Result<(), 
         matches!(peers, InternalServiceResponse::ListAllPeersResponse(_)),
         "the same session carries traffic again: {peers:?}"
     );
+    phases.mark("the same session listed its peers");
     let cid_a = pair.a.cid;
     tokio::time::timeout(
         REDIAL_BUDGET,
         delivered_to(&mut pair.b, cid_a, "after the path died"),
     )
     .await
-    .map_err(|_| "the peer was not redialled, or its message not delivered")??;
+    .map_err(|_| phases.failed("the peer was not redialled, or its message not delivered"))??;
+    phases.mark("redialled and delivered");
     Ok(())
+}
+
+/// Each phase's end, from the test's start, printed as it is reached and repeated in a
+/// failure, so a timeout names the phase that stalled (nextest prints output only at the end,
+/// so its log's timestamps are not these).
+struct Phases {
+    started: Instant,
+    reached: Vec<(&'static str, Duration)>,
+}
+
+impl Phases {
+    fn new() -> Self {
+        Self {
+            started: Instant::now(),
+            reached: Vec::new(),
+        }
+    }
+
+    fn mark(&mut self, phase: &'static str) {
+        let at = self.started.elapsed();
+        eprintln!("[phase] {phase} at {at:?}");
+        self.reached.push((phase, at));
+    }
+
+    fn failed(&self, why: &str) -> String {
+        format!(
+            "{why} after {:?}; phases reached: {:?}",
+            self.started.elapsed(),
+            self.reached
+        )
+    }
 }
 
 /// A reconnect and the redial that follows, once the dead path is noticed.

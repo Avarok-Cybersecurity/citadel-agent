@@ -112,6 +112,7 @@ async fn handle_request(
                     cid,
                     peer_cid: None,
                     request_id: Some(request_id),
+                    ended_locally: None,
                 },
             ))
         }

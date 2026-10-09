@@ -34,9 +34,35 @@ pub enum SdkDisconnect {
     Failed(String),
     /// The SDK did not answer within the budget.
     TimedOut,
+    /// The server could not be told, so the session was ended on this device alone
+    /// (`abandon_session`); carries why the server was not told. Signed out.
+    EndedLocally(String),
 }
 
 impl SdkDisconnect {
+    /// The outcome once an SDK failure has been followed by abandoning the session locally.
+    /// A refused or timed-out disconnect becomes `EndedLocally` when the abandon worked; when
+    /// it did not, the session survives and the failure stands, with the abandon's error added.
+    /// An outcome that was not a failure is returned unchanged.
+    pub fn after_abandon(self, abandoned: Result<(), String>, budget: Duration) -> Self {
+        let why = match &self {
+            SdkDisconnect::Failed(err) => format!("SDK disconnect failed: {err}"),
+            SdkDisconnect::TimedOut => format!("SDK disconnect timed out after {budget:?}"),
+            SdkDisconnect::Succeeded | SdkDisconnect::EndedLocally(_) => return self,
+        };
+        match abandoned {
+            Ok(()) => SdkDisconnect::EndedLocally(why),
+            Err(abandon_err) => SdkDisconnect::Failed(format!(
+                "{why}; ending the session locally failed: {abandon_err}"
+            )),
+        }
+    }
+
+    /// Whether the SDK failed in a way the session survived, so it still has to be ended here.
+    pub fn needs_local_end(&self) -> bool {
+        matches!(self, SdkDisconnect::Failed(_) | SdkDisconnect::TimedOut)
+    }
+
     /// The response to send. Success only when the session actually went away.
     pub fn into_response(
         self,
@@ -51,6 +77,15 @@ impl SdkDisconnect {
                     cid,
                     peer_cid,
                     request_id: Some(request_id),
+                    ended_locally: None,
+                })
+            }
+            SdkDisconnect::EndedLocally(why) => {
+                return InternalServiceResponse::DisconnectNotification(DisconnectNotification {
+                    cid,
+                    peer_cid,
+                    request_id: Some(request_id),
+                    ended_locally: Some(why),
                 })
             }
             SdkDisconnect::Failed(err) => format!("SDK disconnect failed: {err}"),
@@ -124,6 +159,45 @@ mod tests {
     }
 
     #[test]
+    fn a_failure_followed_by_a_local_end_is_a_sign_out_that_says_so() {
+        for failure in [
+            SdkDisconnect::Failed("link down".into()),
+            SdkDisconnect::TimedOut,
+        ] {
+            let outcome = failure.after_abandon(Ok(()), BUDGET);
+            match response_of(outcome) {
+                InternalServiceResponse::DisconnectNotification(n) => {
+                    let note = n
+                        .ended_locally
+                        .expect("the note says the server was not told");
+                    assert!(!note.is_empty());
+                }
+                other => panic!("an abandoned session is signed out: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_failed_local_end_keeps_the_failure() {
+        let outcome = SdkDisconnect::TimedOut.after_abandon(Err("no session".into()), BUDGET);
+        match response_of(outcome) {
+            InternalServiceResponse::PeerDisconnectFailure(f) => {
+                assert!(f.message.contains("timed out") && f.message.contains("no session"));
+            }
+            other => panic!("a session that survived is not signed out: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_success_is_not_marked_as_ended_locally() {
+        let outcome = SdkDisconnect::Succeeded.after_abandon(Ok(()), BUDGET);
+        match response_of(outcome) {
+            InternalServiceResponse::DisconnectNotification(n) => assert_eq!(n.ended_locally, None),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn the_request_id_is_carried_on_every_outcome() {
         // Without it the caller cannot correlate the answer with its request,
         // and a failure that nobody can attribute is close to a failure nobody
@@ -132,6 +206,7 @@ mod tests {
             SdkDisconnect::Succeeded,
             SdkDisconnect::Failed("x".into()),
             SdkDisconnect::TimedOut,
+            SdkDisconnect::EndedLocally("x".into()),
         ] {
             let id = match outcome.into_response(1, None, Uuid::nil(), BUDGET) {
                 InternalServiceResponse::DisconnectNotification(n) => n.request_id,

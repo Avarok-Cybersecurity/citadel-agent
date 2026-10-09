@@ -128,6 +128,7 @@ fn remove<T: IOInterface + Sync, R: Ratchet>(
         cid,
         peer_cid: None,
         request_id: None,
+        ended_locally: None,
     });
     // Every window attached to the session hears it ended.
     route.send(response);

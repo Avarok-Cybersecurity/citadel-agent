@@ -30,6 +30,7 @@ impl<R: Ratchet> DisconnectedConnection<R> {
             cid,
             peer_cid,
             request_id: None,
+            ended_locally: None,
         });
         SessionRoute::new(self.subscribers().clone(), clients.clone())
             .send_to_others(requester, ended)

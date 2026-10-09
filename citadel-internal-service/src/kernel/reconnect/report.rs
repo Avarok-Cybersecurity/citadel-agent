@@ -60,6 +60,7 @@ pub(super) fn fail<T: IOInterface + Sync, R: Ratchet>(
             cid,
             peer_cid: None,
             request_id: None,
+            ended_locally: None,
         }),
     ] {
         if route.send(response).is_empty() {

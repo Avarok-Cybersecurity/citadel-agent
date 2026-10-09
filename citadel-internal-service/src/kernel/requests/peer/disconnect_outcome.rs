@@ -22,6 +22,7 @@
 use citadel_internal_service_types::{
     DisconnectNotification, InternalServiceResponse, PeerDisconnectFailure,
 };
+use citadel_sdk::prelude::SessionInfo;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -39,7 +40,27 @@ pub enum SdkDisconnect {
     EndedLocally(String),
 }
 
+/// Whether the SDK still holds `cid` as a session that is up. A session whose every connection
+/// has been marked inactive is ending (the SDK does that when it processes a disconnect, well
+/// before the session object is dropped), so it is not live.
+pub fn session_is_live(sessions: &[SessionInfo], cid: u64) -> bool {
+    sessions
+        .iter()
+        .find(|session| session.cid == cid)
+        .is_some_and(|session| session.connections.iter().any(|conn| conn.connected))
+}
+
 impl SdkDisconnect {
+    /// Decides by state, not by the error text: a failure (or timeout) while the SDK no longer
+    /// holds the session live means the sign-out happened, whatever the error said. `live` is
+    /// `None` when the SDK could not be asked, and then the failure stands.
+    pub fn settle(self, live: Option<bool>) -> Self {
+        match (self.needs_local_end(), live) {
+            (true, Some(false)) => SdkDisconnect::Succeeded,
+            _ => self,
+        }
+    }
+
     /// The outcome once an SDK failure has been followed by abandoning the session locally.
     /// A refused or timed-out disconnect becomes `EndedLocally` when the abandon worked; when
     /// it did not, the session survives and the failure stands, with the abandon's error added.
@@ -110,6 +131,72 @@ mod tests {
 
     fn response_of(outcome: SdkDisconnect) -> InternalServiceResponse {
         outcome.into_response(7, Some(9), Uuid::nil(), BUDGET)
+    }
+
+    fn info(cid: u64, connected: &[bool]) -> SessionInfo {
+        use citadel_sdk::prelude::{ConnectionInfo, VirtualConnectionType};
+        SessionInfo {
+            cid,
+            connections: connected
+                .iter()
+                .map(|connected| ConnectionInfo {
+                    peer_cid: None,
+                    adjacent_nat_type: None,
+                    connection_type: VirtualConnectionType::LocalGroupServer { session_cid: cid },
+                    connected: *connected,
+                    latest_ratchet_version: 0,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn only_a_session_with_a_connection_up_is_live() {
+        assert!(session_is_live(&[info(1, &[true]), info(2, &[])], 1));
+        assert!(!session_is_live(&[info(1, &[false])], 1), "ending");
+        assert!(!session_is_live(&[info(2, &[])], 2), "nothing up");
+        assert!(!session_is_live(&[info(1, &[true])], 3), "absent");
+    }
+
+    #[test]
+    fn a_disconnect_error_while_the_session_is_ending_is_a_sign_out() {
+        // The interleaving of the field failure: the SDK's disconnect errors because the
+        // session is still listed, the abandon then fails "not an active session", and by the
+        // time either is looked at the session is ending.
+        let err = "C2S session 1 still in protocol after disconnect".to_string();
+        let abandoned = Err("not an active session".to_string());
+        let ending = [info(1, &[false])];
+        let outcome = SdkDisconnect::Failed(err)
+            .after_abandon(abandoned, BUDGET)
+            .settle(Some(session_is_live(&ending, 1)));
+        match response_of(outcome) {
+            InternalServiceResponse::DisconnectNotification(n) => assert_eq!(n.cid, 7),
+            other => panic!("an ended session is signed out: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_session_still_live_after_the_abandon_stays_a_failure() {
+        // The negative control: the same failures, but the session is up.
+        for failure in [SdkDisconnect::Failed("x".into()), SdkDisconnect::TimedOut] {
+            let live = [info(1, &[true])];
+            let outcome = failure
+                .after_abandon(Err("not an active session".into()), BUDGET)
+                .settle(Some(session_is_live(&live, 1)));
+            assert!(matches!(
+                response_of(outcome),
+                InternalServiceResponse::PeerDisconnectFailure(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn a_state_that_could_not_be_read_does_not_turn_a_failure_into_a_sign_out() {
+        let outcome = SdkDisconnect::TimedOut.settle(None);
+        assert!(matches!(
+            response_of(outcome),
+            InternalServiceResponse::PeerDisconnectFailure(_)
+        ));
     }
 
     #[test]

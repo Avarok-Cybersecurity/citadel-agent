@@ -1,4 +1,5 @@
 use crate::kernel::reconnect::instance::{self, PeerEnd, PeerReport};
+use crate::kernel::requests::peer::disconnect_outcome::session_is_live;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::session_subscribers::SessionSubscribers;
 use crate::kernel::supervisor::Signal;
@@ -282,6 +283,19 @@ pub async fn disconnect_removed<R: Ratchet>(
     }
 }
 
+/// Whether the SDK holds `cid` as a live session; `None` when it could not be asked.
+async fn sdk_session_is_live<R: Ratchet>(remote: &NodeRemote<R>, cid: u64) -> Option<bool> {
+    match remote.sessions().await {
+        Ok(sessions) => Some(session_is_live(&sessions.sessions, cid)),
+        Err(err) => {
+            citadel_sdk::logging::warn!(
+                "[Disconnect] Could not ask the SDK about CID {cid}: {err:?}"
+            );
+            None
+        }
+    }
+}
+
 pub async fn handle<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
@@ -435,15 +449,26 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     // and the answer says the server was not told. Peers have no such call: their link ends
     // with the C2S session that carries it.
     let outcome = if peer_cid.is_none() && outcome.needs_local_end() {
-        let abandoned =
-            match timeout(SDK_DISCONNECT_TIMEOUT, this.remote().abandon_session(cid)).await {
-                Ok(result) => result.map_err(|err| format!("{err:?}")),
-                Err(_elapsed) => Err(format!("timed out after {SDK_DISCONNECT_TIMEOUT:?}")),
-            };
-        citadel_sdk::logging::warn!(
-            "[Disconnect] Ending CID {cid} locally after {outcome:?}: {abandoned:?}"
-        );
-        outcome.after_abandon(abandoned, SDK_DISCONNECT_TIMEOUT)
+        // The SDK's error is not the verdict: its disconnect can report a failure for a session
+        // that is already ending. Ask it, and only end the session here if it is still up.
+        let outcome = outcome.settle(sdk_session_is_live(this.remote(), cid).await);
+        if outcome.needs_local_end() {
+            let abandoned =
+                match timeout(SDK_DISCONNECT_TIMEOUT, this.remote().abandon_session(cid)).await {
+                    Ok(result) => result.map_err(|err| format!("{err:?}")),
+                    Err(_elapsed) => Err(format!("timed out after {SDK_DISCONNECT_TIMEOUT:?}")),
+                };
+            citadel_sdk::logging::warn!(
+                "[Disconnect] Ending CID {cid} locally after {outcome:?}: {abandoned:?}"
+            );
+            // A failed abandon is no verdict either: "not an active session" is what a session
+            // that has already ended answers.
+            outcome
+                .after_abandon(abandoned, SDK_DISCONNECT_TIMEOUT)
+                .settle(sdk_session_is_live(this.remote(), cid).await)
+        } else {
+            outcome
+        }
     } else {
         outcome
     };

@@ -23,6 +23,7 @@ pub(crate) fn notices(cid: u64, lost: &[u64]) -> Vec<InternalServiceResponse> {
                 cid,
                 peer_cid: Some(peer_cid),
                 request_id: None,
+                ended_locally: None,
             })
         })
         .collect()

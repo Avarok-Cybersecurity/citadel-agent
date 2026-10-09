@@ -107,6 +107,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                         cid: session_cid,
                         peer_cid: Some(peer_cid),
                         request_id: None,
+                        ended_locally: None,
                     });
                 // Re-resolved through the CID, never broadcast; see the function.
                 send_response_for_session(this, response, session_cid, Some(subscribers)).await?;

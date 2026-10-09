@@ -447,6 +447,12 @@ pub struct DisconnectNotification {
     #[cfg_attr(feature = "typescript", ts(type = "bigint | null"))]
     pub peer_cid: Option<u64>,
     pub request_id: Option<Uuid>,
+    /// Set when the session was ended on this device only: the server could not be told (its
+    /// link was down, or it did not answer), so it learns of the sign-out when the account next
+    /// connects. Carries why. `None` for a sign-out the server acknowledged.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional))]
+    pub ended_locally: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

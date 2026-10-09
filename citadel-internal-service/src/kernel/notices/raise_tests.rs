@@ -78,6 +78,7 @@ fn anything_else_is_not() {
         cid: ME,
         peer_cid: Some(BOB),
         request_id: None,
+        ended_locally: None,
     });
     assert_eq!(source_of(&ended), None);
 }

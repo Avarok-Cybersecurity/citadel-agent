@@ -120,6 +120,7 @@ pub async fn disconnect_any<R: Ratchet>(
             cid,
             peer_cid,
             request_id: Some(request_id),
+            ended_locally: None,
         },
     ))
 }
@@ -367,6 +368,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 cid,
                 peer_cid,
                 request_id: Some(request_id),
+                ended_locally: None,
             }),
             uuid,
         });
@@ -426,6 +428,24 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             );
             crate::kernel::requests::peer::disconnect_outcome::SdkDisconnect::TimedOut
         }
+    };
+
+    // A C2S session the SDK could not end (the server is unreachable, or did not answer) would
+    // survive here, wedged. It is ended locally instead, while `disconnected` is still held,
+    // and the answer says the server was not told. Peers have no such call: their link ends
+    // with the C2S session that carries it.
+    let outcome = if peer_cid.is_none() && outcome.needs_local_end() {
+        let abandoned =
+            match timeout(SDK_DISCONNECT_TIMEOUT, this.remote().abandon_session(cid)).await {
+                Ok(result) => result.map_err(|err| format!("{err:?}")),
+                Err(_elapsed) => Err(format!("timed out after {SDK_DISCONNECT_TIMEOUT:?}")),
+            };
+        citadel_sdk::logging::warn!(
+            "[Disconnect] Ending CID {cid} locally after {outcome:?}: {abandoned:?}"
+        );
+        outcome.after_abandon(abandoned, SDK_DISCONNECT_TIMEOUT)
+    } else {
+        outcome
     };
 
     // STEP 3: Every OTHER window is told it ended (disconnect_others.rs).

@@ -20,6 +20,7 @@ COPY citadel-internal-service-connector ./citadel-internal-service-connector
 COPY citadel-internal-service-macros ./citadel-internal-service-macros
 COPY citadel-internal-service-types ./citadel-internal-service-types
 COPY citadel-internal-service-wasm-client ./citadel-internal-service-wasm-client
+COPY citadel-release-signature ./citadel-release-signature
 COPY intersession-layer-messaging ./intersession-layer-messaging
 COPY service ./service
 

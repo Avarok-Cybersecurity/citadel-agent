@@ -848,6 +848,7 @@ fn refusal_response(
             cid: *cid,
             message: message.to_string(),
             request_id: Some(*request_id),
+            reason: None,
         }),
         InternalServiceRequest::ListRegisteredPeers {
             request_id, cid, ..
@@ -855,6 +856,7 @@ fn refusal_response(
             cid: *cid,
             message: message.to_string(),
             request_id: Some(*request_id),
+            reason: None,
         }),
         InternalServiceRequest::PeerConnect {
             request_id, cid, ..

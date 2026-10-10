@@ -15,7 +15,7 @@ pub mod turn;
 // Re-export for use by response handlers
 pub use disconnect::{cleanup_reported_peer, cleanup_state};
 
-use citadel_internal_service_types::PeerInformation;
+use citadel_internal_service_types::{PeerInformation, PeerListFailureReason};
 use citadel_sdk::prelude::{
     NetworkError, NodeRemote, NodeRequest, NodeResult, PeerCommand, PeerInfo, PeerResponse,
     PeerSignal, Ratchet,
@@ -234,5 +234,45 @@ mod tests {
             "empty server username should fall back to the registration cache"
         );
         assert!(!dave.online_status);
+    }
+}
+
+/// What the peer-list handlers answer when the session's link is being re-established.
+pub(crate) fn reconnecting_refusal<R: Ratchet>(
+    map: &parking_lot::RwLock<HashMap<u64, crate::kernel::Connection<R>>>,
+    cid: u64,
+) -> Option<PeerListFailureReason> {
+    let link = map.read().get(&cid)?.link;
+    refusal_for_link(link)
+}
+
+/// The SDK holds no session for a link in these states, so asking it for peers can only
+/// fail. `claim_requires_sdk_session` is the SSOT for "the SDK has nothing yet".
+fn refusal_for_link(link: crate::kernel::reconnect::LinkState) -> Option<PeerListFailureReason> {
+    (!crate::kernel::reconnect::policy::claim_requires_sdk_session(link))
+        .then_some(PeerListFailureReason::Reconnecting)
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::*;
+    use crate::kernel::reconnect::LinkState;
+
+    #[test]
+    fn a_link_being_re_established_is_refused_as_reconnecting() {
+        for link in [LinkState::Reconnecting, LinkState::SigningIn] {
+            assert_eq!(
+                refusal_for_link(link),
+                Some(PeerListFailureReason::Reconnecting)
+            );
+        }
+    }
+
+    /// Negative control: a live or ending link must still reach the SDK query.
+    #[test]
+    fn a_live_or_ending_link_is_not_refused() {
+        for link in [LinkState::Up, LinkState::Ending] {
+            assert_eq!(refusal_for_link(link), None);
+        }
     }
 }

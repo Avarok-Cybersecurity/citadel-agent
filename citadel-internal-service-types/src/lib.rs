@@ -288,18 +288,30 @@ pub struct ServiceConnectionAccepted {
     /// inline, as `ByteContents`, up to 16 MiB.
     #[serde(default)]
     pub stages_uploads: bool,
+    /// This agent can open a native file dialog (`PickFile`). A build without the
+    /// `native-dialogs` feature refuses every `PickFile`, so a UI that knows this up front
+    /// shows its in-page picker instead of a button that cannot work. Absent from an older
+    /// agent's greeting, which is what `false` means.
+    #[serde(default)]
+    pub native_picker: bool,
 }
 
 impl ServiceConnectionAccepted {
     /// What this agent says first on every socket: it hosts (0.8.6), stages browser
-    /// uploads, and supervises peer connections when `supervises_p2p`.
-    pub fn greeting(connection: Uuid, supervises_p2p: bool) -> InternalServiceResponse {
+    /// uploads, supervises peer connections when `supervises_p2p`, and offers a native
+    /// file dialog when `native_picker`.
+    pub fn greeting(
+        connection: Uuid,
+        supervises_p2p: bool,
+        native_picker: bool,
+    ) -> InternalServiceResponse {
         InternalServiceResponse::ServiceConnectionAccepted(Self {
             cid: 0,
             request_id: Some(connection),
             agent_ilm: true,
             supervises_p2p,
             stages_uploads: true,
+            native_picker,
         })
     }
 }
@@ -952,6 +964,16 @@ pub struct ListAllPeersResponse {
     pub request_id: Option<Uuid>,
 }
 
+/// A typed reason a peer-list request (`ListAllPeers`, `ListRegisteredPeers`) failed.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub enum PeerListFailureReason {
+    /// The session is in the agent but its server link is being re-established.
+    Reconnecting,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
@@ -960,6 +982,12 @@ pub struct ListAllPeersFailure {
     pub cid: u64,
     pub message: String,
     pub request_id: Option<Uuid>,
+    /// Why, when the UI can act on it: `Reconnecting` means the agent is bringing the session
+    /// back and will answer once it is up, so the poll should pause rather than report an
+    /// error. Absent for every other failure, and from an older agent.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub reason: Option<PeerListFailureReason>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -970,6 +998,12 @@ pub struct ListRegisteredPeersFailure {
     pub cid: u64,
     pub message: String,
     pub request_id: Option<Uuid>,
+    /// Why, when the UI can act on it: `Reconnecting` means the agent is bringing the session
+    /// back and will answer once it is up, so the poll should pause rather than report an
+    /// error. Absent for every other failure, and from an older agent.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub reason: Option<PeerListFailureReason>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

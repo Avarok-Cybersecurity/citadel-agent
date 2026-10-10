@@ -34,7 +34,11 @@ pub trait IOInterfaceExt: IOInterface {
     ) {
         tokio::task::spawn(async move {
             let write_task = async {
-                let response = ServiceConnectionAccepted::greeting(conn_id, supervises_p2p);
+                let response = ServiceConnectionAccepted::greeting(
+                    conn_id,
+                    supervises_p2p,
+                    cfg!(feature = "native-dialogs"),
+                );
 
                 if let Err(err) = sink_send_payload::<Self>(response, &mut sink).await {
                     error!(target: "citadel", "Failed to send to client: {err:?}");

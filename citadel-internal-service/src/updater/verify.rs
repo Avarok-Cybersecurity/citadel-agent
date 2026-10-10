@@ -1,5 +1,7 @@
 //! Whether a download may replace this agent (pure). Every check has to pass; the first that
-//! does not is the reason given, and the install is left as it is.
+//! does not is the reason given, and the install is left as it is. The release's ML-DSA-65
+//! signature is checked first; the sha256 and the attestation (and, for the menu-bar app, its
+//! code signature) are required as well, not instead.
 
 use super::platform::Method;
 use super::version::{is_upgrade, version_line};
@@ -14,6 +16,41 @@ pub enum Provenance {
     Absent,
     /// There were bundles, and none verified.
     Failed(String),
+}
+
+/// What the asset's `.mldsa.sig` said, checked against the embedded release key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReleaseSignature {
+    /// By the release key, over this tag, this asset's name and the digest of the download.
+    Verified,
+    /// The release publishes no `<asset>.mldsa.sig`.
+    Missing,
+    Refused(String),
+}
+
+/// Why a release without `<asset>.mldsa.sig` is refused.
+pub const MISSING_SIGNATURE: &str =
+    "ML-DSA: the release has no ML-DSA signature for this file, so it is not installed";
+
+/// The signature `signature` (the `.mldsa.sig` file's text, `None` when the release has none)
+/// over `asset_name` of `tag`, whose download hashed to `actual_sha` (hex), by `release_key`.
+pub fn check_signature(
+    release_key: &str,
+    tag: &str,
+    asset_name: &str,
+    actual_sha: &str,
+    signature: Option<&str>,
+) -> ReleaseSignature {
+    let Some(signature) = signature else {
+        return ReleaseSignature::Missing;
+    };
+    let checked = citadel_release_signature::sha256_from_hex(actual_sha).and_then(|digest| {
+        citadel_release_signature::verify(release_key, tag, asset_name, &digest, signature)
+    });
+    match checked {
+        Ok(()) => ReleaseSignature::Verified,
+        Err(why) => ReleaseSignature::Refused(why.to_string()),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,11 +88,17 @@ pub fn expected_sha256(text: &str, name: &str) -> Result<String, String> {
 pub fn judge_download(
     current: &Version,
     version: &Version,
+    signature: &ReleaseSignature,
     expected_sha: &str,
     actual_sha: &str,
     provenance: &Provenance,
     method: Method,
 ) -> Verdict {
+    match signature {
+        ReleaseSignature::Verified => {}
+        ReleaseSignature::Missing => return Verdict::Refuse(MISSING_SIGNATURE.to_string()),
+        ReleaseSignature::Refused(why) => return Verdict::Refuse(format!("ML-DSA: {why}")),
+    }
     if !is_upgrade(current, version) {
         return Verdict::Refuse(format!("{version} would not upgrade {current}"));
     }

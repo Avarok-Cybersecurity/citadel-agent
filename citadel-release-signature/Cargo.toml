@@ -1,0 +1,15 @@
+[package]
+name = "citadel-release-signature"
+version = "0.1.0"
+edition = "2021"
+description = "The ML-DSA-65 signature over a Citadel agent release asset: its message, signing and verification."
+
+# No `workspace = true` keys: citadel-workspace's tools/release-sign depends on this crate by path
+# through the submodule, and must not need this workspace's other members checked out to build it.
+[dependencies]
+# The version and features citadel_pqcrypto (Citadel-Protocol) uses; `zeroize` wipes the
+# signing key on drop.
+ml-dsa = { version = "0.1.1", default-features = false, features = ["alloc", "zeroize"] }
+sha2 = "0.10"
+hex = "0.4"
+zeroize = "1.8"

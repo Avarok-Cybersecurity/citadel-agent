@@ -1,7 +1,7 @@
 //! The recorders for what would restart the agent, and the world a test runs in.
 
 use super::staging::ReadsVersion;
-use super::{FakeSource, FakeVerifier};
+use super::{release_public_key, FakeSource, FakeVerifier};
 use async_trait::async_trait;
 use citadel_internal_service::updater::engine::Engine;
 use citadel_internal_service::updater::io::*;
@@ -66,6 +66,9 @@ pub struct World {
     pub source: Arc<FakeSource>,
     pub sessions: SessionCount,
     pub agent_script: String,
+    /// What `Io::release_key` is in the engines `rebuild` and `engine_for` make: the fixture
+    /// release key unless a test sets another.
+    pub release_key: String,
     recorder: Arc<Recorder>,
     plan: Plan,
     runs_agent: bool,
@@ -115,12 +118,14 @@ impl World {
         ];
         let source = Arc::new(FakeSource::new(tag, &names, &payload));
         let recorder = Arc::new(Recorder::default());
+        let release_key = release_public_key();
         let mut world = Self {
             engine: Engine::new(
                 Version::new(0, 0, 0),
                 plan.clone(),
-                io(&source, &recorder, dir.path(), runs_agent),
+                io(&source, &recorder, dir.path(), runs_agent, &release_key),
             ),
+            release_key,
             sessions: SessionCount(recorder.clone()),
             source,
             agent_script,
@@ -140,6 +145,7 @@ impl World {
             &self.recorder,
             self.dir.path(),
             self.runs_agent,
+            &self.release_key,
         );
         Engine::new(Version::new(0, 8, 8), self.plan.clone(), io)
     }
@@ -152,6 +158,7 @@ impl World {
             &self.recorder,
             self.dir.path(),
             self.runs_agent,
+            &self.release_key,
         );
         io.installer = installer;
         Engine::new(Version::new(0, 8, 8), plan, io)
@@ -172,7 +179,13 @@ impl World {
     }
 }
 
-fn io(source: &Arc<FakeSource>, recorder: &Arc<Recorder>, dir: &Path, runs_agent: bool) -> Io {
+fn io(
+    source: &Arc<FakeSource>,
+    recorder: &Arc<Recorder>,
+    dir: &Path,
+    runs_agent: bool,
+    release_key: &str,
+) -> Io {
     let staging = FsStaging::new(dir.join("cache"));
     let staging: Arc<dyn Staging> = if runs_agent {
         Arc::new(staging)
@@ -187,6 +200,7 @@ fn io(source: &Arc<FakeSource>, recorder: &Arc<Recorder>, dir: &Path, runs_agent
         announcer: recorder.clone(),
         settings: recorder.clone(),
         sessions: recorder.clone(),
+        release_key: release_key.into(),
         now: || 1_790_000_000,
     }
 }

@@ -75,6 +75,8 @@ hex = "0.4"
 sigstore-verify = { version = "0.14", default-features = false }
 sigstore-trust-root = { version = "0.14", default-features = false }
 sigstore-types = "0.14"
+# The ML-DSA-65 signature every update must carry beside its attestation (updater/release_key.rs).
+citadel-release-signature = { workspace = true }
 # Probing whether the install location is writable, and atomic temporary files beside it.
 tempfile = "3"
 

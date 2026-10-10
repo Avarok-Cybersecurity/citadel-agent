@@ -1,10 +1,12 @@
-//! Download, verify and stage one release asset. Nothing from it runs before its checksum and
-//! its attestation have passed.
+//! Download, verify and stage one release asset. Nothing from it runs before its ML-DSA
+//! signature, its checksum and its attestation have all passed.
 
 use super::engine::{Engine, LOG_TARGET};
 use super::platform::Method;
 use super::release::{self, Release};
-use super::verify::{expected_sha256, judge_download, judge_staged, Provenance, Verdict};
+use super::verify::{check_signature, expected_sha256, judge_download, judge_staged};
+use super::verify::{Provenance, ReleaseSignature, Verdict, MISSING_SIGNATURE};
+use citadel_release_signature::{SIGNATURE_LEN, SIGNATURE_SUFFIX};
 use citadel_sdk::logging::info;
 use semver::Version;
 use std::path::PathBuf;
@@ -12,6 +14,8 @@ use std::path::PathBuf;
 /// The largest asset the updater downloads. The disk image is ~25 MB today.
 pub const MAX_ASSET_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_CHECKSUM_BYTES: u64 = 4096;
+/// The signature's hex, its newline, and room for a CRLF.
+const MAX_SIGNATURE_BYTES: u64 = (SIGNATURE_LEN as u64) * 2 + 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
@@ -33,6 +37,12 @@ impl Engine {
     ) -> Result<PathBuf, Refusal> {
         let refused = Refusal::Refused;
         let asset = release::asset(release, name).map_err(refused)?;
+        // Refused before anything is downloaded: nothing could make the file acceptable.
+        let signature_name = format!("{name}{SIGNATURE_SUFFIX}");
+        if !release.assets.iter().any(|a| a.name == signature_name) {
+            return Err(refused(MISSING_SIGNATURE.to_string()));
+        }
+        let signature = release::asset(release, &signature_name).map_err(refused)?;
         let checksum = release::asset(release, &format!("{name}.sha256")).map_err(refused)?;
         if asset.size > MAX_ASSET_BYTES {
             return Err(refused(format!(
@@ -48,6 +58,12 @@ impl Engine {
             .await
             .map_err(transient)?;
         let expected = expected_sha256(&text, name).map_err(refused)?;
+        let signature = self
+            .io
+            .source
+            .text(&signature.browser_download_url, MAX_SIGNATURE_BYTES)
+            .await
+            .map_err(transient)?;
         let path = self
             .io
             .staging
@@ -60,7 +76,15 @@ impl Engine {
             .await
             .map_err(transient)?;
         let actual = self.io.staging.sha256(&path).await.map_err(transient)?;
-        let provenance = if expected.eq_ignore_ascii_case(&actual) {
+        let signature = check_signature(
+            &self.io.release_key,
+            &release.tag_name,
+            name,
+            &actual,
+            Some(&signature),
+        );
+        let consulted = signature == ReleaseSignature::Verified;
+        let provenance = if consulted && expected.eq_ignore_ascii_case(&actual) {
             let bundles = self
                 .io
                 .source
@@ -71,12 +95,13 @@ impl Engine {
                 .verifier
                 .verify(&actual, &bundles, &release.tag_name)
         } else {
-            // Not consulted: the checksum already refuses it.
+            // Not consulted: the signature or the checksum already refuses it.
             Provenance::Absent
         };
         let verdict = judge_download(
             &self.current,
             version,
+            &signature,
             &expected,
             &actual,
             &provenance,

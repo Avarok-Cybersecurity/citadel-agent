@@ -18,6 +18,7 @@ fn update() -> UpdateAvailable {
         notes_url: "n".into(),
         download_url: "d".into(),
         ready: true,
+        mldsa_verified: true,
         request_id: None,
     }
 }

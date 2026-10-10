@@ -10,7 +10,8 @@ use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
 use citadel_internal_service_test_common as common;
 use citadel_internal_service_test_common::agent_ilm::declare_agent_ilm;
 use citadel_internal_service_types::{
-    AgentCapabilities, InternalServiceRequest, InternalServiceResponse, PeerRegisterSuccess,
+    AgentCapabilities, ConfigCommand, InternalServiceRequest, InternalServiceResponse,
+    PeerRegisterSuccess,
 };
 use citadel_sdk::prelude::*;
 use std::error::Error;
@@ -157,5 +158,24 @@ pub fn peer_connect(cid: u64, peer_cid: u64) -> InternalServiceRequest {
         session_security_settings: Default::default(),
         peer_session_password: None,
         turn: None,
+    }
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after 1970")
+        .as_millis() as u64
+}
+
+/// What an open chat or call sends: `peer_cid` is wanted for the next minute.
+pub fn interest(session_cid: u64, peer_cid: u64, request_id: Uuid) -> InternalServiceRequest {
+    InternalServiceRequest::ConnectionManagement {
+        request_id,
+        management_command: ConfigCommand::Interest {
+            session_cid,
+            peer_cid,
+            until: unix_ms() + 60_000,
+        },
     }
 }

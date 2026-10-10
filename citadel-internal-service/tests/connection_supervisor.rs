@@ -18,21 +18,14 @@ mod support;
 use citadel_internal_service::AGENT_SUPERVISOR;
 use citadel_internal_service_test_common as common;
 use citadel_internal_service_types::{
-    ConfigCommand, InternalServiceRequest, InternalServiceResponse, MessageStatus, MessageType,
-    SecurityLevel, SupervisorState,
+    InternalServiceRequest, InternalServiceResponse, MessageStatus, MessageType, SecurityLevel,
+    SupervisorState,
 };
 use std::error::Error;
 use std::time::{Duration, Instant};
-use supervised::{pair, peer_connect};
+use supervised::{interest, pair, peer_connect};
 use support::expect;
 use uuid::Uuid;
-
-fn unix_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("after 1970")
-        .as_millis() as u64
-}
 
 /// The point of the supervisor: a path that dies without a word is noticed in seconds, where
 /// the protocol keep-alive takes 45 minutes.
@@ -187,17 +180,6 @@ async fn a_severed_link_with_no_window_open_is_redialled_and_the_backlog_arrives
     .await
     .map_err(|_| format!("nothing reached `a` within {REDIAL_BUDGET:?}: nobody redialled"))??;
     Ok(())
-}
-
-fn interest(session_cid: u64, peer_cid: u64, request_id: Uuid) -> InternalServiceRequest {
-    InternalServiceRequest::ConnectionManagement {
-        request_id,
-        management_command: ConfigCommand::Interest {
-            session_cid,
-            peer_cid,
-            until: unix_ms() + 60_000,
-        },
-    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

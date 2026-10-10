@@ -55,6 +55,12 @@ impl AdmissionPolicy for Turnstile {
             Some(_) => Err(AdmissionRefusal::Failed("invalid-input-response".into())),
         }
     }
+
+    // As the tenant server sets it: longer than the agent's whole reconnect window, so a
+    // reconnect after the server ended the session is not asked either.
+    fn resume_grace(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(900)
+    }
 }
 
 fn spawn(_kind: Server, admission: Option<Arc<dyn AdmissionPolicy>>) -> SocketAddr {

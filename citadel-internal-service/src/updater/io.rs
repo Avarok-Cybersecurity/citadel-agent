@@ -88,6 +88,9 @@ pub struct Io {
     pub announcer: Arc<dyn Announcer>,
     pub settings: Arc<dyn SettingsStore>,
     pub sessions: Arc<dyn Sessions>,
+    /// The ML-DSA-65 public key (hex) every release asset's `.mldsa.sig` must verify against:
+    /// `release_key::RELEASE_PUBLIC_KEY` in the shipped agent.
+    pub release_key: Arc<str>,
     /// Seconds since the Unix epoch.
     pub now: fn() -> u64,
 }

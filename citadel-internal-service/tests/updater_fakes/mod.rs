@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use citadel_internal_service::updater::io::*;
 use citadel_internal_service::updater::release::DOWNLOAD_PREFIX;
 use citadel_internal_service::updater::verify::Provenance;
+use citadel_release_signature::{ReleaseSigningKey, SIGNATURE_SUFFIX};
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -15,6 +16,20 @@ mod world;
 pub use world::*;
 
 pub const ETAG: &str = "W/\"fixture\"";
+/// The fixture release key's seed: the tests' stand-in for the owner's key, whose public half
+/// reaches the engine through `Io::release_key` as the shipped one does. No release key is it.
+pub const RELEASE_SEED: [u8; 32] = [0x5a; 32];
+
+pub fn release_public_key() -> String {
+    ReleaseSigningKey::from_seed(&RELEASE_SEED).public_key_hex()
+}
+
+/// The `.mldsa.sig` text `seed`'s key makes for `name` of `tag` with these bytes.
+pub fn signature(seed: &[u8; 32], tag: &str, name: &str, bytes: &[u8]) -> String {
+    let digest = citadel_release_signature::sha256(bytes);
+    let key = ReleaseSigningKey::from_seed(seed);
+    format!("{}\n", key.sign(tag, name, &digest).unwrap())
+}
 
 #[derive(Default)]
 pub struct FakeSource {
@@ -40,9 +55,11 @@ impl FakeSource {
         for name in names {
             let digest = hex::encode(Sha256::digest(payload));
             let checksum = format!("{digest}  {name}\n").into_bytes();
+            let signed = signature(&RELEASE_SEED, tag, name, payload).into_bytes();
             for (asset, bytes) in [
                 (name.to_string(), payload.to_vec()),
                 (format!("{name}.sha256"), checksum),
+                (format!("{name}{SIGNATURE_SUFFIX}"), signed),
             ] {
                 assets.push(serde_json::json!({
                     "name": asset, "size": bytes.len(), "browser_download_url": Self::url(tag, &asset),
@@ -71,6 +88,23 @@ impl FakeSource {
         self.files
             .lock()
             .insert(url, format!("{other}  {name}\n").into_bytes());
+    }
+    /// What `name` serves.
+    pub fn bytes(&self, name: &str) -> Vec<u8> {
+        self.files.lock()[&Self::url(&self.tag(), name)].clone()
+    }
+    /// `name`'s signature file now holds `text`.
+    pub fn set_signature(&self, name: &str, text: &str) {
+        let url = Self::url(&self.tag(), &format!("{name}{SIGNATURE_SUFFIX}"));
+        self.files.lock().insert(url, text.as_bytes().to_vec());
+    }
+    /// `name` now serves other bytes of the same size; its checksum and signature are unchanged.
+    pub fn tamper(&self, name: &str) {
+        let url = Self::url(&self.tag(), name);
+        let mut files = self.files.lock();
+        let bytes = files.get_mut(&url).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0xff;
     }
     pub fn drop_asset(&self, name: &str) {
         let mut release = self.release.lock();

@@ -717,6 +717,7 @@ dependencies = [
  "citadel-internal-service-connector",
  "citadel-internal-service-test-common",
  "citadel-internal-service-types",
+ "citadel-release-signature",
  "citadel_io",
  "citadel_proto",
  "citadel_sdk",

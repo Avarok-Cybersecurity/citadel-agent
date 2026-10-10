@@ -21,8 +21,8 @@
 //! public key is the 1952-byte encoded verifying key, as 3904 hex characters.
 
 use ml_dsa::signature::{Signer, Verifier};
-use ml_dsa::{EncodedSignature, EncodedVerifyingKey, MlDsa65, Seed, Signature, SigningKey};
 use ml_dsa::VerifyingKey;
+use ml_dsa::{EncodedSignature, EncodedVerifyingKey, MlDsa65, Seed, Signature, SigningKey};
 use sha2::{Digest, Sha256};
 use std::fmt;
 use zeroize::{Zeroize, Zeroizing};
@@ -147,8 +147,8 @@ pub fn verify(
 ) -> Result<(), Refusal> {
     let key = parse_public_key(public_key)?;
     let message = signed_message(tag, asset_name, sha256)?;
-    let bytes = decode_exact::<SIGNATURE_LEN>(signature.trim())
-        .map_err(Refusal::MalformedSignature)?;
+    let bytes =
+        decode_exact::<SIGNATURE_LEN>(signature.trim()).map_err(Refusal::MalformedSignature)?;
     let encoded = EncodedSignature::<MlDsa65>::try_from(&bytes[..])
         .map_err(|_| Refusal::MalformedSignature("not an ML-DSA-65 signature".to_string()))?;
     let signature = Signature::<MlDsa65>::decode(&encoded)

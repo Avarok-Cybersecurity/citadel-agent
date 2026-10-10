@@ -12,7 +12,7 @@ use crate::updater::github::GitHub;
 use crate::updater::io::{Announcer, Installer, Io, Sessions, SettingsStore};
 use crate::updater::platform::{install_kind, plan};
 use crate::updater::staging::FsStaging;
-use crate::updater::{host, installer_for, version, UpdaterConfig};
+use crate::updater::{host, installer_for, release_key, version, UpdaterConfig};
 use async_trait::async_trait;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{InternalServiceResponse, UpdateAvailable, UpdateInstall};
@@ -78,6 +78,7 @@ fn engine_for<T: IOInterface + Sync, R: Ratchet>(
         announcer: Arc::new(Everyone(this.tx_to_localhost_clients.clone())),
         settings: Arc::new(KvSettings(Box::new(this.clone()))),
         sessions: Arc::new(MapSessions(this.server_connection_map.clone())),
+        release_key: release_key::RELEASE_PUBLIC_KEY.into(),
         now: unix_now,
     };
     Ok(Arc::new(Engine::new(current, plan, io)))

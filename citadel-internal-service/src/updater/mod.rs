@@ -2,7 +2,8 @@
 //! installs it when they ask or when nobody is signed in to be signed out.
 //!
 //! Pure, and tested on their own: version.rs (tags, semver), release.rs (the release, its URLs),
-//! platform.rs (install type, asset), verify.rs (the verdict), policy.rs (when to install),
+//! platform.rs (install type, asset), verify.rs (the verdict, the ML-DSA signature against
+//! release_key.rs), policy.rs (when to install),
 //! attest.rs's identity check, watchdog.rs's supervision. Behind the seams in io.rs: github.rs,
 //! attest.rs, staging.rs, host.rs, swap.rs, watch_os.rs, and the agent's side in kernel/updates.rs.
 //! docs/plans/agent-auto-update.md in citadel-workspace has the design.
@@ -17,6 +18,7 @@ pub mod io;
 pub mod platform;
 pub mod policy;
 pub mod release;
+pub mod release_key;
 pub mod staging;
 #[cfg(unix)]
 pub mod swap;

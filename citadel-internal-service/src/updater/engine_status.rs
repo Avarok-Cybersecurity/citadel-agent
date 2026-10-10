@@ -51,6 +51,8 @@ impl Engine {
             notes_url: offer.notes_url.clone(),
             download_url: offer.download_url.clone(),
             ready: offer.staged.is_some() && self.io.installer.can_install().is_ok(),
+            // Nothing is staged before its signature verified (fetch.rs).
+            mldsa_verified: offer.staged.is_some(),
             request_id: None,
         }
     }

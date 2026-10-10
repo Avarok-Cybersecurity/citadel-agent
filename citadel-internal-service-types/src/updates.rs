@@ -29,6 +29,10 @@ pub struct UpdateAvailable {
     pub download_url: String,
     /// Downloaded and verified: "Restart to update" installs it now. False: link out only.
     pub ready: bool,
+    /// The download carried a valid ML-DSA-65 (post-quantum) signature by the release key, over
+    /// this release's tag, the file's name and its sha256. Nothing is staged without it, and
+    /// without it `ready` is false and `UpdateStatus::last_error` (prefixed "ML-DSA:") says why.
+    pub mldsa_verified: bool,
     pub request_id: Option<Uuid>,
 }
 

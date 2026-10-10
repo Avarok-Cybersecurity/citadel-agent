@@ -30,6 +30,8 @@ pub(crate) mod policy;
 /// reconnect that failed says nothing about why.
 pub const LOG_TARGET: &str = "citadel::reconnect";
 #[cfg(test)]
+mod admission_refusal_tests;
+#[cfg(test)]
 mod policy_tests;
 mod report;
 pub(crate) mod sign_in;

@@ -5,17 +5,19 @@ use crate::kernel::session_route::SessionRoute;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    DisconnectNotification, InternalServiceResponse, ServerReconnectFailed,
+    DisconnectNotification, FailureReason, InternalServiceResponse, ServerReconnectFailed,
 };
 use citadel_sdk::logging::{info, warn};
 use citadel_sdk::prelude::{NetworkError, Ratchet};
 
-/// The session is gone after all: say why, then what a removal always said.
+/// The session is gone after all: say why (and, in `reason_code`, what the UI can do about
+/// it), then what a removal always said.
 pub(super) fn fail<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     cid: u64,
     generation: u64,
     reason: String,
+    reason_code: Option<FailureReason>,
 ) {
     // Checked and removed under one lock: a user Disconnect that got here first owns
     // the answer, and this says nothing; so does a sign-in taking the session over,
@@ -34,7 +36,7 @@ pub(super) fn fail<T: IOInterface + Sync, R: Ratchet>(
             {
                 lock.remove(&cid).inspect(|conn| {
                     this.signed_out
-                        .record(cid, conn.username.clone(), reason.clone())
+                        .record(cid, conn.username.clone(), reason.clone(), reason_code)
                 })
             }
             _ => None,
@@ -55,6 +57,7 @@ pub(super) fn fail<T: IOInterface + Sync, R: Ratchet>(
             cid,
             reason,
             request_id: None,
+            reason_code,
         }),
         InternalServiceResponse::DisconnectNotification(DisconnectNotification {
             cid,

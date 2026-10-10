@@ -9,7 +9,7 @@
 //! One entry per CID, so the store is bounded by the accounts this agent has signed in.
 //! In memory only, like the sessions themselves.
 
-use citadel_internal_service_types::SignedOutSession;
+use citadel_internal_service_types::{FailureReason, SignedOutSession};
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -19,11 +19,18 @@ pub struct SignedOut(Arc<RwLock<BTreeMap<u64, SignedOutSession>>>);
 
 impl SignedOut {
     /// The reconnect for `cid` gave up with `reason`; a later give-up replaces an earlier.
-    pub fn record(&self, cid: u64, username: String, reason: String) {
+    pub fn record(
+        &self,
+        cid: u64,
+        username: String,
+        reason: String,
+        reason_code: Option<FailureReason>,
+    ) {
         let entry = SignedOutSession {
             cid,
             username,
             reason,
+            reason_code,
         };
         self.0.write().insert(cid, entry);
     }
@@ -46,7 +53,7 @@ mod tests {
     #[test]
     fn a_give_up_is_listed_until_the_account_has_a_session_again() {
         let store = SignedOut::default();
-        store.record(7, "alice".into(), "no answer".into());
+        store.record(7, "alice".into(), "no answer".into(), None);
         let listed = store.list();
         assert_eq!(listed.len(), 1);
         assert_eq!(
@@ -64,8 +71,8 @@ mod tests {
     #[test]
     fn a_later_give_up_replaces_the_earlier_one() {
         let store = SignedOut::default();
-        store.record(7, "alice".into(), "first".into());
-        store.record(7, "alice".into(), "second".into());
+        store.record(7, "alice".into(), "first".into(), None);
+        store.record(7, "alice".into(), "second".into(), None);
         let listed = store.list();
         assert_eq!(listed.len(), 1, "one entry per account");
         assert_eq!(listed[0].reason, "second");
@@ -74,8 +81,8 @@ mod tests {
     #[test]
     fn clearing_one_account_leaves_the_others() {
         let store = SignedOut::default();
-        store.record(7, "alice".into(), "r".into());
-        store.record(9, "bob".into(), "r".into());
+        store.record(7, "alice".into(), "r".into(), None);
+        store.record(9, "bob".into(), "r".into(), None);
         store.clear(7);
         let cids: Vec<u64> = store.list().iter().map(|s| s.cid).collect();
         assert_eq!(cids, vec![9]);

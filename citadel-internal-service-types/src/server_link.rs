@@ -14,6 +14,7 @@
 //! absence: the next `GetSessions` listed no session and no reason. `SignedOutSession` is
 //! that give-up kept, reported in every `GetSessions` until the account signs in again.
 
+use crate::FailureReason;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -48,6 +49,12 @@ pub struct ServerReconnectFailed {
     pub cid: u64,
     pub reason: String,
     pub request_id: Option<Uuid>,
+    /// Why, when the UI can act on it: the server's admission check (a Turnstile token)
+    /// refused the reconnect, so the user must sign in again and pass it. Absent for every
+    /// other failure, and from an older agent.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub reason_code: Option<FailureReason>,
 }
 
 /// A session the agent removed because its server would not take it back, kept so a UI that
@@ -61,4 +68,10 @@ pub struct SignedOutSession {
     pub username: String,
     /// What `ServerReconnectFailed` said.
     pub reason: String,
+    /// Why, when the UI can act on it: the server's admission check (a Turnstile token)
+    /// refused the reconnect, so the user must sign in again and pass it. Absent for every
+    /// other failure, and from an older agent.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub reason_code: Option<FailureReason>,
 }

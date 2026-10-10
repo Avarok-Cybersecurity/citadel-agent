@@ -166,13 +166,19 @@ impl ReconnectPolicy {
 /// `PreconnectCidNotRegistered` is the server saying it has no such account: after a
 /// server that lost its accounts restarts, every attempt got it, and retrying it for
 /// ten minutes kept the user on "Reconnecting" for an account that no longer exists.
-const REFUSALS: [ErrorCode; 6] = [
+///
+/// The admission refusals are the server's Turnstile check: a reconnect cannot show the
+/// widget, so retrying asked the same question every attempt for ten minutes. The user has
+/// to sign in again (the failure says so, see `refusal`).
+const REFUSALS: [ErrorCode; 8] = [
     ErrorCode::AccountClientNonExists,
     ErrorCode::AccountServerNonExists,
     ErrorCode::AccountInvalidUsername,
     ErrorCode::AccountInvalidPassword,
     ErrorCode::AccountDisengaged,
     ErrorCode::PreconnectCidNotRegistered,
+    ErrorCode::PqSignInAdmissionRequired,
+    ErrorCode::PqSignInAdmissionFailed,
 ];
 
 /// Whether a failed connect is worth repeating.
@@ -188,14 +194,25 @@ pub fn classify(code: ErrorCode, message: &str) -> FailureKind {
     if states(message, SERVER_HOLDS_SESSION) {
         return FailureKind::ServerHoldsSession;
     }
-    if matches!(code, ErrorCode::RemoteConnectFailed | ErrorCode::Generic)
-        && REFUSALS
-            .iter()
-            .any(|refusal| renders(refusal.raw_string(), message))
-    {
+    if refusal(code, message).is_some() {
         return FailureKind::Refused;
     }
     FailureKind::Transient
+}
+
+/// The registry entry a failed connect is a refusal of, by its code or, for one the server
+/// sent, by the text it rendered (see `classify`).
+pub fn refusal(code: ErrorCode, message: &str) -> Option<ErrorCode> {
+    if REFUSALS.contains(&code) {
+        return Some(code);
+    }
+    if !matches!(code, ErrorCode::RemoteConnectFailed | ErrorCode::Generic) {
+        return None;
+    }
+    REFUSALS
+        .iter()
+        .copied()
+        .find(|refusal| renders(refusal.raw_string(), message))
 }
 
 /// Whether `message` is the registry form `form` rendered, at its start or right after

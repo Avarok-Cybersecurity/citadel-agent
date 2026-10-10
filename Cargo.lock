@@ -851,6 +851,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "citadel-release-signature"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "ml-dsa",
+ "sha2",
+ "zeroize",
+]
+
+[[package]]
 name = "citadel_crypt"
 version = "0.14.0"
 source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#6b127b86930f09e29a25c2967ed113c07f868ff6"
@@ -2392,6 +2402,7 @@ checksum = "707114b52a152fa7bdb290cd7cd5912d9467273b6d74e21b8d81aca1f8533f6b"
 dependencies = [
  "ctutils",
  "typenum",
+ "zeroize",
 ]
 
 [[package]]
@@ -3140,6 +3151,7 @@ dependencies = [
  "pkcs8",
  "shake",
  "signature 3.0.0",
+ "zeroize",
 ]
 
 [[package]]
@@ -3151,6 +3163,7 @@ dependencies = [
  "ctutils",
  "hybrid-array",
  "num-traits",
+ "zeroize",
 ]
 
 [[package]]

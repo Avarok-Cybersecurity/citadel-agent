@@ -1,5 +1,5 @@
 use crate::kernel::requests::peer::{
-    build_peer_information_map, peers_from_response, query_server_peer_list,
+    build_peer_information_map, peers_from_response, query_server_peer_list, reconnecting_refusal,
 };
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
@@ -7,7 +7,7 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, ListAllPeersFailure, ListAllPeersResponse,
 };
-use citadel_sdk::logging::{error, info};
+use citadel_sdk::logging::{debug, error, info};
 use citadel_sdk::prelude::{ClientConnectionType, NodeResult, PeerEvent, PeerSignal, Ratchet};
 use uuid::Uuid;
 
@@ -23,6 +23,16 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         "[ListAllPeers] Handling request for cid={}, request_id={:?}",
         cid, request_id
     );
+    if let Some(reason) = reconnecting_refusal(&this.server_connection_map, cid) {
+        debug!("[ListAllPeers] cid={cid} is reconnecting; answering {reason:?}");
+        let response = InternalServiceResponse::ListAllPeersFailure(ListAllPeersFailure {
+            cid,
+            message: "the session is reconnecting".to_string(),
+            request_id: Some(request_id),
+            reason: Some(reason),
+        });
+        return Some(HandledRequestResult { response, uuid });
+    }
     let remote = this.remote();
 
     // Ask the server for all local-group peers (registered or not). As with
@@ -72,6 +82,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 cid,
                 message: error_msg,
                 request_id: Some(request_id),
+                reason: None,
             });
             Some(HandledRequestResult { response, uuid })
         }

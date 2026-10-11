@@ -78,8 +78,10 @@ dashmap = "6.1.0"
 custom_debug = { version = "0.6.2" }
 # rfd is only used in citadel-internal-service for native file picker dialogs
 # Default features disabled to avoid wayland dependency issues in Docker
-# On macOS/Windows, native dialogs work without extra features
-rfd = { version = "0.15", default-features = false, features = ["tokio"] }
+# On macOS/Windows, native dialogs work without extra features. On Linux a backend is required:
+# xdg-portal (pure Rust, talks to the desktop's portal over D-Bus) needs no GTK headers at build
+# time or GTK libraries at run time, unlike gtk3.
+rfd = { version = "0.15", default-features = false, features = ["tokio", "xdg-portal"] }
 
 # quinn-proto 0.11.19 plus quinn-rs/quinn#2660 (re-arm the loss-detection timer when a path
 # validation fails; upstream issue #2658), which otherwise panics debug builds in

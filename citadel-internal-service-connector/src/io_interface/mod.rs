@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use citadel_internal_service_types::InternalServicePayload;
 use futures::{Sink, Stream};
 
+#[cfg(feature = "websockets")]
+mod handshake_log;
 pub mod in_memory;
 #[cfg(feature = "websockets")]
 pub mod origin_policy;

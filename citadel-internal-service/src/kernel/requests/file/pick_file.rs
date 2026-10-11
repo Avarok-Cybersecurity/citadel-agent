@@ -14,12 +14,11 @@ use uuid::Uuid;
 #[cfg(feature = "native-dialogs")]
 use citadel_internal_service_types::PickFileSuccess;
 #[cfg(feature = "native-dialogs")]
+use citadel_sdk::logging::error;
 use citadel_sdk::logging::info;
 
-use citadel_sdk::logging::error;
-
 pub async fn handle<T: IOInterface, R: Ratchet>(
-    _this: &CitadelWorkspaceService<T, R>,
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -173,9 +172,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     #[cfg(not(feature = "native-dialogs"))]
     {
         // Suppress unused variable warnings
-        let _ = (title, allowed_extensions);
+        let _ = (this, title, allowed_extensions);
 
-        error!(target: "citadel", "PickFile not available: native-dialogs feature is disabled");
+        info!(target: "citadel", "PickFile refused: this agent was built without native-dialogs");
         let response = InternalServiceResponse::PickFileFailure(PickFileFailure {
             cid,
             message: "File picker not available: native-dialogs feature is disabled. This feature requires a desktop environment.".to_string(),

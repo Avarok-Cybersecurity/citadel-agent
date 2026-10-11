@@ -22,4 +22,11 @@ supervises_p2p: boolean,
  * greeting, which is what `false` means: such an agent takes a browser file only
  * inline, as `ByteContents`, up to 16 MiB.
  */
-stages_uploads: boolean, };
+stages_uploads: boolean, 
+/**
+ * This agent can open a native file dialog (`PickFile`). A build without the
+ * `native-dialogs` feature refuses every `PickFile`, so a UI that knows this up front
+ * shows its in-page picker instead of a button that cannot work. Absent from an older
+ * agent's greeting, which is what `false` means.
+ */
+native_picker: boolean, };

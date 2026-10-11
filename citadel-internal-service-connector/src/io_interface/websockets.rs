@@ -13,6 +13,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use crate::io_interface::handshake_log::log_handshake_failure;
 use crate::io_interface::origin_policy::OriginPolicy;
 use citadel_io::tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use citadel_io::tokio::net::{TcpListener, TcpStream};
@@ -339,7 +340,7 @@ impl IOInterface for WebSocketInterface {
                                 ));
                             }
                             Ok(Err(err)) => {
-                                log::error!(target: "citadel", "WebSocket handshake failed: {}", err);
+                                log_handshake_failure(&err, addr);
                             }
                             Err(_elapsed) => {
                                 log::warn!(

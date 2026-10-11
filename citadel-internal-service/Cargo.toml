@@ -12,7 +12,7 @@ websockets = ["citadel-internal-service-connector/websockets"]
 js = ["uuid/js"]
 # Enable native file picker dialog support (for PickFile request)
 # Only enable when building for native desktop (not in Docker/server)
-native-dialogs = ["rfd"]
+native-dialogs = ["rfd", "dep:wayland-backend"]
 # Enable parking_lot deadlock detection for debugging lock contention
 deadlock-detection = []
 
@@ -85,6 +85,13 @@ tempfile = "3"
 # dependency tree transitively; declared here for direct use.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# rfd's Linux portal backend pulls wayland-backend with `client_system`, which links libwayland
+# at BUILD time through pkg-config and at RUN time as a hard dependency -- a build host without
+# the headers fails, and the shipped agent would not start on a machine without the library.
+# `dlopen` loads it on demand instead (feature unification applies it to rfd's copy).
+[target.'cfg(target_os = "linux")'.dependencies]
+wayland-backend = { version = "0.3", features = ["dlopen"], optional = true }
 
 [dev-dependencies]
 citadel_sdk = { workspace = true, features=["multi-threaded", "localhost-testing"] }

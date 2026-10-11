@@ -52,15 +52,30 @@ pub(crate) enum PeerEnd {
     /// (Citadel-Protocol `PeerSignal::Disconnect::disconnect_token`). A named report ends only
     /// the connection it names. An unnamed one (the server's notice that the peer's whole
     /// session ended, or a peer whose SDK names none) ends only a connection that is itself
-    /// unnamed: a named connection's own end is always reported, named, so an unnamed report
-    /// arriving after a redial must not take the new connection with it.
+    /// unnamed, so an unnamed report arriving after a redial must not take the new connection
+    /// with it -- while the SDK still holds that connection (see `Gone`).
     Reported(Option<Instance>),
+    /// The SDK holds no connection to the peer: it drops its own on every end it accepts,
+    /// named or not, so whichever connection the agent has is a dead one.
+    Gone,
+}
+
+/// What a `PeerSignal::Disconnect` naming `reported` ends, given whether the SDK still holds a
+/// connection to the peer. Only a direct connection has a drop notifier to report its own end,
+/// named; a sign-out ends one still relayed through the server with the server's unnamed
+/// notice alone, and keeping it for being unnamed kept a sink the SDK had already dropped.
+pub(crate) fn reported_end(reported: Option<Instance>, sdk_holds_peer: bool) -> PeerEnd {
+    if sdk_holds_peer {
+        PeerEnd::Reported(reported)
+    } else {
+        PeerEnd::Gone
+    }
 }
 
 /// Whether `end` ends the connection that is `current`.
 pub(crate) fn ends_this_connection(current: Option<Instance>, end: PeerEnd) -> bool {
     match (end, current) {
-        (PeerEnd::Requested, _) | (PeerEnd::Reported(_), None) => true,
+        (PeerEnd::Requested | PeerEnd::Gone, _) | (PeerEnd::Reported(_), None) => true,
         (PeerEnd::Reported(Some(reported)), Some(current)) => reported == current,
         (PeerEnd::Reported(None), Some(_)) => false,
     }

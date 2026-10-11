@@ -7,7 +7,9 @@ use super::super::types::{Command, DialOutcome, Input};
 use super::tests::{core, secs, tick, PEER};
 use super::tests_peers::{dials, up, QUIET};
 use super::Core;
-use crate::kernel::reconnect::instance::{take_reported_peer, Instance, PeerEnd, PeerReport};
+use crate::kernel::reconnect::instance::{
+    reported_end, take_reported_peer, Instance, PeerEnd, PeerReport,
+};
 use citadel_internal_service_types::P2pPathReport;
 use citadel_sdk::prelude::Ticket;
 use std::collections::HashMap;
@@ -113,5 +115,37 @@ fn who_ends_which_connection() {
     assert_eq!(
         take_reported_peer(&mut none, PEER, PeerEnd::Requested, |p| *p),
         PeerReport::Absent
+    );
+}
+
+/// CI run 38169743447: a relayed peer signed out, and the server's unnamed notice was the only
+/// report. The SDK had dropped its connection; the agent kept the named sink it no longer had.
+#[test]
+fn an_unnamed_report_ends_a_named_connection_the_sdk_no_longer_holds() {
+    let take = |end| {
+        let mut peers = Peers::from([(PEER, Some(NEW))]);
+        take_reported_peer(&mut peers, PEER, end, |p| *p)
+    };
+    assert_eq!(
+        take(reported_end(None, false)),
+        PeerReport::Removed(Some(NEW)),
+        "the SDK holds no connection to the peer, so the agent's is dead"
+    );
+    assert_eq!(
+        take(reported_end(Some(OLD), false)),
+        PeerReport::Removed(Some(NEW))
+    );
+    assert_eq!(
+        take(reported_end(None, true)),
+        PeerReport::Kept { current: Some(NEW) },
+        "a late unnamed report while the SDK holds the redialled connection still keeps it"
+    );
+    assert_eq!(
+        take(reported_end(Some(OLD), true)),
+        PeerReport::Kept { current: Some(NEW) }
+    );
+    assert_eq!(
+        take(reported_end(Some(NEW), true)),
+        PeerReport::Removed(Some(NEW))
     );
 }

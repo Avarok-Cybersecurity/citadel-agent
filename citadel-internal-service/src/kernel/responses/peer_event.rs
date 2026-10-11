@@ -6,19 +6,13 @@
 //! - `PeerSignal::PostConnect`: Peer connection request received
 //! - `PeerSignal::BroadcastConnected`: Group broadcast event
 //!
-//! ## P2P Disconnect Flow (PeerSignal::Disconnect)
-//! 1. Either peer calls `remote.find_target(cid, peer_cid).disconnect()`
-//! 2. SDK sends `PeerSignal::Disconnect`, waits for `PeerEvent(PeerSignal::Disconnect)`
-//! 3. This handler cleans up internal service state (removes peer from session)
-//! 4. Notifies TCP client via `DisconnectNotification`
-//!
-//! ## Distinction from C2S Disconnect
-//! - C2S: `NodeResult::Disconnect` - entire session terminated
-//! - P2P: `PeerSignal::Disconnect` - single peer connection terminated
-//!
-//! Both remove the peer through `requests/peer/disconnect.rs`; a report only when it names the connection the peer has now.
+//! ## P2P Disconnect (PeerSignal::Disconnect)
+//! The SDK's report of its own connection, or the server's notice that the peer's session ended
+//! (`far_side`). The peer is removed through `requests/peer/disconnect.rs` when the report names
+//! the connection it has now, or the SDK holds none, and its windows get `DisconnectNotification`.
+//! A C2S end is `NodeResult::Disconnect` (responses/disconnect.rs).
 
-use crate::kernel::reconnect::instance::PeerEnd;
+use crate::kernel::reconnect::instance;
 use crate::kernel::requests::peer::cleanup_reported_peer;
 use crate::kernel::session_route::SessionRoute;
 use crate::kernel::session_subscribers::SessionSubscribers;
@@ -34,6 +28,7 @@ use citadel_sdk::prelude::{
     GroupEvent, NetworkError, PeerConnectionType, PeerEvent, PeerSignal, Ratchet,
 };
 
+mod far_side;
 #[cfg(test)]
 mod tests;
 
@@ -70,13 +65,17 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         PeerSignal::Disconnect {
             peer_conn_type:
                 PeerConnectionType::LocalGroupPeer {
-                    session_cid,
-                    peer_cid,
+                    session_cid: first,
+                    peer_cid: second,
                 },
             disconnect_token,
             ..
         } => {
-            // SDK is source of truth - clean up P2P peer state to mirror SDK
+            let session_cid = event.session_cid;
+            let Some(peer_cid) = far_side::far_side(session_cid, (first, second)) else {
+                warn!(target: "citadel", "[P2P Disconnect] ({first}, {second}) is not a pair of session {session_cid}; ignoring it");
+                return Ok(());
+            };
             info!(
                 target: "citadel",
                 "[P2P Disconnect] SDK reports peer {} disconnected from session {} - cleaning up internal state",
@@ -84,14 +83,14 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 session_cid
             );
 
-            // Use shared cleanup function (DRY)
-            // NOTE: For SDK-initiated P2P disconnect events, the SDK has already disconnected.
-            // We just remove from our map and let the struct drop (RAII is harmless).
+            // Ask the SDK, which dropped what it took this report for: a relayed end is unnamed.
+            let held = this.client_or_peer_in_protocol(session_cid, Some(peer_cid));
+            let reported = disconnect_token.map(|token| token.connection_id);
             if let Some(disconnected) = cleanup_reported_peer(
                 &this.server_connection_map,
                 session_cid,
                 peer_cid,
-                PeerEnd::Reported(disconnect_token.map(|token| token.connection_id)),
+                instance::reported_end(reported, held.await?),
             )
             .inspect(|_| {
                 this.prune_cid_scoped_state(session_cid, Some(peer_cid));

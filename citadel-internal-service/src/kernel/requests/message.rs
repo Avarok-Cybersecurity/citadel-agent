@@ -22,7 +22,7 @@ use uuid::Uuid;
 /// deregister paths use — because the cost of being wrong in the impatient
 /// direction is a spurious failure on a slow but working link. The point is not
 /// promptness, it is that the wait ENDS.
-const PEER_SEND_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const PEER_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,

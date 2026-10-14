@@ -185,6 +185,18 @@ fn push(hits: &mut Vec<Hit>, start: usize, end: usize, kind: RedactionKind) {
     }
 }
 
+/// Every digit run naming one of `cids`, by the same reading as `cid_tokens`.
+pub(super) fn session_cid_hits(input: &str, cids: &[u64], hits: &mut Vec<Hit>) {
+    if cids.is_empty() {
+        return;
+    }
+    for m in DIGITS.find_iter(input) {
+        if m.as_str().parse().is_ok_and(|cid: u64| cids.contains(&cid)) {
+            push(hits, m.start(), m.end(), RedactionKind::Session);
+        }
+    }
+}
+
 /// Every standalone run of digits that fits a u64: the cids a message may name.
 pub(crate) fn cid_tokens(input: &str) -> impl Iterator<Item = u64> + '_ {
     DIGITS

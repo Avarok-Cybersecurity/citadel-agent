@@ -28,7 +28,7 @@ mod disconnect;
 mod get_account_information;
 mod get_sessions;
 mod media;
-mod message;
+pub(crate) mod message;
 mod notices;
 mod register;
 mod security_key;

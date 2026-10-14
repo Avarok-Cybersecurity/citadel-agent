@@ -26,6 +26,8 @@ pub enum RedactionKind {
     Path,
     File,
     Ip,
+    /// The cid of another session signed in on this machine.
+    Session,
 }
 
 impl RedactionKind {
@@ -39,6 +41,7 @@ impl RedactionKind {
             Self::Path => "path",
             Self::File => "file",
             Self::Ip => "ip",
+            Self::Session => "session",
         }
     }
 
@@ -103,8 +106,20 @@ pub fn placeholder(kind: RedactionKind, value: &str, salt: &Salt) -> String {
 
 /// `input` with every identifying value replaced by its placeholder.
 pub fn redact(input: &str, known: &[KnownValue], salt: &Salt) -> String {
+    redact_with_sessions(input, known, &[], salt)
+}
+
+/// `redact`, and every cid in `other_sessions` -- the other accounts signed in on this
+/// machine -- replaced too, so one account's line does not tell its workspace about another.
+pub fn redact_with_sessions(
+    input: &str,
+    known: &[KnownValue],
+    other_sessions: &[u64],
+    salt: &Salt,
+) -> String {
     let mut hits = rules::known_value_hits(input, known);
     rules::pattern_hits(input, &mut hits);
+    rules::session_cid_hits(input, other_sessions, &mut hits);
     if hits.is_empty() {
         return input.to_owned();
     }

@@ -62,8 +62,11 @@ pub(super) async fn put_link<T: IOInterface + Sync, R: Ratchet>(
         cid,
         stream,
         connect_request_id,
+        this.telemetry.clone(),
     );
     this.supervisors.signal(cid, Signal::Link(LinkStatus::Up));
+    // Consent may have changed while the link was down, from another device.
+    this.telemetry_session_started(cid).await;
     let sent = notify(
         this,
         cid,

@@ -491,12 +491,18 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 cid,
                 stream,
                 request_id,
+                this.telemetry.clone(),
             );
 
             // A recovery session may not message: the server drops it, so no ILM is hosted.
             if scope == SessionScope::Full {
                 this.host_ilm_for(cid, uuid).await;
             }
+            // Off the Connect's path: the answer to the window must not wait on the server.
+            let telemetry = this.clone();
+            drop(crate::telemetry::span::spawn_in_current_span(async move {
+                telemetry.telemetry_session_started(cid).await;
+            }));
             cleanup_username(this, &username_for_cleanup);
             Some(HandledRequestResult { response, uuid })
         }

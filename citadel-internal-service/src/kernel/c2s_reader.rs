@@ -32,5 +32,8 @@ pub(crate) fn spawn<R: Ratchet>(
         }
     };
 
-    tokio::spawn(connection_read_stream);
+    crate::telemetry::span::spawn_in_span(
+        crate::telemetry::span::session_span(cid),
+        connection_read_stream,
+    );
 }

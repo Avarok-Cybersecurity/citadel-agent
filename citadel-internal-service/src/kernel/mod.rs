@@ -688,6 +688,8 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
         let inbound_command_task = async move {
             while let Some((command, conn_id)) = rx.recv().await {
                 let this = this.clone();
+                // Every line the handler logs is attributed to the session it acts for.
+                let span = crate::telemetry::span::optional_session_span(command.session_cid());
 
                 let task = async move {
                     if let Some(HandledRequestResult { response, uuid }) =
@@ -728,7 +730,7 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
                 };
 
                 // Spawn the task to allow for parallel request handling
-                drop(tokio::task::spawn(task));
+                drop(crate::telemetry::span::spawn_in_span(span, task));
             }
             Ok(())
         };
@@ -767,7 +769,14 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
         //
         // Err is reserved for conditions that genuinely mean this kernel cannot
         // keep running. A per-session routing failure is not one.
-        if let Err(error) = responses::handle_node_result(self, message).await {
+        let session_cid = message.callback_key().and_then(|key| key.session_cid);
+        let span = crate::telemetry::span::optional_session_span(session_cid);
+        if let Err(error) = citadel_sdk::logging::tracing::Instrument::instrument(
+            responses::handle_node_result(self, message),
+            span,
+        )
+        .await
+        {
             error!(target: "citadel", "[Kernel] Failed to handle node event: {error:?}. Continuing — this is not fatal to the agent.");
         }
         Ok(())

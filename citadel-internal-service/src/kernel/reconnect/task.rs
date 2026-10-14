@@ -112,7 +112,8 @@ pub(crate) fn resume<T: IOInterface + Sync, R: Ratchet>(
     generation: u64,
 ) {
     let this = this.clone();
-    drop(tokio::spawn(
+    drop(crate::telemetry::span::spawn_in_span(
+        crate::telemetry::span::session_span(cid),
         async move { run(&this, cid, generation).await },
     ));
 }

@@ -76,7 +76,7 @@ where
     }
     info!(target: "citadel", "[{what}] session {cid} is not mapped yet; waiting up to {SESSION_MAPPED_WITHIN:?}");
     let this = this.clone();
-    drop(tokio::spawn(async move {
+    drop(crate::telemetry::span::spawn_in_current_span(async move {
         if !mapped_within(&this.server_connection_map, cid, SESSION_MAPPED_WITHIN).await {
             warn!(target: "citadel", "[{what}] session {cid} was not mapped within {SESSION_MAPPED_WITHIN:?}; letting the event go");
             return unmapped(event);

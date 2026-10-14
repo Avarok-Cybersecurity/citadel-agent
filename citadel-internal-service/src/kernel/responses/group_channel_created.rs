@@ -59,7 +59,7 @@ pub(crate) fn park(channel: GroupChannel) {
     let cid = channel.cid();
     warn!(target: "citadel", "[GroupChannelCreated] no session {cid} to adopt the channel for {key:?}; holding it until the session ends");
     let (_tx, mut rx) = channel.split();
-    drop(tokio::spawn(
-        async move { while rx.next().await.is_some() {} },
-    ));
+    drop(crate::telemetry::span::spawn_in_current_span(async move {
+        while rx.next().await.is_some() {}
+    }));
 }

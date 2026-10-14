@@ -860,7 +860,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                         uuid,
                     );
                     let this = this.clone();
-                    tokio::task::spawn(async move {
+                    crate::telemetry::span::spawn_in_current_span(async move {
                         use futures::StreamExt;
                         let first =
                             tokio::time::timeout(super::FIRST_EVENT_TIMEOUT, subscription.next())

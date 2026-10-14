@@ -94,40 +94,43 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         // Spawn a task to read incoming messages from the peer
         let stream_route = route.clone();
         let ilm = this.ilm_hosts.clone();
-        tokio::spawn(async move {
-            let route = stream_route;
-            info!(target: "citadel", "[P2P-RECV-CHANNEL] *** Starting P2P read stream for LOCAL_CID={} from PEER={} ***", session_cid, peer_cid);
-            info!(target: "citadel", "[P2P-RECV-CHANNEL] This stream will receive messages SENT BY peer {}", peer_cid);
+        crate::telemetry::span::spawn_in_span(
+            crate::telemetry::span::peer_span(session_cid, peer_cid),
+            async move {
+                let route = stream_route;
+                info!(target: "citadel", "[P2P-RECV-CHANNEL] *** Starting P2P read stream for LOCAL_CID={} from PEER={} ***", session_cid, peer_cid);
+                info!(target: "citadel", "[P2P-RECV-CHANNEL] This stream will receive messages SENT BY peer {}", peer_cid);
 
-            while let Some(message) = stream.next().await {
-                info!(target: "citadel", "[PeerChannelCreated] Received P2P message! session={}, peer_cid={}, msg_len={}", session_cid, peer_cid, message.len());
+                while let Some(message) = stream.next().await {
+                    info!(target: "citadel", "[PeerChannelCreated] Received P2P message! session={}, peer_cid={}, msg_len={}", session_cid, peer_cid, message.len());
 
-                let arrived = MessageNotification {
-                    message: message.into_buffer().into(),
-                    cid: session_cid,
-                    peer_cid,
-                    request_id: None,
-                };
-                // An account the agent hosts ILM for takes its frames here; the
-                // windows hear what ILM delivers (kernel/ilm).
-                let Err(raw) = ilm.feed(arrived) else {
-                    continue;
-                };
-                let notification = InternalServiceResponse::MessageNotification(raw);
+                    let arrived = MessageNotification {
+                        message: message.into_buffer().into(),
+                        cid: session_cid,
+                        peer_cid,
+                        request_id: None,
+                    };
+                    // An account the agent hosts ILM for takes its frames here; the
+                    // windows hear what ILM delivers (kernel/ilm).
+                    let Err(raw) = ilm.feed(arrived) else {
+                        continue;
+                    };
+                    let notification = InternalServiceResponse::MessageNotification(raw);
 
-                // Send only to the clients attached to this session. An
-                // earlier version broadcast to every live TCP entry as a
-                // workaround for stale-uuid delivery, and that leaked P2P
-                // message content to any other session multiplexed through the
-                // same internal-service process. If nobody owns it, ILM is the
-                // layer that retries.
-                if route.send(notification).is_empty() {
-                    info!(target: "citadel", "[PeerChannelCreated] No localhost connection owns CID {session_cid}; relying on ILM redelivery");
+                    // Send only to the clients attached to this session. An
+                    // earlier version broadcast to every live TCP entry as a
+                    // workaround for stale-uuid delivery, and that leaked P2P
+                    // message content to any other session multiplexed through the
+                    // same internal-service process. If nobody owns it, ILM is the
+                    // layer that retries.
+                    if route.send(notification).is_empty() {
+                        info!(target: "citadel", "[PeerChannelCreated] No localhost connection owns CID {session_cid}; relying on ILM redelivery");
+                    }
                 }
-            }
 
-            info!(target: "citadel", "[PeerChannelCreated] P2P read stream ended for session={} from peer={}", session_cid, peer_cid);
-        });
+                info!(target: "citadel", "[PeerChannelCreated] P2P read stream ended for session={} from peer={}", session_cid, peer_cid);
+            },
+        );
 
         // Notify the UI that the P2P connection is established. Resolved
         // through the same route as the stream above, so a reclaim between the

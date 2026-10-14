@@ -135,6 +135,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             invitee_response: _,
         } => {
             info!(target: "citadel", "User {session_cid:?} received Register Request from {peer_cid:?}");
+            this.supervisors
+                .signal(session_cid, Signal::PeerReachable(peer_cid));
 
             // Cache the peer's username for later use in ListRegisteredPeers
             // The SDK's get_local_group_mutual_peers may not return usernames
@@ -205,6 +207,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             session_password: _,
         } => {
             info!(target: "citadel", "User {session_cid:?} received Connect Request from {peer_cid:?}");
+            this.supervisors
+                .signal(session_cid, Signal::PeerReachable(peer_cid));
 
             // Store the pending signal for later acceptance via PeerConnectAccept
             // We reconstruct the signal since the match consumes the fields

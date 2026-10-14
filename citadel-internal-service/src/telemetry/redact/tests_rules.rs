@@ -73,7 +73,7 @@ fn known_secrets_and_hosts() {
 #[test]
 fn secret_assignments_and_bearer_tokens() {
     assert_redacts(&[
-        ("password=s3cr3t!", "s3cr3t!", "secret"),
+        ("password=s3cr3t!", "s3cr3t!", "secret"), // ggignore: a fake secret, the input this redaction rule must scrub
         ("token: abc.def.ghi", "abc.def.ghi", "secret"),
         ("api_key=\"k-123\"", "k-123", "secret"),
         (

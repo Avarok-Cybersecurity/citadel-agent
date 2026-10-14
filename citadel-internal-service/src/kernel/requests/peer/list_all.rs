@@ -1,3 +1,4 @@
+use crate::kernel::requests::peer::failure_log::log_failure;
 use crate::kernel::requests::peer::{
     build_peer_information_map, peers_from_response, query_server_peer_list, reconnecting_refusal,
 };
@@ -7,7 +8,7 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, ListAllPeersFailure, ListAllPeersResponse,
 };
-use citadel_sdk::logging::{debug, error, info};
+use citadel_sdk::logging::{debug, info};
 use citadel_sdk::prelude::{ClientConnectionType, NodeResult, PeerEvent, PeerSignal, Ratchet};
 use uuid::Uuid;
 
@@ -84,8 +85,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         }
 
         Err(err) => {
-            let error_msg = err.into_string();
-            error!("[ListAllPeers] FAILURE for cid={}: {}", cid, error_msg);
+            let error_msg = log_failure(&format!("[ListAllPeers] FAILURE for cid={cid}"), err);
             let response = InternalServiceResponse::ListAllPeersFailure(ListAllPeersFailure {
                 cid,
                 message: error_msg,

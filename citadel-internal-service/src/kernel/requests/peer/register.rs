@@ -1,3 +1,4 @@
+use super::failure_log::log_failure;
 use crate::kernel::requests::{handle_request, HandledRequestResult};
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -229,8 +230,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                             }
                         }
                         Err(err) => {
-                            let err_str = err.into_string();
-                            error!(target: "citadel", "[PeerRegister] find_target_information FAILED: {}", err_str);
+                            let err_str =
+                                log_failure("[PeerRegister] find_target_information FAILED", err);
                             InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
                                 cid,
                                 message: err_str,
@@ -241,8 +242,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 }
 
                 Err(err) => {
-                    let err_str = err.into_string();
-                    error!(target: "citadel", "[PeerRegister] register_to_peer FAILED: {}", err_str);
+                    let err_str = log_failure("[PeerRegister] register_to_peer FAILED", err);
                     InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
                         cid,
                         message: err_str,
@@ -253,8 +253,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         }
 
         Err(err) => {
-            let err_str = err.into_string();
-            error!(target: "citadel", "[PeerRegister] propose_target FAILED: {}", err_str);
+            let err_str = log_failure("[PeerRegister] propose_target FAILED", err);
             InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
                 cid,
                 message: err_str,

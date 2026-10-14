@@ -16,6 +16,7 @@ impl Core {
             Input::PeerLost { peer, .. } => self.lost(peer, now),
             Input::PeerReleased { peer, .. } => self.released(peer, now),
             Input::PeerUp { peer, path, .. } => return self.up(peer, path, now),
+            Input::PeerReachable { peer, .. } => self.reachable(peer, now),
             Input::PeerPath { peer, path, .. } => self.path_changed(peer, path, now),
             Input::DialResult { peer, outcome, .. } => return self.dialed(peer, outcome, now),
             Input::Backlog { peer, pending } => self.peer(peer).backlog = pending,
@@ -75,11 +76,22 @@ impl Core {
         entry.interest_until = None;
     }
 
+    /// The peer can be reached, whatever its dials said before: start its schedule over.
+    fn reachable(&mut self, peer: Cid, now: Millis) {
+        let entry = self.peer(peer);
+        entry.failed_dials = 0;
+        entry.dial.attempts = 0;
+        if !entry.connected {
+            entry.dial.next_at = now;
+        }
+    }
+
     fn up(&mut self, peer: Cid, path: P2pPathReport, now: Millis) -> Vec<Command> {
         let entry = self.peer(peer);
         entry.connected = true;
         entry.since = Some(now);
         entry.dial.in_flight = false;
+        entry.failed_dials = 0;
         entry.dialing_reported = false;
         entry.degraded_reported = false;
         let restored = entry.lost_at.take().is_some();
@@ -122,11 +134,21 @@ impl Core {
             }
             return self.up(peer, P2pPathReport::ServerRelay, now);
         }
-        entry.dial.next_at = now.after(rng.delay(
-            policy.dial_backoff,
-            entry.dial.attempts,
-            policy.jitter_permille,
-        ));
+        entry.failed_dials = entry.failed_dials.saturating_add(1);
+        let wait = if entry.failed_dials >= policy.unreachable_after {
+            rng.delay(
+                policy.unreachable_backoff,
+                entry.failed_dials - policy.unreachable_after,
+                policy.jitter_permille,
+            )
+        } else {
+            rng.delay(
+                policy.dial_backoff,
+                entry.dial.attempts,
+                policy.jitter_permille,
+            )
+        };
+        entry.dial.next_at = now.after(wait);
         entry.dial.attempts = entry.dial.attempts.saturating_add(1);
         let first = !std::mem::replace(&mut entry.degraded_reported, true);
         self.rng = rng;

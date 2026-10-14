@@ -2,6 +2,7 @@
 //! sends, and the supervisor's `PeerDialer`, which redials a lost peer with no window open.
 //! A single path, so a supervised dial and a window's dial cannot differ in what they set up.
 
+use super::failure_log::{log_connect_failure, log_failure};
 use super::peer_read::spawn_read_stream;
 use crate::kernel::peer_path::{adopt_restored_udp, PathWatch};
 use crate::kernel::requests::peer::turn::set_peer_turn;
@@ -136,8 +137,7 @@ pub(crate) async fn dial<T: IOInterface + Sync, R: Ratchet>(
             // other half.
             super::answer::remember_window_relay(this, cid, turn.as_ref());
             if let Err(err) = set_peer_turn(remote, cid, peer_cid, turn.as_ref()).await {
-                let err_str = err.into_string();
-                error!(target: "citadel", "[PeerConnect] set_peer_turn FAILED: {}", err_str);
+                let err_str = log_failure("[PeerConnect] set_peer_turn FAILED", err);
                 return InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
                     cid,
                     message: err_str,
@@ -225,7 +225,7 @@ pub(crate) async fn dial<T: IOInterface + Sync, R: Ratchet>(
 
                 Err(err) => {
                     let err_str = err.into_string();
-                    error!(target: "citadel", "[PeerConnect] connect_to_peer_custom FAILED: {}", err_str);
+                    log_connect_failure(request_id, &err_str);
 
                     InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
                         cid,
@@ -237,8 +237,7 @@ pub(crate) async fn dial<T: IOInterface + Sync, R: Ratchet>(
         }
 
         Err(err) => {
-            let err_str = err.into_string();
-            error!(target: "citadel", "[PeerConnect] find_target FAILED: {}", err_str);
+            let err_str = log_failure("[PeerConnect] find_target FAILED", err);
             InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
                 cid,
                 message: err_str,

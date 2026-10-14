@@ -117,14 +117,16 @@ fn the_backoff_is_capped() {
     lost(&mut core, 10);
     let mut gaps = Vec::new();
     let mut at = 11;
-    for _ in 0..8 {
+    // Within the redial window; the unreachable cap is run out in `tests_unreachable`.
+    for _ in 0..5 {
         assert_eq!(dials(&tick(&mut core, at)), 1, "due at {at}");
         failed(&mut core, at);
         let next = core.next_wake().expect("a redial is scheduled").0 / 1000;
         gaps.push(next - at);
         at = next;
     }
-    assert_eq!(gaps, vec![2, 4, 8, 16, 30, 30, 30, 30]);
+    // Two quick redials, then the unreachable schedule.
+    assert_eq!(gaps, vec![2, 4, 60, 120, 240]);
 }
 
 #[test]

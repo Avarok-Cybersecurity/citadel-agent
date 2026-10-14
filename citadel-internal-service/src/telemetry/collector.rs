@@ -64,6 +64,10 @@ impl TelemetryCollector {
         self.core.lock().drain(cid, salt)
     }
 
+    pub fn opted_in_sessions(&self) -> Vec<u64> {
+        self.core.lock().opted_in()
+    }
+
     pub fn is_capturing(&self) -> bool {
         self.capturing.load(Ordering::Relaxed)
     }

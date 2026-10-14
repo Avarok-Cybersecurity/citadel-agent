@@ -49,6 +49,7 @@ impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
         if peer_cid.is_none() {
             self.ilm_hosts.stop(cid);
             self.supervisors.stop(cid);
+            self.telemetry_forget_session(cid);
         }
         self.prune_cid_keyed_maps(cid, peer_cid)
     }

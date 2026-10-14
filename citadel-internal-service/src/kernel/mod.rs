@@ -133,6 +133,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) key_challenges: Arc<sign_in::key_relay::KeyChallenges>,
     /// Where browser uploads are written before they are sent (requests/file/transfer_root.rs).
     pub(crate) browser_transfers: BrowserTransferRoot,
+    /// Opt-in telemetry uploads, when the shipped binary configured them (telemetry/uplink).
+    pub(crate) telemetry: Option<Arc<crate::telemetry::TelemetryUplink>>,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -159,6 +161,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             updates: self.updates.clone(),
             key_challenges: self.key_challenges.clone(),
             browser_transfers: self.browser_transfers.clone(),
+            telemetry: self.telemetry.clone(),
             io: self.io.clone(),
         }
     }
@@ -195,6 +198,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             updates: Default::default(),
             key_challenges: Default::default(),
             browser_transfers,
+            telemetry: None,
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -203,6 +207,14 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
     /// binary states its policy; a service that never calls this supervises nothing.
     pub fn with_supervisor(mut self, policy: supervisor::SupervisorPolicy) -> Self {
         self.supervisor = Some(policy);
+        self
+    }
+
+    /// Upload each opted-in session's telemetry through `uplink` (telemetry/uplink). The
+    /// agent binary installs the uplink's collector in its logging; a service that never
+    /// calls this uploads nothing.
+    pub fn with_telemetry(mut self, uplink: crate::telemetry::TelemetryUplink) -> Self {
+        self.telemetry = Some(Arc::new(uplink));
         self
     }
 
@@ -742,6 +754,7 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
             res1 = inbound_command_task => res1,
             () = sweeper => Ok(()),
             () = updates::run(self.clone()) => Ok(()),
+            () = crate::telemetry::uplink::run(self.clone()) => Ok(()),
         };
 
         warn!(target: "citadel", "Shutting down service because a critical task finished. {res:?}");

@@ -149,3 +149,19 @@ fn a_drain_starts_a_new_salt() {
     assert_ne!(first[0].message, second[0].message);
     assert!(!first[0].message.contains("alice"));
 }
+
+#[test]
+fn a_session_line_naming_another_local_session_redacts_that_cid() {
+    let mut core = core(10, 1_000, 100);
+    core.opt_in(A, salt(1)).unwrap();
+    core.capture(&event(Some(A), &format!("route {B} via {REMOTE} for {A}")));
+    let a = messages(&mut core, A);
+    assert_eq!(a.len(), 1, "{a:?}");
+    assert!(!a[0].contains(&B.to_string()), "{}", a[0]);
+    assert!(a[0].contains("<session:"), "{}", a[0]);
+    assert!(
+        a[0].contains(&REMOTE.to_string()) && a[0].contains(&A.to_string()),
+        "remote peer cids and the session's own cid are kept: {}",
+        a[0]
+    );
+}

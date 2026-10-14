@@ -69,6 +69,14 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 cid
             );
             let peers = build_peer_information_map(cid, mutuals, &this.peer_username_cache.read());
+            for peer in peers.values() {
+                this.telemetry_learn_peer(
+                    cid,
+                    peer.cid,
+                    peer.username.as_deref(),
+                    peer.name.as_deref(),
+                );
+            }
             let response =
                 InternalServiceResponse::ListRegisteredPeersResponse(ListRegisteredPeersResponse {
                     cid,

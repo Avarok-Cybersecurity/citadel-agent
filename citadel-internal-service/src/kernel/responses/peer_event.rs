@@ -143,6 +143,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             if !inviter_username.is_empty() {
                 let mut cache = this.peer_username_cache.write();
                 cache.insert((session_cid, peer_cid), inviter_username.clone());
+                drop(cache);
+                this.telemetry_learn_peer(session_cid, peer_cid, Some(&inviter_username), None);
                 info!(target: "citadel", "Cached username '{}' for peer {} (session {})", inviter_username, peer_cid, session_cid);
             }
 

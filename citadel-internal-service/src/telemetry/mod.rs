@@ -13,12 +13,14 @@ pub mod entry;
 pub mod layer;
 pub mod redact;
 pub mod span;
+pub mod uplink;
 
 pub use collector::TelemetryCollector;
 pub use config::{RingConfig, TelemetryError};
 pub use entry::{TelemetryEntry, TelemetryLevel};
 pub use layer::TelemetryLayer;
 pub use redact::{KnownValue, RedactionKind};
+pub use uplink::{ServerSignal, SessionLink, TelemetryCodec, TelemetryUplink};
 
 #[cfg(test)]
 mod scoping_tests;

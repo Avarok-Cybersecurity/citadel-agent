@@ -5,7 +5,7 @@
 
 use super::config::{RingConfig, TelemetryError};
 use super::entry::{CapturedEvent, TelemetryEntry};
-use super::redact::{cid_tokens, redact, KnownValue, Salt};
+use super::redact::{cid_tokens, redact_with_sessions, KnownValue, Salt};
 use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug)]
@@ -85,6 +85,15 @@ impl CollectorCore {
         Ok(())
     }
 
+    /// Every session holding a ring, in no particular order.
+    pub fn opted_in(&self) -> Vec<u64> {
+        self.sessions
+            .iter()
+            .filter(|(_, session)| session.ring.is_some())
+            .map(|(cid, _)| *cid)
+            .collect()
+    }
+
     pub fn is_capturing(&self) -> bool {
         self.sessions.values().any(|session| session.ring.is_some())
     }
@@ -105,7 +114,9 @@ impl CollectorCore {
         Ok(ring.entries.drain(..).collect())
     }
 
-    /// A session's own event goes to that session only. An agent-wide event goes to every
+    /// A session's own event goes to that session only, with every OTHER local session's
+    /// cid in it redacted: the line is about this account, and naming another account
+    /// signed in on this machine would tell this workspace about it. An agent-wide event goes to every
     /// opted-in session, except one that names a DIFFERENT local session's cid: that line
     /// describes another account on this machine. Remote peer cids are not local sessions
     /// and do not drop a line.
@@ -114,8 +125,14 @@ impl CollectorCore {
         let known = &self.known;
         match event.session_cid {
             Some(cid) => {
+                let others: Vec<u64> = self
+                    .sessions
+                    .keys()
+                    .filter(|k| **k != cid)
+                    .copied()
+                    .collect();
                 if let Some(ring) = self.sessions.get_mut(&cid).and_then(|s| s.ring.as_mut()) {
-                    ring.push(entry(event, known, &ring.salt, &config), &config);
+                    ring.push(entry(event, known, &others, &ring.salt, &config), &config);
                 }
             }
             None => {
@@ -129,7 +146,7 @@ impl CollectorCore {
                     if named_local.iter().any(|named| named != cid) {
                         continue;
                     }
-                    ring.push(entry(event, known, &ring.salt, &config), &config);
+                    ring.push(entry(event, known, &[], &ring.salt, &config), &config);
                 }
             }
         }
@@ -156,10 +173,11 @@ impl CollectorCore {
 fn entry(
     event: &CapturedEvent<'_>,
     known: &[KnownValue],
+    other_sessions: &[u64],
     salt: &Salt,
     config: &RingConfig,
 ) -> TelemetryEntry {
-    let mut message = redact(event.message, known, salt);
+    let mut message = redact_with_sessions(event.message, known, other_sessions, salt);
     truncate_at_char(&mut message, config.max_message_bytes());
     let mut target = event.target.to_owned();
     truncate_at_char(&mut target, config.max_message_bytes());

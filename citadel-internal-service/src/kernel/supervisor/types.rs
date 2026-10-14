@@ -83,6 +83,12 @@ pub enum Input {
         peer: Cid,
         path: P2pPathReport,
     },
+    /// Word that `peer` is there to be reached (it asked to connect or to register): a
+    /// dial that was backing off is due now.
+    PeerReachable {
+        now: Millis,
+        peer: Cid,
+    },
     PeerPath {
         now: Millis,
         peer: Cid,

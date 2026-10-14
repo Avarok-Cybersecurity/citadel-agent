@@ -35,6 +35,8 @@ pub(super) struct Peer {
     pub backlog: u32,
     pub interest_until: Option<Millis>,
     pub dial: Retry,
+    /// Dials that failed since the peer last connected or was heard to be reachable.
+    pub failed_dials: u32,
     pub upgrade: Retry,
     pub dialing_reported: bool,
     pub degraded_reported: bool,
@@ -50,6 +52,7 @@ impl Peer {
             backlog: 0,
             interest_until: None,
             dial: Retry::new(now),
+            failed_dials: 0,
             upgrade: Retry::new(now),
             dialing_reported: false,
             degraded_reported: false,

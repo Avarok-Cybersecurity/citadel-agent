@@ -5,6 +5,7 @@ pub(crate) mod dial;
 pub mod disconnect;
 mod disconnect_others;
 pub mod disconnect_outcome;
+pub(crate) mod failure_log;
 pub mod list_all;
 pub mod list_registered;
 mod peer_read;

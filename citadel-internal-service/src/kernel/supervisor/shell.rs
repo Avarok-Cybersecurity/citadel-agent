@@ -23,6 +23,8 @@ pub(crate) enum Signal {
     PeerUp(Cid, P2pPathReport),
     PeerPath(Cid, P2pPathReport),
     PeerLost(Cid),
+    /// The peer asked to connect or to register: it is there to be reached.
+    PeerReachable(Cid),
     /// The user ended it on purpose; it is not redialled.
     PeerReleased(Cid),
     /// A window has `peer` open for `ttl`.
@@ -163,6 +165,7 @@ impl Shell {
             Signal::PeerUp(peer, path) => Input::PeerUp { now, peer, path },
             Signal::PeerPath(peer, path) => Input::PeerPath { now, peer, path },
             Signal::PeerLost(peer) => Input::PeerLost { now, peer },
+            Signal::PeerReachable(peer) => Input::PeerReachable { now, peer },
             Signal::PeerReleased(peer) => Input::PeerReleased { now, peer },
             Signal::Interest { peer, ttl } => Input::Interest {
                 peer,

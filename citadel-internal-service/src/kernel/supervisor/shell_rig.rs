@@ -30,6 +30,11 @@ pub(super) const POLICY: SupervisorPolicy = SupervisorPolicy {
         initial: Duration::from_secs(1),
         max: Duration::from_secs(30),
     },
+    unreachable_after: 3,
+    unreachable_backoff: Backoff {
+        initial: Duration::from_secs(60),
+        max: Duration::from_secs(900),
+    },
     upgrade_backoff: Backoff {
         initial: Duration::from_secs(5),
         max: Duration::from_secs(300),

@@ -10,7 +10,7 @@ use crate::kernel::supervisor::types::{Cid, DialOutcome};
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::InternalServiceResponse;
-use citadel_sdk::logging::info;
+use citadel_sdk::logging::{debug, info};
 use citadel_sdk::prelude::{Ratchet, UdpMode};
 use futures::future::BoxFuture;
 use futures::FutureExt;
@@ -68,7 +68,7 @@ impl<T: IOInterface + Sync, R: Ratchet> PeerDialer for KernelDialer<T, R> {
                 // Windows learn of it as they do of an accepted connection.
                 SessionRoute::new(subscribers, this.tx_to_localhost_clients.clone()).send(response);
             } else {
-                info!(target: "citadel::supervisor", "{cid}: dialling {peer} failed: {response:?}");
+                debug!(target: "citadel::supervisor", "{cid}: dialling {peer} failed: {response:?}");
             }
             outcome
         }

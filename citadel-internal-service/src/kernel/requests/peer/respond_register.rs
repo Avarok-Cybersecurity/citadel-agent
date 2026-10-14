@@ -7,6 +7,7 @@
 //!
 //! This allows the initiator's `register_to_peer().await` to unblock and return.
 
+use super::failure_log::log_failure;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -78,8 +79,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             })
         }
         Err(err) => {
-            let err_str = err.into_string();
-            error!(target: "citadel", "[PeerRegisterRespond] FAILED: {}", err_str);
+            let err_str = log_failure("[PeerRegisterRespond] FAILED", err);
             Some(HandledRequestResult {
                 response: InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
                     cid,

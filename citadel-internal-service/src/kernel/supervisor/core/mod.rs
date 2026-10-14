@@ -20,6 +20,8 @@ mod tests_peer_redial;
 mod tests_peers;
 #[cfg(test)]
 mod tests_stale_drop;
+#[cfg(test)]
+mod tests_unreachable;
 
 use super::policy::SupervisorPolicy;
 use super::types::{Cid, Command, Input, LinkStatus, Millis};
@@ -82,6 +84,7 @@ impl Core {
             | Input::PeerLost { now, .. }
             | Input::PeerReleased { now, .. }
             | Input::PeerUp { now, .. }
+            | Input::PeerReachable { now, .. }
             | Input::PeerPath { now, .. }
             | Input::DialResult { now, .. } => now,
             // These carry no time of their own: they are acted on at the last time seen.

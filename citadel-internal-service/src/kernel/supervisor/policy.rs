@@ -19,6 +19,13 @@ pub struct SupervisorPolicy {
     /// Consecutive missed probes that end the link.
     pub missed_probes: u32,
     pub dial_backoff: Backoff,
+    /// Consecutive failed dials to one peer after which it is treated as unreachable, and
+    /// redialled by `unreachable_backoff` instead of `dial_backoff`. A dial that fails has
+    /// already waited for the peer's answer, so the quick schedule only adds load.
+    pub unreachable_after: u32,
+    /// The schedule for a peer that has failed `unreachable_after` dials in a row. It starts
+    /// over when the peer connects or is heard to be reachable.
+    pub unreachable_backoff: Backoff,
     pub upgrade_backoff: Backoff,
     /// How long a route must hold before its backoff resets.
     pub stable_after: Duration,
@@ -48,6 +55,11 @@ pub const AGENT_SUPERVISOR: SupervisorPolicy = SupervisorPolicy {
     dial_backoff: Backoff {
         initial: Duration::from_secs(1),
         max: Duration::from_secs(30),
+    },
+    unreachable_after: 3,
+    unreachable_backoff: Backoff {
+        initial: Duration::from_secs(60),
+        max: Duration::from_secs(900),
     },
     upgrade_backoff: Backoff {
         initial: Duration::from_secs(5),

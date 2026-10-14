@@ -3,7 +3,7 @@
 
 use super::ports::PathError;
 use super::shell::{Done, Shell, LOG};
-use super::types::{Command, Input};
+use super::types::{Command, Input, SupervisorEvent};
 use citadel_sdk::logging::{info, warn};
 
 impl Shell {
@@ -65,7 +65,12 @@ impl Shell {
                 let upgrade = self.ports.paths.upgrade(peer, restore_udp);
                 self.path_effect("upgrade", upgrade);
             }
-            Command::Report(event) => self.ports.reporter.report(event),
+            Command::Report(event) => {
+                if let SupervisorEvent::Degraded { peer_cid } = event {
+                    warn!(target: LOG, "peer {peer_cid} did not answer the dial; redials back off (repeats are logged at debug)");
+                }
+                self.ports.reporter.report(event);
+            }
         }
     }
 

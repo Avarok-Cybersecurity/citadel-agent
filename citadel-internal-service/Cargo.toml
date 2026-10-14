@@ -80,6 +80,12 @@ citadel-release-signature = { workspace = true }
 # Probing whether the install location is writable, and atomic temporary files beside it.
 tempfile = "3"
 
+# Telemetry (src/telemetry): the collector is a tracing layer, reads the real target of
+# log-bridged events, and redacts with fixed patterns. All three already in the tree via the SDK.
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
+tracing-log = { version = "0.2", default-features = false, features = ["std"] }
+regex = "1"
+
 # Unix-only: effective-uid lookup for verifying ownership of the
 # browser-transfer temp root (CWE-377 hardening). Already in the
 # dependency tree transitively; declared here for direct use.
@@ -94,5 +100,7 @@ libc = "0.2"
 wayland-backend = { version = "0.3", features = ["dlopen"], optional = true }
 
 [dev-dependencies]
+# The scoping test installs the log bridge so `log::warn!` lines are exercised too.
+tracing-log = { version = "0.2", features = ["log-tracer", "std"] }
 citadel_sdk = { workspace = true, features=["multi-threaded", "localhost-testing"] }
 citadel-internal-service-test-common = { workspace = true }

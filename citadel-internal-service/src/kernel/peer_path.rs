@@ -57,7 +57,7 @@ impl PathWatch {
             cid,
             Signal::PeerUp(peer_cid, path_report(self.rx.borrow().path)),
         );
-        tokio::spawn(async move {
+        crate::telemetry::span::spawn_in_current_span(async move {
             while self.rx.changed().await.is_ok() {
                 let status = *self.rx.borrow_and_update();
                 let Some(notification) = notification(cid, peer_cid, status) else {
@@ -81,17 +81,20 @@ pub(crate) fn adopt_restored_udp<R: Ratchet>(
     peer_cid: u64,
     mut restored: UnboundedReceiver<UdpChannel<R>>,
 ) {
-    tokio::spawn(async move {
-        while let Some(channel) = restored.recv().await {
-            let adopted = map
-                .write()
-                .get_mut(&cid)
-                .is_some_and(|conn| conn.offer_restored_udp(peer_cid, channel));
-            if !adopted {
-                warn!(target: "citadel", "[PeerPath] {cid}: a restored UDP channel for {peer_cid} was not taken (an open is mid-await, or the peer is gone)");
+    crate::telemetry::span::spawn_in_span(
+        crate::telemetry::span::peer_span(cid, peer_cid),
+        async move {
+            while let Some(channel) = restored.recv().await {
+                let adopted = map
+                    .write()
+                    .get_mut(&cid)
+                    .is_some_and(|conn| conn.offer_restored_udp(peer_cid, channel));
+                if !adopted {
+                    warn!(target: "citadel", "[PeerPath] {cid}: a restored UDP channel for {peer_cid} was not taken (an open is mid-await, or the peer is gone)");
+                }
             }
-        }
-    });
+        },
+    );
 }
 
 /// The notification for `status`, or `None` once the connection has closed (its end is reported

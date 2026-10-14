@@ -1,5 +1,6 @@
 pub mod kernel;
 pub mod stun;
+pub mod telemetry;
 pub mod updater;
 
 pub use stun::StunServers;

@@ -555,7 +555,7 @@ pub(crate) fn spawn_group_channel_receiver(
     };
 
     // Spawns the above Handler for Group Channel Broadcasts not handled in Node Events
-    tokio::task::spawn(group_channel_receiver);
+    crate::telemetry::span::spawn_in_current_span(group_channel_receiver);
 }
 
 /// The seven keys ILM's messenger backend reads, each suffixed with `-{cid}`.

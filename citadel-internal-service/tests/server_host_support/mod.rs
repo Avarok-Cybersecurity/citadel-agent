@@ -107,6 +107,16 @@ pub async fn register(
     server_addr: &str,
     username: &str,
 ) -> Result<Result<u64, String>, Box<dyn Error>> {
+    register_with(sink, stream, server_addr, username, Default::default()).await
+}
+
+pub async fn register_with(
+    sink: &mut WrappedSink<TcpIOInterface>,
+    stream: &mut Stream,
+    server_addr: &str,
+    username: &str,
+    session_security_settings: SessionSecuritySettings,
+) -> Result<Result<u64, String>, Box<dyn Error>> {
     common::send(
         sink,
         InternalServiceRequest::Register {
@@ -116,7 +126,7 @@ pub async fn register(
             username: username.to_string(),
             proposed_password: PASSWORD.as_bytes().to_vec().into(),
             connect_after_register: true,
-            session_security_settings: Default::default(),
+            session_security_settings,
             server_password: None,
             admission_token: None,
         },

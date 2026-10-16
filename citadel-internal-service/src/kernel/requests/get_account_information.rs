@@ -5,7 +5,7 @@ use citadel_internal_service_types::{
     AccountInformation, Accounts, InternalServiceRequest, InternalServiceResponse,
     PeerSessionInformation,
 };
-use citadel_sdk::prelude::{CNACMetadata, NodeRemote, Ratchet};
+use citadel_sdk::prelude::{CNACMetadata, NodeRemote, Ratchet, SecurityLevel};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -126,6 +126,31 @@ async fn add_account_to_map<R: Ratchet>(
             full_name,
             peers,
             server_host,
+            registered_security_level: registered_security_level(remote, account.cid).await,
         },
     );
+}
+
+/// best-effort, for the reason the peer list above is: `None` leaves the login form
+/// offering every level, and the SDK's own refusal still names the limit.
+async fn registered_security_level<R: Ratchet>(
+    remote: &NodeRemote<R>,
+    cid: u64,
+) -> Option<SecurityLevel> {
+    match remote.account_manager().get_client_by_cid(cid).await {
+        // Read, not refresh: refreshing resets the toolset a live session is using.
+        Ok(Some(cnac)) => Some(
+            cnac.get_static_auxiliary_ratchet()
+                .get_default_security_level(),
+        ),
+        Ok(None) => None,
+        Err(err) => {
+            citadel_sdk::logging::warn!(
+                target: "citadel",
+                "[GetAccountInformation] Could not read the stored account {}: {:?}; reporting no level",
+                cid, err
+            );
+            None
+        }
+    }
 }

@@ -2033,6 +2033,13 @@ pub struct AccountInformation {
     /// workspaces. `None` for an account registered before the agent recorded it.
     #[serde(default)]
     pub server_host: Option<String>,
+    /// The highest session security level this account can sign in at: the level it
+    /// registered with, held in its static ratchet. The SDK refuses a Connect asking
+    /// for more (`SessionSecurityExceedsRegistration`), so the login form offers no
+    /// more. `None` when the stored account could not be read.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(type = "SecurityLevel | null"))]
+    pub registered_security_level: Option<SecurityLevel>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

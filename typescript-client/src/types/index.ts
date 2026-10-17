@@ -10,6 +10,8 @@ export * from './AccountPreferences.js';
 export * from './AccountPreferencesResponse.js';
 export * from './AccountRow.js';
 export * from './Accounts.js';
+export * from './AdmissionChallengeWire.js';
+export * from './AdmissionProviderWire.js';
 export * from './AgentCapabilities.js';
 export * from './AttachProof.js';
 export * from './Attachment.js';

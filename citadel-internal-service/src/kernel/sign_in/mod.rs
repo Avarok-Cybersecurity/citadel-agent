@@ -11,10 +11,12 @@ pub(crate) mod recovery;
 
 use crate::kernel::reconnect::Reauth;
 use crate::kernel::CitadelWorkspaceService;
-use citadel_internal_service_types::FailureReason;
+use citadel_internal_service_types::{
+    AdmissionChallengeWire, AdmissionProviderWire, FailureReason,
+};
 use citadel_sdk::prelude::{
-    CitadelClientServerConnection, NetworkError, PeerChannelRecvHalf, PeerChannelSendHalf, Ratchet,
-    SecBuffer, SessionScope,
+    challenge_of, AdmissionProvider, CitadelClientServerConnection, NetworkError,
+    PeerChannelRecvHalf, PeerChannelSendHalf, Ratchet, SecBuffer, SessionScope,
 };
 use std::sync::Arc;
 
@@ -77,6 +79,20 @@ pub(crate) fn failure_reason(code: citadel_io::ErrorCode) -> Option<FailureReaso
     }
 }
 
+/// The check a refused sign-in or registration asks the window to show, when the server's
+/// refusal published one. Public: a site key and the identity the token is bound to.
+pub(crate) fn admission_challenge(err: &NetworkError) -> Option<AdmissionChallengeWire> {
+    let challenge = challenge_of(err)?;
+    let provider = match challenge.provider {
+        AdmissionProvider::Turnstile => AdmissionProviderWire::Turnstile,
+    };
+    Some(AdmissionChallengeWire {
+        provider,
+        site_key: challenge.site_key.clone(),
+        identity: challenge.identity.clone(),
+    })
+}
+
 pub(crate) const KEY_REAUTH: &str =
     "This account signs in with a security key; sign in again to reconnect";
 pub(crate) const RECOVERY_REAUTH: &str =
@@ -106,5 +122,24 @@ mod tests {
             !is_password(&reauth(SessionScope::Full, false, None)),
             "no password at all"
         );
+    }
+
+    #[test]
+    fn a_published_challenge_reaches_the_window_and_an_absent_one_stays_absent() {
+        use citadel_sdk::prelude::AdmissionChallenge;
+        let refused = || citadel_io::error!(citadel_io::ErrorCode::PqSignInAdmissionRequired);
+        let published = refused().with_detail(AdmissionChallenge::turnstile(
+            "0x4AAA-site-key",
+            Some("acme".to_string()),
+        ));
+        assert_eq!(
+            admission_challenge(&published),
+            Some(AdmissionChallengeWire {
+                provider: AdmissionProviderWire::Turnstile,
+                site_key: "0x4AAA-site-key".to_string(),
+                identity: Some("acme".to_string()),
+            })
+        );
+        assert_eq!(admission_challenge(&refused()), None);
     }
 }

@@ -24,6 +24,7 @@ mod group_responses;
 mod group_responses_more;
 pub use group_responses::*;
 pub use group_responses_more::*;
+mod admission;
 mod multi_window;
 mod notices;
 mod server_link;
@@ -33,6 +34,7 @@ mod supervisor;
 mod turn;
 pub use chat_level::{ChatSecurityLevel, PeerSecurityMinimum};
 mod updates;
+pub use admission::{AdmissionChallengeWire, AdmissionProviderWire};
 pub use conversation::{
     Attachment, ConversationMessage, ConversationMetadata, ConversationPage, MessagePatch,
     MessageStatus, MessageType, PageTimestamps, Reaction, TransferMode, TransferState,
@@ -218,6 +220,12 @@ pub struct ConnectFailure {
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub reason_code: Option<FailureReason>,
+    /// The check to show before trying again, when the server's `admission_required` refusal
+    /// published one (PUBLIC: see `AdmissionChallengeWire`). Absent for every other failure,
+    /// from a server that publishes none, and from an older agent.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub admission_challenge: Option<AdmissionChallengeWire>,
 }
 
 /// Returned when a Connect request is made for a session that is already active.
@@ -260,6 +268,12 @@ pub struct RegisterFailure {
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub reason_code: Option<FailureReason>,
+    /// The check to show before trying again, when the server's `admission_required` refusal
+    /// published one (PUBLIC: see `AdmissionChallengeWire`). Absent for every other failure,
+    /// from a server that publishes none, and from an older agent.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub admission_challenge: Option<AdmissionChallengeWire>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -2207,6 +2221,7 @@ mod tests {
             message: "test".to_string(),
             request_id: None,
             reason_code: None,
+            admission_challenge: None,
         });
         assert!(!success_response.is_error());
         assert!(error_response.is_error());

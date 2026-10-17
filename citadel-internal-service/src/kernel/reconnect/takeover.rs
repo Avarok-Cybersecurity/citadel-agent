@@ -45,6 +45,7 @@ pub(crate) async fn take_over<T: IOInterface + Sync, R: Ratchet>(
             message,
             request_id: Some(request_id),
             reason_code: None,
+            admission_challenge: None,
         })
     };
     let success = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
@@ -175,6 +176,7 @@ fn hand_back<T: IOInterface + Sync, R: Ratchet>(
             message: format!("Session {cid} was ended during the sign-in"),
             request_id: Some(request_id),
             reason_code: None,
+            admission_challenge: None,
         });
     };
     task::resume(this, cid, generation);

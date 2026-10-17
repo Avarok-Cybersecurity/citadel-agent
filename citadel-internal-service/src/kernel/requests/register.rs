@@ -73,6 +73,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     message,
                     request_id: Some(request_id),
                     reason_code: None,
+                    admission_challenge: None,
                 },
             ),
             uuid,
@@ -184,6 +185,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 citadel_internal_service_types::RegisterFailure {
                     cid: 0,
                     reason_code: crate::kernel::sign_in::failure_reason(err.code),
+                    admission_challenge: crate::kernel::sign_in::admission_challenge(&err),
                     message: err.into_string(),
                     request_id: Some(request_id),
                 },

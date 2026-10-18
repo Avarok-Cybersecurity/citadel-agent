@@ -27,11 +27,19 @@ fn a_link_has_none_even_to_a_regular_file() {
     assert!(identify(&link).is_none());
 }
 
+/// Same bytes, same length, same modification time: only the file index tells
+/// them apart -- which is all Windows has when two files are written back to
+/// back, since they share their timestamps there.
 #[test]
-fn two_files_with_the_same_bytes_are_different_files() {
+fn two_files_alike_in_everything_but_index_are_different_files() {
     let dir = tempfile::tempdir().unwrap();
     let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
-    std::fs::write(&a, b"same").unwrap();
-    std::fs::write(&b, b"same").unwrap();
-    assert_ne!(identify(&a), identify(&b));
+    let at = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    for path in [&a, &b] {
+        std::fs::write(path, b"same").unwrap();
+        let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_modified(at).unwrap();
+    }
+    let (ia, ib) = (identify(&a).unwrap(), identify(&b).unwrap());
+    assert_ne!(ia, ib);
 }

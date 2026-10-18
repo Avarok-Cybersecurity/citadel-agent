@@ -92,6 +92,11 @@ regex = "1"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Windows: the volume serial and file index of an open handle, which std keeps
+# unstable -- a pulled file's identity (kernel/requests/file/file_identity.rs).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 # rfd's Linux portal backend pulls wayland-backend with `client_system`, which links libwayland
 # at BUILD time through pkg-config and at RUN time as a hard dependency -- a build host without
 # the headers fails, and the shipped agent would not start on a machine without the library.

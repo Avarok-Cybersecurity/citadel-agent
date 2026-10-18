@@ -7,7 +7,7 @@
 //! lie inside the SDK's file-transfer directory. The size limit is checked on the
 //! opened file before any bytes are read.
 
-use super::file_identity::{is_reparse_point, FileIdentity};
+use super::file_identity::{is_reparse_point, open_no_follow, FileIdentity};
 use crate::kernel::pulled_reads::{plan_chunk, PulledKey};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
@@ -142,7 +142,9 @@ pub(crate) fn read_confined(
     if !metadata.is_file() || is_reparse_point(&metadata) {
         return Err("the pulled file is not a regular file".into());
     }
-    if FileIdentity::of(&metadata) != *expected {
+    let opened =
+        FileIdentity::of(&file).map_err(|e| format!("could not identify the pulled file: {e}"))?;
+    if opened != *expected {
         return Err(
             "the pulled file was replaced after this session pulled it; pull it again (DownloadFile)"
                 .into(),
@@ -157,27 +159,6 @@ pub(crate) fn read_confined(
         .map_err(|e| format!("the pulled file changed while it was read: {e}"))?;
     Ok((total, data))
 }
-
-/// Opens `path` read-only without following a link at its last component:
-/// `O_NOFOLLOW` on Unix, `FILE_FLAG_OPEN_REPARSE_POINT` on Windows (the
-/// reparse point itself is opened, then refused). Non-blocking, so a FIFO
-/// planted in the directory cannot hang the open. A swap of an earlier
-/// component opens a different file, which the identity check refuses.
-fn open_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::custom_flags(
-        &mut options,
-        libc::O_NOFOLLOW | libc::O_NONBLOCK,
-    );
-    #[cfg(windows)]
-    std::os::windows::fs::OpenOptionsExt::custom_flags(&mut options, FILE_FLAG_OPEN_REPARSE_POINT);
-    options.open(path)
-}
-
-#[cfg(windows)]
-const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 
 #[cfg(test)]
 #[path = "read_pulled_tests.rs"]

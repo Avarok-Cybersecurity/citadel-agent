@@ -19,14 +19,11 @@ fn home() -> (tempfile::TempDir, PathBuf, PathBuf) {
     (home, root, file)
 }
 
-/// The identity of whatever is at `path`, link or not: the escape tests hand
-/// over the identity of the very file they reach, so only confinement stops them.
+/// The identity of the file `path` reaches, links followed: the escape tests
+/// hand over the identity of the very file they reach, so only confinement
+/// stops them.
 fn id(path: &Path) -> FileIdentity {
-    FileIdentity::of(&std::fs::symlink_metadata(path).unwrap())
-}
-
-fn id_of_target(path: &Path) -> FileIdentity {
-    FileIdentity::of(&std::fs::metadata(path).unwrap())
+    FileIdentity::of(&std::fs::File::open(path).unwrap()).unwrap()
 }
 
 #[test]
@@ -65,7 +62,7 @@ fn a_traversal_out_of_the_root_is_refused() {
         traversal.exists(),
         "the path resolves, so only confinement stops it"
     );
-    let refused = read_confined(&root, &traversal, &id_of_target(&traversal), 0, 4).unwrap_err();
+    let refused = read_confined(&root, &traversal, &id(&traversal), 0, 4).unwrap_err();
     assert!(refused.contains("outside"), "{refused}");
 }
 
@@ -77,7 +74,7 @@ fn a_symlink_escaping_the_root_is_refused() {
     std::fs::write(&outside, b"keys").unwrap();
     let link = root.join("9").join("link.txt");
     std::os::unix::fs::symlink(&outside, &link).unwrap();
-    let refused = read_confined(&root, &link, &id_of_target(&link), 0, 4).unwrap_err();
+    let refused = read_confined(&root, &link, &id(&link), 0, 4).unwrap_err();
     assert!(refused.contains("outside"), "{refused}");
 }
 
@@ -90,24 +87,24 @@ fn a_symlinked_directory_escaping_the_root_is_refused() {
     std::fs::write(elsewhere.join("b.txt"), b"keys").unwrap();
     std::os::unix::fs::symlink(&elsewhere, root.join("8")).unwrap();
     let reached = root.join("8").join("b.txt");
-    assert!(read_confined(&root, &reached, &id_of_target(&reached), 0, 4).is_err());
+    assert!(read_confined(&root, &reached, &id(&reached), 0, 4).is_err());
 }
 
 #[test]
 fn a_directory_is_not_read() {
-    let (_home, root, _file) = home();
-    assert!(read_confined(&root, &root.join("9"), &id(&root.join("9")), 0, 4).is_err());
+    let (_home, root, file) = home();
+    assert!(read_confined(&root, &root.join("9"), &id(&file), 0, 4).is_err());
 }
 
 #[cfg(unix)]
 #[test]
 fn a_fifo_is_refused_without_hanging() {
-    let (_home, root, _file) = home();
+    let (_home, root, file) = home();
     let fifo = root.join("9").join("pipe");
     let c_path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
     // SAFETY: a valid NUL-terminated path; mkfifo only creates the node.
     assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
-    let refused = read_confined(&root, &fifo, &id(&fifo), 0, 4).unwrap_err();
+    let refused = read_confined(&root, &fifo, &id(&file), 0, 4).unwrap_err();
     assert!(refused.contains("not a regular file"), "{refused}");
 }
 

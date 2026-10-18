@@ -60,7 +60,7 @@ const MAX_BYTE_CONTENTS_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
 /// It equals the ceiling on one staged browser file (kernel/staged_uploads.rs),
 /// so a file at that ceiling always fits an otherwise empty root; payloads
 /// leave the root when their transfer ends (browser_payload.rs).
-pub(super) const MAX_BROWSER_TRANSFER_TOTAL_BYTES: u64 =
+pub(crate) const MAX_BROWSER_TRANSFER_TOTAL_BYTES: u64 =
     crate::kernel::staged_uploads::MAX_STAGED_UPLOAD_BYTES;
 
 /// RAII guard that releases an in-flight byte reservation (the bytes of an

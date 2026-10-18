@@ -48,6 +48,7 @@ pub(crate) mod peer_path;
 pub(crate) mod pending_group_invites;
 pub(crate) mod picked_files;
 pub(crate) mod pulled_files;
+pub(crate) mod pulled_reads;
 pub(crate) mod reconnect;
 pub mod supervisor;
 
@@ -366,6 +367,8 @@ pub struct Connection<R: Ratchet> {
     pub send_correlations: send_correlation::SendCorrelations,
     /// Browser files being staged chunk by chunk. See kernel/staged_uploads.rs.
     pub staged_uploads: staged_uploads::StagedUploads,
+    /// Files this session pulled that the page may read. See kernel/pulled_reads.rs.
+    pub(crate) pulled_reads: pulled_reads::PulledReads,
     /// The client-side password hash this session was opened with.
     ///
     /// Consulted when a later `Connect` names this session's username, so the
@@ -464,6 +467,7 @@ impl<R: Ratchet> Connection<R> {
             revfs_correlations: revfs_correlation::RevfsCorrelations::default(),
             send_correlations: send_correlation::SendCorrelations::default(),
             staged_uploads: staged_uploads::StagedUploads::default(),
+            pulled_reads: pulled_reads::PulledReads::default(),
             credential_fingerprint,
             window_relay: None,
             reconnect,

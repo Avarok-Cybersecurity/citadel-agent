@@ -121,3 +121,37 @@ fn an_owned_session_still_allows_a_read() {
     };
     assert_eq!(gate_decision(&read, Some(true)), GateDecision::Proceed);
 }
+
+/// A read of a pulled file's bytes is for the session's own windows only:
+/// refused to a connection not attached to it, and for an unmapped session,
+/// answered with its own failure carrying the request id.
+#[test]
+fn a_pulled_file_read_needs_an_owned_session() {
+    let request_id = Uuid::new_v4();
+    let read = InternalServiceRequest::ReadPulledFileChunk {
+        request_id,
+        cid: 1,
+        peer_cid: Some(2),
+        virtual_directory: "/shared/a.docx".into(),
+        offset: 0,
+        max_len: 1024,
+    };
+    for caller in [Some(false), None] {
+        assert!(matches!(
+            gate_decision(&read, caller),
+            GateDecision::Refuse { .. }
+        ));
+    }
+    assert_eq!(gate_decision(&read, Some(true)), GateDecision::Proceed);
+    let answered = refusal_response(&read, Uuid::new_v4(), REFUSED).expect("answered");
+    assert!(matches!(
+        answered.response,
+        citadel_internal_service_types::InternalServiceResponse::ReadPulledFileChunkFailure(
+            citadel_internal_service_types::ReadPulledFileChunkFailure {
+                request_id: Some(id),
+                cid: 1,
+                ..
+            }
+        ) if id == request_id
+    ));
+}

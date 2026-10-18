@@ -27,6 +27,7 @@ pub use group_responses_more::*;
 mod admission;
 mod multi_window;
 mod notices;
+mod pulled_read;
 mod server_link;
 mod sign_in;
 mod sign_in_wire;
@@ -53,6 +54,7 @@ pub use notices::{
     AccountRow, NativeNotice, NoticeFailure, NoticeKind, NoticeRows, NoticeTarget,
     NoticesHeardNotification,
 };
+pub use pulled_read::{ReadPulledFileChunkFailure, ReadPulledFileChunkSuccess};
 pub use server_link::{
     ServerConnectionLost, ServerReconnectFailed, ServerReconnected, SignedOutSession,
 };
@@ -1123,6 +1125,8 @@ pub enum InternalServiceResponse {
     SendFileRequestFailure(SendFileRequestFailure),
     StageUploadChunkSuccess(StageUploadChunkSuccess),
     StageUploadChunkFailure(StageUploadChunkFailure),
+    ReadPulledFileChunkSuccess(ReadPulledFileChunkSuccess),
+    ReadPulledFileChunkFailure(ReadPulledFileChunkFailure),
     FileTransferRequestNotification(FileTransferRequestNotification),
     FileTransferStatusNotification(FileTransferStatusNotification),
     FileTransferTickNotification(FileTransferTickNotification),
@@ -1422,6 +1426,21 @@ pub enum InternalServiceRequest {
         #[debug(with = bytes_debug_fmt)]
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
         data: Vec<u8>,
+    },
+    /// See `ReadPulledFileChunkSuccess`. Names a file this session pulled with
+    /// `DownloadFile` by the same `peer_cid` and `virtual_directory`; reads go
+    /// in order from `offset` 0, at most `max_len` bytes each.
+    ReadPulledFileChunk {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint | null"))]
+        peer_cid: Option<u64>,
+        #[cfg_attr(feature = "typescript", ts(type = "string"))]
+        virtual_directory: PathBuf,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        offset: u64,
+        max_len: u32,
     },
     RespondFileTransfer {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
@@ -2114,6 +2133,7 @@ impl InternalServiceRequest {
             Self::DeleteVirtualFile { cid, .. } => Some(*cid),
             Self::PickFile { cid, .. } => Some(*cid),
             Self::StageUploadChunk { cid, .. } => Some(*cid),
+            Self::ReadPulledFileChunk { cid, .. } => Some(*cid),
             Self::ListAllPeers { cid, .. } => Some(*cid),
             Self::ListRegisteredPeers { cid, .. } => Some(*cid),
             Self::PeerConnect { cid, .. } => Some(*cid),
@@ -2200,6 +2220,8 @@ impl InternalServiceRequest {
 #[path = "pending_invites_tests.rs"]
 mod pending_invites_tests;
 
+#[cfg(test)]
+mod pulled_read_wire_tests;
 #[cfg(test)]
 #[path = "sign_in_wire_tests.rs"]
 mod sign_in_wire_tests;

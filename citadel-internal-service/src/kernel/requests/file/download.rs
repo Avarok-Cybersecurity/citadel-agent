@@ -1,4 +1,6 @@
+use crate::kernel::pulled_reads::PulledKey;
 use crate::kernel::requests::HandledRequestResult;
+use crate::kernel::revfs_correlation::PendingPull;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -41,6 +43,15 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     // this the ticks fall back to the TCP-connection uuid, which the browser's
     // correlation never matches: the file lands on disk and the browser still
     // reports the download as failed after its 30s timeout.
+    // How the pull names its file, kept so the saved output can be read back
+    // by that name (ReadPulledFileChunk, kernel/pulled_reads.rs).
+    let pending = PendingPull {
+        request_id,
+        file: PulledKey {
+            peer_cid,
+            virtual_directory: virtual_directory.clone(),
+        },
+    };
     let pull_request: Result<NodeRequest, NetworkError> = {
         let mut lock = this.server_connection_map.write();
         match lock.get_mut(&cid) {
@@ -58,7 +69,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                         // can pull files from the peer once the P2P
                         // channel is established.
                         conn.revfs_correlations
-                            .register_pull(correlation_scope, request_id);
+                            .register_pull(correlation_scope, pending);
                         Ok(NodeRequest::PullObject(PullObject {
                             v_conn: VirtualTargetType::LocalGroupPeer {
                                 session_cid: cid,
@@ -73,7 +84,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     }
                 } else {
                     conn.revfs_correlations
-                        .register_pull(correlation_scope, request_id);
+                        .register_pull(correlation_scope, pending);
                     Ok(NodeRequest::PullObject(PullObject {
                         v_conn: *conn.client_server_remote.user(),
                         virtual_dir: virtual_directory,

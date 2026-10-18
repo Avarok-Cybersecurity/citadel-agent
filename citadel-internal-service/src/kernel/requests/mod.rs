@@ -249,6 +249,10 @@ where
             file::staged_upload::handle(this, uuid, command).await
         }
 
+        InternalServiceRequest::ReadPulledFileChunk { .. } => {
+            file::read_pulled::handle(this, uuid, command).await
+        }
+
         InternalServiceRequest::ListRegisteredPeers { .. } => {
             peer::list_registered::handle(this, uuid, command).await
         }
@@ -904,6 +908,13 @@ fn refusal_response(
             message: message.to_string(),
             request_id: Some(*request_id),
         }),
+        InternalServiceRequest::ReadPulledFileChunk {
+            request_id, cid, ..
+        } => InternalServiceResponse::ReadPulledFileChunkFailure(ReadPulledFileChunkFailure {
+            cid: *cid,
+            request_id: Some(*request_id),
+            message: message.to_string(),
+        }),
         InternalServiceRequest::Message {
             request_id, cid, ..
         }
@@ -1021,6 +1032,8 @@ pub(crate) fn requires_owned_session(command: &InternalServiceRequest) -> bool {
             // "are gated now" -- it was gated only against a session held by
             // somebody else, never against one held by nobody.
             | InternalServiceRequest::LocalDBGetKV { .. }
+            // A read of agent-local file bytes: only for the session's own windows.
+            | InternalServiceRequest::ReadPulledFileChunk { .. }
             | InternalServiceRequest::Deregister { .. } // The conversation store answers by CID from the agent's own store, not
                                                         // through `propose_target`, so a signed-out account would otherwise hand
                                                         // its history to any connection naming it.

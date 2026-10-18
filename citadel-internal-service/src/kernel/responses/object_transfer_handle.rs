@@ -78,16 +78,22 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 // failure. `peer_cid` is the same scope key download.rs
                 // registered under: the peer's cid for P2P, 0 for c2s
                 // (handle.source == C2S_IDENTITY_CID).
-                let request_id = connection.revfs_correlations.take_pull(peer_cid);
+                let pending = connection.revfs_correlations.take_pull(peer_cid);
+                let request_id = pending.as_ref().map(|pull| pull.request_id);
+                let pulled_file = pending.map(|pull| pull.file);
                 // The file the pull writes is this session's to send on
                 // (kernel/pulled_files.rs): how an owner shares a file from
-                // peer storage with the peer who holds it.
+                // peer storage with the peer who holds it. And to read into
+                // the page, by the name it was pulled with (kernel/pulled_reads.rs).
                 let connections = this.server_connection_map.clone();
                 let pick_key = request_id.unwrap_or_else(Uuid::new_v4);
                 let on_pulled: crate::kernel::pulled_files::PulledFileHook =
                     Box::new(move |info| {
                         if let Some(conn) = connections.write().get_mut(&implicated_cid) {
                             let now = info.picked_at;
+                            if let Some(file) = pulled_file {
+                                conn.pulled_reads.record(file, info.file_path.clone(), now);
+                            }
                             crate::kernel::picked_files::store(
                                 &mut conn.picked_files,
                                 pick_key,

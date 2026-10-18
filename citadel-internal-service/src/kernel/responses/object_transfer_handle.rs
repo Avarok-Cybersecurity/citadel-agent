@@ -89,10 +89,19 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 let pick_key = request_id.unwrap_or_else(Uuid::new_v4);
                 let on_pulled: crate::kernel::pulled_files::PulledFileHook =
                     Box::new(move |info| {
+                        // What the file is at completion: the folder is shared
+                        // between sessions, the file must not be.
+                        let identity =
+                            crate::kernel::requests::file::file_identity::identify(&info.file_path);
                         if let Some(conn) = connections.write().get_mut(&implicated_cid) {
                             let now = info.picked_at;
-                            if let Some(file) = pulled_file {
-                                conn.pulled_reads.record(file, info.file_path.clone(), now);
+                            if let (Some(file), Some(identity)) = (pulled_file, identity) {
+                                conn.pulled_reads.record(
+                                    file,
+                                    info.file_path.clone(),
+                                    identity,
+                                    now,
+                                );
                             }
                             crate::kernel::picked_files::store(
                                 &mut conn.picked_files,

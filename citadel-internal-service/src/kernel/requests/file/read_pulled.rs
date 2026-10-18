@@ -7,6 +7,7 @@
 //! lie inside the SDK's file-transfer directory. The size limit is checked on the
 //! opened file before any bytes are read.
 
+use super::file_identity::{is_reparse_point, open_no_follow, FileIdentity};
 use crate::kernel::pulled_reads::{plan_chunk, PulledKey};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
@@ -76,10 +77,10 @@ async fn read<T: IOInterface + Sync, R: Ratchet>(
     offset: u64,
     max_len: u32,
 ) -> Result<(u64, Vec<u8>), String> {
-    let saved = {
-        let lock = this.server_connection_map.read();
+    let ticket = {
+        let mut lock = this.server_connection_map.write();
         let conn = lock
-            .get(&cid)
+            .get_mut(&cid)
             .ok_or_else(|| "read: Server Connection Not Found".to_string())?;
         if let Some(peer_cid) = key.peer_cid {
             if !conn.peers.contains_key(&peer_cid) {
@@ -89,15 +90,21 @@ async fn read<T: IOInterface + Sync, R: Ratchet>(
         conn.pulled_reads
             .begin_read(key, offset, max_len, Instant::now())?
     };
-    let root = sdk_transfer_root(this.remote().account_manager().get_backend_type())?;
-    let (total, data) =
-        tokio::task::spawn_blocking(move || read_confined(&root, &saved, offset, max_len))
-            .await
-            .map_err(|e| format!("the read did not finish: {e}"))??;
+    let generation = ticket.generation;
+    let outcome = match sdk_transfer_root(this.remote().account_manager().get_backend_type()) {
+        Ok(root) => tokio::task::spawn_blocking(move || {
+            read_confined(&root, &ticket.saved, &ticket.identity, offset, max_len)
+        })
+        .await
+        .map_err(|e| format!("the read did not finish: {e}"))
+        .and_then(|read| read),
+        Err(e) => Err(e),
+    };
     if let Some(conn) = this.server_connection_map.write().get_mut(&cid) {
-        conn.pulled_reads.finish_read(key, offset, data.len());
+        let landed = outcome.as_ref().ok().map(|(_, data)| (offset, data.len()));
+        conn.pulled_reads.settle(key, generation, landed);
     }
-    Ok((total, data))
+    outcome
 }
 
 /// The directory the SDK saves received files under, for `backend`.
@@ -109,10 +116,12 @@ pub(crate) fn sdk_transfer_root(backend: &BackendType) -> Result<PathBuf, String
 }
 
 /// Up to `max_len` bytes of `saved` at `offset`, and its size, if `saved`
-/// resolves to a regular file inside `root`.
+/// resolves to a regular file inside `root` that is still the file `expected`
+/// identifies.
 pub(crate) fn read_confined(
     root: &Path,
     saved: &Path,
+    expected: &FileIdentity,
     offset: u64,
     max_len: u32,
 ) -> Result<(u64, Vec<u8>), String> {
@@ -130,8 +139,16 @@ pub(crate) fn read_confined(
     let metadata = file
         .metadata()
         .map_err(|e| format!("could not read the pulled file: {e}"))?;
-    if !metadata.is_file() {
+    if !metadata.is_file() || is_reparse_point(&metadata) {
         return Err("the pulled file is not a regular file".into());
+    }
+    let opened =
+        FileIdentity::of(&file).map_err(|e| format!("could not identify the pulled file: {e}"))?;
+    if opened != *expected {
+        return Err(
+            "the pulled file was replaced after this session pulled it; pull it again (DownloadFile)"
+                .into(),
+        );
     }
     let total = metadata.len();
     let len = plan_chunk(total, offset, max_len)?;
@@ -141,20 +158,6 @@ pub(crate) fn read_confined(
     file.read_exact(&mut data)
         .map_err(|e| format!("the pulled file changed while it was read: {e}"))?;
     Ok((total, data))
-}
-
-/// Opens `path` read-only, refusing a symlink swapped in after canonicalisation.
-/// Non-blocking, so a FIFO planted in the directory cannot hang the open; the
-/// regular-file check after it refuses one.
-fn open_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::custom_flags(
-        &mut options,
-        libc::O_NOFOLLOW | libc::O_NONBLOCK,
-    );
-    options.open(path)
 }
 
 #[cfg(test)]

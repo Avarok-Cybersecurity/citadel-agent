@@ -11,7 +11,7 @@ use citadel_internal_service::SERVER_RECONNECT;
 use citadel_sdk::prefabs::server::empty::EmptyKernel;
 use citadel_sdk::prelude::*;
 use citadel_user::auth::pq::admission::{
-    AdmissionContext, AdmissionPolicy, AdmissionRefusal, AdmissionToken,
+    AdmissionChallenge, AdmissionContext, AdmissionPolicy, AdmissionRefusal, AdmissionToken,
 };
 use citadel_user::auth::pq::oprf::OprfSeed;
 use citadel_user::auth::pq::record::KsfParams;
@@ -44,13 +44,19 @@ pub fn spawn_guarded_server() -> SocketAddr {
 
 pub const GOOD_TOKEN: &str = "turnstile-ok";
 
+/// The check the guarded server's `admission_required` refusal publishes (public values).
+pub const SITE_KEY: &str = "1x00000000000000000000AA";
+pub const IDENTITY: &str = "test-workspace";
+
 struct Turnstile;
 
 #[citadel_sdk::async_trait]
 impl AdmissionPolicy for Turnstile {
     async fn admit(&self, ctx: AdmissionContext) -> Result<(), AdmissionRefusal> {
         match ctx.token.as_ref().map(AdmissionToken::as_str) {
-            None => Err(AdmissionRefusal::Required),
+            None => Err(AdmissionRefusal::Required(Some(
+                AdmissionChallenge::turnstile(SITE_KEY, Some(IDENTITY.to_string())),
+            ))),
             Some(GOOD_TOKEN) => Ok(()),
             Some(_) => Err(AdmissionRefusal::Failed("invalid-input-response".into())),
         }

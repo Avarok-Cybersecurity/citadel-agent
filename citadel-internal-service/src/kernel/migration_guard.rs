@@ -53,6 +53,7 @@ impl<T: IOInterface + Sync, R: Ratchet> CitadelWorkspaceService<T, R> {
             message: OLDER_PAGE.to_string(),
             request_id: Some(request_id),
             reason_code: None,
+            admission_challenge: None,
         });
         Some(HandledRequestResult {
             response,

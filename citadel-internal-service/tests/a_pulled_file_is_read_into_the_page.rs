@@ -38,15 +38,18 @@ async fn next(svc: &mut UnboundedReceiver<InternalServiceResponse>) -> InternalS
         .expect("the service hung up")
 }
 
-async fn to_terminal(svc: &mut UnboundedReceiver<InternalServiceResponse>) {
+/// Ticks until the stream's terminal, returning where a reception saved.
+async fn to_terminal(svc: &mut UnboundedReceiver<InternalServiceResponse>) -> Option<PathBuf> {
+    let mut saved = None;
     loop {
         if let InternalServiceResponse::FileTransferTickNotification(
             FileTransferTickNotification { status, .. },
         ) = next(svc).await
         {
             match status {
+                ObjectTransferStatus::ReceptionBeginning(path, _) => saved = Some(path),
                 ObjectTransferStatus::ReceptionComplete
-                | ObjectTransferStatus::TransferComplete => return,
+                | ObjectTransferStatus::TransferComplete => return saved,
                 ObjectTransferStatus::Fail(err) => panic!("transfer failed: {err}"),
                 _ => {}
             }
@@ -137,7 +140,9 @@ async fn a_pulled_file_is_read_whole_and_only_by_its_owner() -> Result<(), Box<d
         request_id: Uuid::new_v4(),
     })?;
     to_terminal(from_b).await;
-    to_terminal(from_a).await;
+    let saved = to_terminal(from_a)
+        .await
+        .expect("the pull names where it saved");
 
     // Read it whole, in small chunks so the order rule is exercised.
     let step: u32 = 3;
@@ -218,6 +223,18 @@ async fn a_pulled_file_is_read_whole_and_only_by_its_owner() -> Result<(), Box<d
     assert!(
         matches!(&not_owned, Err(m) if m.contains("Session unavailable")),
         "{not_owned:?}"
+    );
+
+    // Another account on this agent pulls a same-named file from the same
+    // source: the SDK writes it over this one. A's read must not return it.
+    let mut theirs = expected.clone();
+    theirs.reverse();
+    std::fs::remove_file(&saved)?;
+    std::fs::write(&saved, &theirs)?;
+    let replaced = read_chunk(to_a, from_a, cid_a, Some(cid_b), &virtual_path, 0, step).await;
+    assert!(
+        matches!(&replaced, Err(m) if m.contains("replaced")),
+        "{replaced:?}"
     );
     Ok(())
 }

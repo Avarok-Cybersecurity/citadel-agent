@@ -1,6 +1,7 @@
 pub(crate) mod browser_payload;
 pub mod delete_virtual_file;
 pub mod download;
+pub mod file_identity;
 pub mod pick_file;
 pub mod read_pulled;
 pub mod respond_file_transfer;

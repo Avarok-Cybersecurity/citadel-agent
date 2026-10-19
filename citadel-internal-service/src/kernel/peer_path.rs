@@ -58,17 +58,47 @@ impl PathWatch {
             Signal::PeerUp(peer_cid, path_report(self.rx.borrow().path)),
         );
         crate::telemetry::span::spawn_in_current_span(async move {
+            let mut previous = *self.rx.borrow();
             while self.rx.changed().await.is_ok() {
                 let status = *self.rx.borrow_and_update();
                 let Some(notification) = notification(cid, peer_cid, status) else {
                     break;
                 };
+                if lost_its_direct_route(previous, status) {
+                    ask_for_udp_back(&supervisors, cid, peer_cid);
+                }
+                previous = status;
                 supervisors.signal(cid, Signal::PeerPath(peer_cid, path_report(status.path)));
                 if route.send(notification).is_empty() {
                     info!(target: "citadel", "[PeerPath] No localhost connection owns CID {cid}; path change for peer {peer_cid} dropped");
                 }
             }
         });
+    }
+}
+
+/// Whether this change is a live connection's direct (or TURN) route ending: it fell back to
+/// the server relay, and the UDP channel went with the route.
+pub(crate) fn lost_its_direct_route(previous: P2pPathStatus, now: P2pPathStatus) -> bool {
+    previous.is_p2p() && !now.is_p2p() && !now.closed
+}
+
+/// The SDK retries a lost route on its own, a couple of seconds later, but a retry brings the
+/// UDP channel back only when asked; otherwise the route returns without it and the call on it
+/// stays silent for as long as the connection lasts. Asking now, before that first retry's
+/// rendezvous, makes it the one that restores UDP (a connection that began without UDP is not
+/// given one: the SDK restores only what the connection began with).
+fn ask_for_udp_back(supervisors: &Supervisors, cid: u64, peer_cid: u64) {
+    let Some(control) = supervisors.path_control(cid, peer_cid) else {
+        return;
+    };
+    match control.upgrade(true) {
+        Ok(()) => {
+            info!(target: "citadel", "[PeerPath] {cid}: route to {peer_cid} fell back; asked for its UDP channel back")
+        }
+        Err(err) => {
+            warn!(target: "citadel", "[PeerPath] {cid}: route to {peer_cid} fell back; UDP cannot be restored: {err:?}")
+        }
     }
 }
 
@@ -143,6 +173,20 @@ mod tests {
         assert_eq!(n.path, P2pPathReport::Direct);
         assert!(!n.upgrading);
         assert_eq!(n.request_id, None);
+    }
+
+    #[test]
+    fn only_a_fall_back_from_a_p2p_route_asks_for_udp() {
+        let relay = status(P2pPath::ServerRelay, true, false);
+        let direct = status(P2pPath::Direct, false, false);
+        assert!(lost_its_direct_route(direct, relay), "a fall-back");
+        assert!(!lost_its_direct_route(relay, direct), "the first upgrade");
+        assert!(!lost_its_direct_route(relay, relay), "still on the relay");
+        let closed = status(P2pPath::ServerRelay, false, true);
+        assert!(
+            !lost_its_direct_route(direct, closed),
+            "the connection ended"
+        );
     }
 
     #[test]

@@ -13,10 +13,10 @@
 //! [`DenyReason`] inside is for the operator's log and for tests; it never reaches the app.
 //!
 //! What is refused whatever the grant, `net.host.private` included:
-//! - the agent's own port ([`AGENT_PORT`]) on any loopback or unspecified address, and the
-//!   name the page uses to reach it ([`AGENT_LOOPBACK_HOST`] and every name below it);
+//! - the agent's own port ([`AGENT_PORT`]) on any address, and the name the page uses to reach
+//!   it ([`AGENT_LOOPBACK_HOST`] and every name below it);
 //! - the page's own origin host;
-//! - cloud metadata endpoints (`169.254.169.254`, `fd00:ec2::254`);
+//! - cloud metadata endpoints (`169.254.169.254`, `100.100.100.200`, `fd00:ec2::254`);
 //! - addresses that are not unicast (this-network, multicast, broadcast, reserved,
 //!   documentation, benchmarking, IETF protocol assignments, Teredo, discard).
 //!
@@ -34,13 +34,14 @@ mod url;
 #[cfg(test)]
 mod tests;
 
-pub use decide::{decide, decide_redirect, Allowed, DenyReason, EgressRequest, Verdict};
+pub use decide::{decide, decide_redirect, Allowed, DenyReason, EgressRequest, Verdict, METHODS};
 pub use grant::{AllowedHost, Deployment, Egress, GrantFault, NetGrant};
 pub use headers::ALLOWED_HEADERS;
 pub use ranges::{canonical, classify, AddressClass, ForbiddenRange, PrivateRange};
 pub use url::{Scheme, TargetUrl, UrlFault};
 
-/// The local agent's port. Never reachable by an app, on any loopback address.
+/// The local agent's port. Never reachable by an app, on any address: the agent binds loopback,
+/// and a LAN or container address carrying the port may be another member's agent.
 pub const AGENT_PORT: u16 = 12345;
 /// The name the hosted page reaches the local agent by (it resolves to loopback). Refused, with
 /// every name below it, whatever the grant.

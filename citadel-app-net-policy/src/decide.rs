@@ -14,7 +14,8 @@ const METADATA: [IpAddr; 3] = [
     IpAddr::V6(Ipv6Addr::new(0xfd00, 0xec2, 0, 0, 0, 0, 0, 0x254)),
 ];
 
-const METHODS: [&str; 6] = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"];
+/// The request methods an app may use, for egress and for internal-HTTP routes alike.
+pub const METHODS: [&str; 6] = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"];
 
 /// What an app asked for.
 #[derive(Debug, Clone, Copy)]

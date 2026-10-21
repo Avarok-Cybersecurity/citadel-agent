@@ -8,4 +8,9 @@
  * the session's ILM. A client that declares nothing is treated as one that
  * predates this (citadel-workspace `docs/plans/multi-window-sessions.md`).
  */
-export type ClientCapabilities = { agent_ilm: boolean, };
+export type ClientCapabilities = { agent_ilm: boolean, 
+/**
+ * This window hosts Citadel apps and takes `IhttpFrameNotification`s. Only such windows
+ * are given one; an older client's declaration has no such field, which is `false`.
+ */
+ihttp?: boolean, };

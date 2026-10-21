@@ -6,19 +6,26 @@ use super::transport::AgentTransport;
 use super::HostIo;
 use citadel_internal_service_connector::messenger::backend::CitadelWorkspaceBackend;
 use citadel_internal_service_connector::messenger::{
-    wire, CompressionHint, WrappedMessage, ACCOUNT_ILM_OPTIONS,
+    wire, CompressionHint, IlmOptions, WrappedMessage, ACCOUNT_ILM_OPTIONS,
 };
 use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, MessageNotification, SecurityLevel,
 };
 use citadel_sdk::logging::{error, info};
-use intersession_layer_messaging::{BackendError, InboundFrame, ILM};
+use intersession_layer_messaging::{BackendError, InboundFrame, PeerCapabilities, ILM};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
+
+/// The account options, and internal HTTP: the agent validates every `citadel-ihttp/1`
+/// envelope before a window sees one (kernel/apps/ihttp), so its ILM may say it reads them.
+pub(crate) const AGENT_ILM_OPTIONS: IlmOptions = IlmOptions {
+    internal_http: true,
+    ..ACCOUNT_ILM_OPTIONS
+};
 
 pub(crate) type AgentIlm =
     ILM<WrappedMessage, CitadelWorkspaceBackend<AgentChannel>, AgentDelivery, AgentTransport>;
@@ -37,10 +44,15 @@ impl IlmHost {
         let backend = CitadelWorkspaceBackend::with_channel(cid, AgentChannel::new(io.clone()));
         let (transport, inbound) = AgentTransport::new(cid, io.clone());
         let delivery = AgentDelivery { cid, io };
-        let ilm = ILM::new(backend, delivery, transport, ACCOUNT_ILM_OPTIONS)
+        let ilm = ILM::new(backend, delivery, transport, AGENT_ILM_OPTIONS)
             .await
             .map_err(|err: BackendError<WrappedMessage>| format!("{err:?}"))?;
         Ok(Self { cid, ilm, inbound })
+    }
+
+    /// What `peer_cid`'s ILM last advertised, as far as this one also offers it.
+    pub(crate) fn peer_capabilities(&self, peer_cid: u64) -> PeerCapabilities {
+        self.ilm.peer_capabilities(peer_cid)
     }
 
     /// Queue `message` for `peer_cid`. `Ok` means ILM has it and will keep

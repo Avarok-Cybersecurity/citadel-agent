@@ -54,7 +54,11 @@ where
         let this = self.clone();
         Box::pin(async move {
             debug_assert_eq!(notification.cid, cid);
-            this.conversations.delivered(&this, notification).await
+            // Internal HTTP is the app hosts', never the conversation store's.
+            match this.deliver_ihttp(notification) {
+                Ok(()) => true,
+                Err(notification) => this.conversations.delivered(&this, notification).await,
+            }
         })
     }
 }

@@ -113,3 +113,32 @@ async fn what_is_not_an_ilm_frame_is_handed_back() {
     host(&alice).await;
     assert!(handed_back(alice.registry.feed(raw.clone())), "not a frame");
 }
+
+/// Two agent-hosted ILMs tell each other, over the real wire encoding, that they read
+/// internal HTTP; a browser-hosted ILM's options never say so.
+#[tokio::test]
+async fn agent_hosted_ilms_learn_that_each_other_carries_internal_http() {
+    use citadel_internal_service_connector::messenger::ACCOUNT_ILM_OPTIONS;
+    const { assert!(registry::AGENT_ILM_OPTIONS.internal_http) };
+    const { assert!(!ACCOUNT_ILM_OPTIONS.internal_http) };
+
+    let (mut alice, mut bob) = pair();
+    let (a, b) = (host(&alice).await, host(&bob).await);
+    assert!(!a.peer_capabilities(BOB).carries_internal_http());
+    for _ in 0..3 {
+        send(&a, BOB, b"ping").await;
+        next(&mut bob.delivered).await;
+        send(&b, ALICE, b"pong").await;
+        next(&mut alice.delivered).await;
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while !(a.peer_capabilities(BOB).carries_internal_http()
+        && b.peer_capabilities(ALICE).carries_internal_http())
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the advertisement never arrived"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}

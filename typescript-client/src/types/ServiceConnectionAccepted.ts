@@ -29,4 +29,10 @@ stages_uploads: boolean,
  * shows its in-page picker instead of a button that cannot work. Absent from an older
  * agent's greeting, which is what `false` means.
  */
-native_picker: boolean, };
+native_picker: boolean, 
+/**
+ * This agent takes a window's console lines (`BrowserConsole`) into the session's opt-in
+ * diagnostic logs. Absent from an older agent's greeting, which is what `false` means: a
+ * window never sends that agent a request it cannot parse.
+ */
+browser_console: boolean, };

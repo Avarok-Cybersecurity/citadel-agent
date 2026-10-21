@@ -3,6 +3,7 @@
 //! No clock, no randomness, no locking: the shell supplies the time on each event and a
 //! fresh salt on each opt-in and drain.
 
+use super::browser::BrowserPacer;
 use super::config::{RingConfig, TelemetryError};
 use super::entry::{CapturedEvent, TelemetryEntry};
 use super::redact::{cid_tokens, redact_with_sessions, KnownValue, Salt};
@@ -28,6 +29,8 @@ struct Ring {
     entries: VecDeque<TelemetryEntry>,
     bytes: usize,
     salt: Salt,
+    /// Opens with the opt-in and goes with it, like everything else the ring holds.
+    browser: BrowserPacer,
 }
 
 impl CollectorCore {
@@ -75,6 +78,7 @@ impl CollectorCore {
             entries: VecDeque::new(),
             bytes: 0,
             salt,
+            browser: BrowserPacer::default(),
         });
         Ok(())
     }
@@ -216,6 +220,8 @@ impl Ring {
         self.entries.push_back(entry);
     }
 }
+
+mod browser;
 
 #[cfg(test)]
 mod tests;

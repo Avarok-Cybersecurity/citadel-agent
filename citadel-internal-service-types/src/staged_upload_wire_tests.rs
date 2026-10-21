@@ -8,7 +8,7 @@ use uuid::Uuid;
 #[test]
 fn this_agent_s_greeting_offers_staged_uploads() {
     let InternalServiceResponse::ServiceConnectionAccepted(greeting) =
-        ServiceConnectionAccepted::greeting(Uuid::nil(), false, false)
+        ServiceConnectionAccepted::greeting(Uuid::nil(), false, false, false)
     else {
         panic!("not a greeting")
     };
@@ -24,7 +24,7 @@ fn an_older_agent_s_greeting_does_not() {
 
 fn greeting(native_picker: bool) -> ServiceConnectionAccepted {
     let InternalServiceResponse::ServiceConnectionAccepted(greeting) =
-        ServiceConnectionAccepted::greeting(Uuid::nil(), false, native_picker)
+        ServiceConnectionAccepted::greeting(Uuid::nil(), false, native_picker, false)
     else {
         panic!("not a greeting")
     };

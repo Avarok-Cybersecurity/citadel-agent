@@ -3,10 +3,12 @@
 //!
 //! Nothing here touches the disk. A ring lives only in this process's memory.
 
+use super::browser::BrowserLimits;
 use super::config::{RingConfig, TelemetryError};
 use super::core::CollectorCore;
 use super::entry::{CapturedEvent, TelemetryEntry};
 use super::redact::{KnownValue, Salt};
+use citadel_internal_service_types::BrowserConsoleEntry;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -70,6 +72,19 @@ impl TelemetryCollector {
 
     pub fn is_capturing(&self) -> bool {
         self.capturing.load(Ordering::Relaxed)
+    }
+
+    /// A window's console lines for `cid` at `time_ms`; see `CollectorCore::capture_browser`.
+    pub fn capture_browser(
+        &self,
+        cid: u64,
+        time_ms: u64,
+        entries: &[BrowserConsoleEntry],
+        limits: &BrowserLimits,
+    ) -> usize {
+        self.core
+            .lock()
+            .capture_browser(cid, time_ms, entries, limits)
     }
 
     pub(super) fn capture(&self, event: &CapturedEvent<'_>) {

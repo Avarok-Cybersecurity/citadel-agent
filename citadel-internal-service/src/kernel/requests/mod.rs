@@ -20,6 +20,7 @@ pub(crate) struct HandledRequestResult {
 }
 
 mod agent_own;
+mod browser_console;
 mod connect;
 pub(crate) mod connect_mode;
 mod conversation;
@@ -348,6 +349,8 @@ where
         InternalServiceRequest::SignInManagement { .. } => {
             sign_in_management::handle(this, uuid, command).await
         }
+
+        InternalServiceRequest::BrowserConsole { .. } => browser_console::handle(this, command),
 
         InternalServiceRequest::Batched {
             request_id,
@@ -987,10 +990,13 @@ fn refusal_response(
         // RespondFileTransfer / PeerRegisterRespond answer over their own
         // notification streams rather than a request/response pair.
         //
+        // BrowserConsole is fire-and-forget: no window waits on an answer to it.
+        //
         // Named individually so the exhaustiveness test below can assert this
         // list and nothing wider: a variant added to the gate without a
         // decision fails that test rather than joining a silent default.
-        InternalServiceRequest::GroupListGroupsFor { .. }
+        InternalServiceRequest::BrowserConsole { .. }
+        | InternalServiceRequest::GroupListGroupsFor { .. }
         | InternalServiceRequest::MediaOpen { .. }
         | InternalServiceRequest::MediaClose { .. }
         | InternalServiceRequest::MediaSend { .. }
@@ -1034,6 +1040,8 @@ pub(crate) fn requires_owned_session(command: &InternalServiceRequest) -> bool {
             | InternalServiceRequest::LocalDBGetKV { .. }
             // A read of agent-local file bytes: only for the session's own windows.
             | InternalServiceRequest::ReadPulledFileChunk { .. }
+            // A write into the account's diagnostic logs: only from its own windows.
+            | InternalServiceRequest::BrowserConsole { .. }
             | InternalServiceRequest::Deregister { .. } // The conversation store answers by CID from the agent's own store, not
                                                         // through `propose_target`, so a signed-out account would otherwise hand
                                                         // its history to any connection naming it.

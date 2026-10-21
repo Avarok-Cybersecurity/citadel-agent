@@ -132,7 +132,8 @@ where
     }
 }
 
-fn now_ms() -> u64 {
+/// The wall clock, in Unix milliseconds: the one clock read every captured line is stamped by.
+pub(super) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| {

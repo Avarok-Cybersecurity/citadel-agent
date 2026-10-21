@@ -1,0 +1,16 @@
+[package]
+name = "citadel-app-abi-inspect"
+version = "0.1.0"
+edition = "2021"
+description = "Pure inspection of a Citadel app's wasm against citadel_app_abi_1 and its manifest's declared capabilities: imports, exports, memory, and the verdict."
+
+# No `workspace = true` keys: citadel-workspace (the kernel, apps/sdk-fixtures) depends on this
+# crate by path. Native/host only: never linked into a guest app.
+[dependencies]
+citadel-app-sdk-types = { path = "../citadel-app-sdk-types" }
+# Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT. No randomized hashing (no
+# hash-collections), no component model.
+wasmparser = { version = "0.244", default-features = false, features = ["std", "validate", "features", "simd"] }
+
+[dev-dependencies]
+wat = "1.244"

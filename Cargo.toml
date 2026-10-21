@@ -9,6 +9,8 @@ members = [
     "citadel-internal-service/tests/common",
     "service",
     "citadel-release-signature",
+    "citadel-app-sdk-types",
+    "citadel-app-abi-inspect",
     "intersession-layer-messaging", 
     "citadel-internal-service-wasm-client",
 ]

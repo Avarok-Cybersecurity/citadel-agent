@@ -1,0 +1,18 @@
+[package]
+name = "citadel-app-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "The guest SDK for Citadel apps: the citadel_app_abi_1 exports, the alloc protocol and safe, synchronous wrappers over every capability group."
+
+# Its own workspace: this crate builds for wasm32-unknown-unknown only (and natively for its own
+# unit tests), so it cannot sit in a workspace whose `clippy --workspace` builds natively.
+[workspace]
+
+# Doctests would build the library natively, where it refuses to compile; the unit tests are in
+# the crate (cfg(test)).
+[lib]
+doctest = false
+
+[dependencies]
+citadel-app-sdk-types = { path = "../citadel-app-sdk-types" }
+serde = { version = "1.0.219", default-features = false, features = ["alloc"] }

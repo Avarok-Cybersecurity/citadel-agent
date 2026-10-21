@@ -1,0 +1,11 @@
+[package]
+name = "citadel-app-net-policy"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The SSRF policy for a Citadel app's network egress: which request may leave, to which checked addresses."
+
+# Pure, std only, no dependencies: the agent (host egress), the native kernel and the server's
+# wasm build (server egress) all decide with this one policy. No `workspace = true` keys, so the
+# parent workspace and the tenant worker can depend on it by path.
+[dependencies]

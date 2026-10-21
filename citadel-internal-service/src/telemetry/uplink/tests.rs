@@ -7,7 +7,7 @@
 
 use super::*;
 use crate::telemetry::span::session_span;
-use crate::telemetry::{KnownValue, RedactionKind, RingConfig, TelemetryLayer};
+use crate::telemetry::{BrowserLimits, KnownValue, RedactionKind, RingConfig, TelemetryLayer};
 use citadel_sdk::logging::tracing::{self, Instrument};
 use parking_lot::Mutex;
 use tracing_subscriber::layer::SubscriberExt;
@@ -191,4 +191,39 @@ fn unrelated_frames_and_stored_answers() {
     assert!(
         TelemetryUplink::new(uplink.collector().clone(), Arc::new(Codec), Duration::ZERO).is_err()
     );
+}
+
+fn console_line(message: &str) -> Vec<BrowserConsoleEntry> {
+    vec![BrowserConsoleEntry {
+        source: citadel_internal_service_types::BrowserConsoleSource::ConsoleError,
+        message: message.into(),
+        stack: None,
+        repeats: 1,
+    }]
+}
+
+#[tokio::test]
+async fn a_window_s_lines_follow_the_server_s_consent_and_nothing_else() {
+    let unconfigured = uplink();
+    unconfigured.on_server_frame(ALICE, b"allowed");
+    assert!(!unconfigured.takes_browser_console());
+    assert_eq!(unconfigured.browser_console(ALICE, &console_line("x")), 0);
+
+    let limits = BrowserLimits::new(10, 1_000, 10, 1_000).unwrap();
+    let uplink = uplink().with_browser_console(limits);
+    assert!(uplink.takes_browser_console());
+    assert_eq!(uplink.browser_console(ALICE, &console_line("early")), 0);
+    uplink.on_server_frame(ALICE, b"allowed");
+    assert_eq!(
+        uplink.browser_console(ALICE, &console_line("alice clicked")),
+        1
+    );
+    assert_eq!(uplink.browser_console(BOB, &console_line("bob clicked")), 0);
+    let link = Link::default();
+    uplink.flush(&link).await;
+    let sent = sent(&link);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert!(sent[0].1.ends_with(" clicked") && !sent[0].1.contains("alice"));
+    uplink.on_server_frame(ALICE, b"denied");
+    assert_eq!(uplink.browser_console(ALICE, &console_line("late")), 0);
 }

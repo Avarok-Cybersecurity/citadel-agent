@@ -31,6 +31,7 @@ pub trait IOInterfaceExt: IOInterface {
         orphan_sessions: Arc<RwLock<HashMap<Uuid, bool>>>,
         capabilities: Arc<RwLock<HashMap<Uuid, ClientCapabilities>>>,
         supervises_p2p: bool,
+        browser_console: bool,
     ) {
         tokio::task::spawn(async move {
             let write_task = async {
@@ -38,6 +39,7 @@ pub trait IOInterfaceExt: IOInterface {
                     conn_id,
                     supervises_p2p,
                     cfg!(feature = "native-dialogs"),
+                    browser_console,
                 );
 
                 if let Err(err) = sink_send_payload::<Self>(response, &mut sink).await {

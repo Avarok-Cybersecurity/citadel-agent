@@ -5,7 +5,9 @@
 //! - `layer`: the tracing layer that reads them.
 //! - `core`: the pure collector; `collector`: its lock-and-randomness shell.
 //! - `redact`: pure redaction rules.
+//! - `browser`: a window's console lines, taken into the same rings.
 
+pub mod browser;
 pub mod collector;
 pub mod config;
 mod core;
@@ -15,6 +17,7 @@ pub mod redact;
 pub mod span;
 pub mod uplink;
 
+pub use browser::BrowserLimits;
 pub use collector::TelemetryCollector;
 pub use config::{RingConfig, TelemetryError};
 pub use entry::{TelemetryEntry, TelemetryLevel};

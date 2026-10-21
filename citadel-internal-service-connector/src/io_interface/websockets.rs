@@ -1060,3 +1060,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "websockets_unknown_request_tests.rs"]
+mod unknown_request_tests;

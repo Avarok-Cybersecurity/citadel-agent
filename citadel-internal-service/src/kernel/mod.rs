@@ -694,6 +694,9 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
                     self.orphan_sessions.clone(),
                     self.client_capabilities.clone(),
                     self.supervises_p2p(),
+                    self.telemetry
+                        .as_ref()
+                        .is_some_and(|uplink| uplink.takes_browser_console()),
                 );
             }
             Ok(())

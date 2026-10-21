@@ -16,6 +16,8 @@ export * from './AgentCapabilities.js';
 export * from './AttachProof.js';
 export * from './Attachment.js';
 export * from './BatchedResponseData.js';
+export * from './BrowserConsoleEntry.js';
+export * from './BrowserConsoleSource.js';
 export * from './ChatSecurityLevel.js';
 export * from './ClientCapabilities.js';
 export * from './ConfigCommand.js';

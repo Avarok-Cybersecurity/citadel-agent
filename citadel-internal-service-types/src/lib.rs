@@ -25,6 +25,7 @@ mod group_responses_more;
 pub use group_responses::*;
 pub use group_responses_more::*;
 mod admission;
+mod browser_console;
 mod multi_window;
 mod notices;
 mod pulled_read;
@@ -36,6 +37,7 @@ mod turn;
 pub use chat_level::{ChatSecurityLevel, PeerSecurityMinimum};
 mod updates;
 pub use admission::{AdmissionChallengeWire, AdmissionProviderWire};
+pub use browser_console::{BrowserConsoleEntry, BrowserConsoleSource};
 pub use conversation::{
     Attachment, ConversationMessage, ConversationMetadata, ConversationPage, MessagePatch,
     MessageStatus, MessageType, PageTimestamps, Reaction, TransferMode, TransferState,
@@ -310,16 +312,22 @@ pub struct ServiceConnectionAccepted {
     /// agent's greeting, which is what `false` means.
     #[serde(default)]
     pub native_picker: bool,
+    /// This agent takes a window's console lines (`BrowserConsole`) into the session's opt-in
+    /// diagnostic logs. Absent from an older agent's greeting, which is what `false` means: a
+    /// window never sends that agent a request it cannot parse.
+    #[serde(default)]
+    pub browser_console: bool,
 }
 
 impl ServiceConnectionAccepted {
     /// What this agent says first on every socket: it hosts (0.8.6), stages browser
     /// uploads, supervises peer connections when `supervises_p2p`, and offers a native
-    /// file dialog when `native_picker`.
+    /// file dialog when `native_picker`, and takes console lines when `browser_console`.
     pub fn greeting(
         connection: Uuid,
         supervises_p2p: bool,
         native_picker: bool,
+        browser_console: bool,
     ) -> InternalServiceResponse {
         InternalServiceResponse::ServiceConnectionAccepted(Self {
             cid: 0,
@@ -328,6 +336,7 @@ impl ServiceConnectionAccepted {
             supervises_p2p,
             stages_uploads: true,
             native_picker,
+            browser_console,
         })
     }
 }
@@ -1914,6 +1923,14 @@ pub enum InternalServiceRequest {
         op: SignInManagementOp,
         step_up: StepUp,
     },
+    /// Lines of this window's console for the session's opt-in diagnostic logs; see
+    /// `browser_console.rs`. Answered with nothing: a window waits on no reply.
+    BrowserConsole {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        entries: Vec<BrowserConsoleEntry>,
+    },
     /// Execute multiple requests in parallel, returning results in the same order as input.
     /// This enables single-roundtrip batch operations for efficiency.
     Batched {
@@ -2171,6 +2188,7 @@ impl InternalServiceRequest {
             | Self::SetAccountPreferences { cid, .. }
             | Self::GetAccountPreferences { cid, .. } => Some(*cid),
             Self::SignInManagement { cid, .. } => Some(*cid),
+            Self::BrowserConsole { cid, .. } => Some(*cid),
             // Exhaustive on purpose: no `_` arm.
             //
             // The catch-all made this gate fail OPEN by omission — a variant
@@ -2220,6 +2238,8 @@ impl InternalServiceRequest {
 #[path = "pending_invites_tests.rs"]
 mod pending_invites_tests;
 
+#[cfg(test)]
+mod browser_console_wire_tests;
 #[cfg(test)]
 mod pulled_read_wire_tests;
 #[cfg(test)]

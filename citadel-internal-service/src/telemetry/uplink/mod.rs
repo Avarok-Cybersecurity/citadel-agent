@@ -14,8 +14,11 @@ mod kernel;
 
 pub(crate) use kernel::run;
 
+use super::browser::BrowserLimits;
 use super::collector::TelemetryCollector;
 use super::entry::TelemetryEntry;
+use super::layer::now_ms;
+use citadel_internal_service_types::BrowserConsoleEntry;
 use citadel_sdk::logging::warn;
 use futures::future::BoxFuture;
 use std::sync::Arc;
@@ -54,6 +57,8 @@ pub struct TelemetryUplink {
     collector: Arc<TelemetryCollector>,
     codec: Arc<dyn TelemetryCodec>,
     flush_interval: Duration,
+    /// `None` until the shipped binary configures it: then windows are told they may send.
+    browser: Option<BrowserLimits>,
 }
 
 impl TelemetryUplink {
@@ -71,6 +76,26 @@ impl TelemetryUplink {
             collector,
             codec,
             flush_interval,
+            browser: None,
+        })
+    }
+
+    /// Take windows' console lines into their sessions' rings, within `limits`.
+    pub fn with_browser_console(mut self, limits: BrowserLimits) -> Self {
+        self.browser = Some(limits);
+        self
+    }
+
+    /// Whether the greeting tells windows they may send console lines.
+    pub fn takes_browser_console(&self) -> bool {
+        self.browser.is_some()
+    }
+
+    /// A window's console lines for `cid`, stamped now; how many were kept.
+    pub fn browser_console(&self, cid: u64, entries: &[BrowserConsoleEntry]) -> usize {
+        self.browser.as_ref().map_or(0, |limits| {
+            self.collector
+                .capture_browser(cid, now_ms(), entries, limits)
         })
     }
 

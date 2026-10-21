@@ -11,6 +11,7 @@
 //! (the agent itself, the page's own origin, cloud metadata, non-unicast) is refused whatever
 //! the grant says.
 
+use crate::plaintext_debug_fmt;
 use custom_debug::Debug;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -61,7 +62,7 @@ pub struct AppHttpRequest {
     pub url: String,
     pub headers: Vec<AppHttpHeader>,
     #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
-    #[debug(with = crate::plaintext_debug_fmt)]
+    #[debug(with = plaintext_debug_fmt)]
     pub body: Vec<u8>,
 }
 
@@ -122,7 +123,7 @@ pub struct AppFetchResponse {
     pub status: u16,
     pub headers: Vec<AppHttpHeader>,
     #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
-    #[debug(with = crate::plaintext_debug_fmt)]
+    #[debug(with = plaintext_debug_fmt)]
     pub body: Vec<u8>,
     /// Redirects followed, each decided again by the policy.
     pub redirects: u8,
@@ -164,7 +165,7 @@ pub struct AppFetchStreamChunk {
     /// From 0, increasing by one.
     pub seq: u32,
     #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
-    #[debug(with = crate::plaintext_debug_fmt)]
+    #[debug(with = plaintext_debug_fmt)]
     pub bytes: Vec<u8>,
 }
 
@@ -199,4 +200,28 @@ pub struct AppNetUsage {
     pub requests: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub refused: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Responses and requests are logged whole at debug level: an app's own credentials and
+    /// bodies must not be in that log.
+    #[test]
+    fn credentials_and_bodies_never_print() {
+        let request = AppHttpRequest {
+            method: "POST".into(),
+            url: "https://api.acme.com/".into(),
+            headers: vec![AppHttpHeader {
+                name: "authorization".into(),
+                value: "Bearer hunter2".into(),
+            }],
+            body: b"top secret".to_vec(),
+        };
+        let printed = format!("{request:?}");
+        assert!(!printed.contains("hunter2"), "{printed}");
+        assert!(!printed.contains("116, 111, 112"), "{printed}");
+        assert!(printed.contains("authorization"));
+    }
 }

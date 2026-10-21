@@ -7,6 +7,7 @@
 //! `ClientCapabilities::ihttp`. The agent never reads the HTTP inside: routes, streams, credit
 //! and status are the app hosts' business at either end.
 
+use crate::plaintext_debug_fmt;
 use custom_debug::Debug;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -67,7 +68,7 @@ pub struct IhttpFrameNotification {
     pub peer_cid: u64,
     /// One CBOR `IhttpFrame`, already validated.
     #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
-    #[debug(with = crate::plaintext_debug_fmt)]
+    #[debug(with = plaintext_debug_fmt)]
     pub frame: Vec<u8>,
     pub request_id: Option<Uuid>,
 }

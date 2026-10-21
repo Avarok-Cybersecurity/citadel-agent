@@ -5,6 +5,7 @@
 //! namespace and nothing else: no key, however it is spelled, reaches another install's data or
 //! a store the agent uses for anything else.
 
+use crate::plaintext_debug_fmt;
 use custom_debug::Debug;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -45,7 +46,7 @@ pub enum AppKvOp {
     Set {
         key: String,
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
-        #[debug(with = crate::plaintext_debug_fmt)]
+        #[debug(with = plaintext_debug_fmt)]
         value: Vec<u8>,
     },
     Delete {

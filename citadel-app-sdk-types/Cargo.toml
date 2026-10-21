@@ -1,0 +1,19 @@
+[package]
+name = "citadel-app-sdk-types"
+version = "0.1.0"
+edition = "2021"
+description = "The Citadel app ABI (citadel_app_abi_1): capabilities, host calls, replies, events and the group/op numbering, shared by guest apps, the host and the kernel."
+
+# No `workspace = true` keys: the guest SDK (its own workspace) and citadel-workspace's
+# apps/sdk-fixtures depend on this crate by path and must build it without this workspace.
+#
+# no_std + alloc: the same types compile into guest apps (wasm32-unknown-unknown), the browser
+# host's bindings and the kernel. Nothing here may pull getrandom, time, C code or a -sys crate.
+[dependencies]
+serde = { version = "1.0.219", default-features = false, features = ["alloc", "derive"] }
+ciborium = { version = "0.2.2", default-features = false }
+ts-rs = { version = "11", optional = true, features = ["serde-compat"] }
+
+[features]
+# Generates the TypeScript the host consumes (bindings/), as ts-rs's export tests. Needs std.
+ts = ["dep:ts-rs"]

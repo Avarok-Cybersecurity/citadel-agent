@@ -1,0 +1,19 @@
+[package]
+name = "citadel-ihttp-types"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Internal HTTP over Citadel sessions: the CBOR frame an InternalHttpClient and InternalHttpServer exchange, and its limits."
+
+[features]
+# TypeScript bindings, committed under bindings/ and kept fresh by a test of this feature.
+typescript = ["ts-rs"]
+
+# No `workspace = true` keys, so the parent workspace and the server's wasm build can depend on
+# this crate by path. Pure and wasm32-unknown-unknown clean.
+[dependencies]
+citadel-app-id = { path = "../citadel-app-id", version = "0.1.0" }
+serde = { version = "1.0.104", features = ["derive"] }
+serde_bytes = "0.11"
+ciborium = { version = "0.2.2", default-features = false, features = ["std"] }
+ts-rs = { version = "11", optional = true, features = ["serde-compat"] }

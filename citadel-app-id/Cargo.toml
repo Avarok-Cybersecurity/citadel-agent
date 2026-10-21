@@ -1,0 +1,11 @@
+[package]
+name = "citadel-app-id"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The grammar of a Citadel app's identity: its reverse-DNS id and its version."
+
+# No dependencies, and no `workspace = true` keys: the app signature, the internal-HTTP wire
+# types, citadel-workspace-types and the kernel all read this one grammar, and the parent
+# workspace depends on it by path through the submodule.
+[dependencies]

@@ -1,27 +1,38 @@
 //! The macro that turns the op table into the group enum, the per-group op enums, the
 //! [`HostOp`](super::HostOp) impls, [`HostCall`](super::HostCall) and [`OPS`](super::OPS).
 
-macro_rules! cap_of {
+/// The capabilities any one of which admits a call: the backend's for `args`, otherwise the
+/// table's (`Cap` or `[CapA, CapB]`).
+macro_rules! granted_by {
     ($s:ident, args) => {
-        $s.required_capability()
+        $s.required_capability().alone()
     };
-    ($s:ident, $c:ident) => {
-        Capability::$c
+    ($s:ident, $c:tt) => {
+        fixed_caps!($c)
     };
 }
 
-macro_rules! fixed_cap {
+macro_rules! fixed_caps {
+    ([$($c:ident),+]) => {
+        &[$(Capability::$c),+]
+    };
+    ($c:ident) => {
+        &[Capability::$c]
+    };
+}
+
+macro_rules! op_info_caps {
     (args) => {
         None
     };
-    ($c:ident) => {
-        Some(Capability::$c)
+    ($c:tt) => {
+        Some(fixed_caps!($c))
     };
 }
 
 macro_rules! groups {
     ($($group:ident = $gnum:literal, $import:literal, $ops:ident {
-        $($op:ident = $onum:literal -> $reply:ty, $cap:ident;)*
+        $($op:ident = $onum:literal -> $reply:ty, $cap:tt;)*
     })*) => {
         /// An import group: one `(op, ptr, len) -> handle` function in the ABI namespace.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -60,8 +71,8 @@ macro_rules! groups {
                     match self { $($ops::$op(_) => $onum,)* }
                 }
 
-                pub fn capability(&self) -> Capability {
-                    match self { $($ops::$op(a) => a.capability(),)* }
+                pub fn granted_by(&self) -> &'static [Capability] {
+                    match self { $($ops::$op(a) => a.granted_by(),)* }
                 }
 
                 fn encode_args(&self) -> Vec<u8> {
@@ -85,8 +96,8 @@ macro_rules! groups {
                     const NAME: &'static str = stringify!($op);
                     type Reply = $reply;
 
-                    fn capability(&self) -> Capability {
-                        cap_of!(self, $cap)
+                    fn granted_by(&self) -> &'static [Capability] {
+                        granted_by!(self, $cap)
                     }
                 }
             )*
@@ -106,8 +117,14 @@ macro_rules! groups {
                 match self { $(HostCall::$group(c) => c.op(),)* }
             }
 
-            pub fn capability(&self) -> Capability {
-                match self { $(HostCall::$group(c) => c.capability(),)* }
+            /// Any one of these capabilities admits the call; never empty.
+            pub fn granted_by(&self) -> &'static [Capability] {
+                match self { $(HostCall::$group(c) => c.granted_by(),)* }
+            }
+
+            /// Whether an install holding what `holds` says may make this call.
+            pub fn is_granted(&self, holds: impl Fn(Capability) -> bool) -> bool {
+                self.granted_by().iter().any(|c| holds(*c))
             }
 
             /// The request payload: CBOR of the op's argument struct.
@@ -125,7 +142,7 @@ macro_rules! groups {
             group: Group::$group,
             op: $onum,
             name: stringify!($op),
-            capability: fixed_cap!($cap),
+            granted_by: op_info_caps!($cap),
         },)*)*];
 
         /// `(op name, TypeScript name of its reply)`, for `AbiConstants.ts`.

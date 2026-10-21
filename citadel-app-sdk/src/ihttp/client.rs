@@ -1,5 +1,5 @@
-//! The calling side: send a request under the server's credit, grant credit as response chunks
-//! are read, and hand the response to the app as it streams.
+//! The calling side: send a request under the server's credit, return credit (IhttpConsumed, as
+//! a server does) as response chunks are read, and hand the response to the app as it streams.
 
 use super::outbox::Outbox;
 use super::{Outbound, Response};
@@ -179,15 +179,18 @@ pub(crate) fn on_frame(
     app: &mut dyn Any,
 ) -> Option<(Caller, IhttpFrame)> {
     let k = (from.app_id.clone(), frame.stream);
-    let Some(to) = CLIENTS.with(|c| c.borrow().streams.get(&k).map(|s| s.to.clone())) else {
+    if !CLIENTS.with(|c| c.borrow().streams.contains_key(&k)) {
         return Some((from, frame));
-    };
+    }
     match frame.kind {
         FrameKind::ResponseHead(h) => deliver(&k, app, ClientEvent::Head(h), false),
         FrameKind::Body { bytes } => {
             deliver(&k, app, ClientEvent::Body(bytes.0), false);
-            let credit = IhttpFrame::new(k.1, FrameKind::Credit { n: 1 });
-            start(raw, &IhttpCall { to, frame: credit }).watch("ihttp credit");
+            let consumed = IhttpConsumed {
+                peer: from,
+                stream: k.1,
+            };
+            start(raw, &consumed).watch("ihttp consumed");
         }
         FrameKind::End => deliver(&k, app, ClientEvent::End, true),
         FrameKind::Cancel { reason } => deliver(

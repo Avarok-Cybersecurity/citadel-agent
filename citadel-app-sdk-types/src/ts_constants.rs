@@ -126,20 +126,23 @@ pub fn render() -> String {
     for b in [KvBackend::User, KvBackend::Scope, node, KvBackend::Local] {
         writeln!(o, "  {}: {},", kv_tag(&b), q(b.capability().name())).unwrap();
     }
-    writeln!(o, "}} as const;\n\n/** Every op. `capability: null` = decided by the arguments (KV_BACKEND_CAPABILITY). */").unwrap();
+    writeln!(o, "}} as const;\n\n/** Every op. `granted_by`: holding ANY ONE of these admits the call; null = decided by the arguments (KV_BACKEND_CAPABILITY). */").unwrap();
     writeln!(o, "export const OPS = [").unwrap();
     for op in OPS {
-        let cap = op.capability.map_or("null".into(), |c| q(c.name()));
+        let caps = op.granted_by.map_or("null".into(), |cs| {
+            let names: Vec<&str> = cs.iter().map(|c| c.name()).collect();
+            format!("[{}]", list(&names))
+        });
         writeln!(
             o,
-            "  {{ group: {}, op: {}, name: {}, capability: {cap} }},",
+            "  {{ group: {}, op: {}, name: {}, granted_by: {caps} }},",
             q(op.group.import_name()),
             op.op,
             q(op.name)
         )
         .unwrap();
     }
-    writeln!(o, "] as const satisfies readonly {{ group: Group; op: number; name: string; capability: Capability | null }}[];\n").unwrap();
+    writeln!(o, "] as const satisfies readonly {{ group: Group; op: number; name: string; granted_by: readonly Capability[] | null }}[];\n").unwrap();
     writeln!(
         o,
         "/** Op name -> its argument struct. */\nexport type OpArgs = {{"

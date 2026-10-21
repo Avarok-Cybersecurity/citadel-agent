@@ -16,6 +16,11 @@ macro_rules! capabilities {
         impl Capability {
             pub const ALL: &'static [Capability] = &[$(Capability::$variant,)*];
 
+            /// `[self]`, borrowed from [`Self::ALL`] (declaration order is discriminant order).
+            pub const fn alone(self) -> &'static [Capability] {
+                core::slice::from_ref(&Self::ALL[self as usize])
+            }
+
             /// The manifest name.
             pub const fn name(self) -> &'static str {
                 match self { $(Capability::$variant => $name,)* }

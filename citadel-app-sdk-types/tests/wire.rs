@@ -1,7 +1,7 @@
 //! The bytes on the wire, asserted literally: the host is written in another language from these.
 
 use citadel_app_sdk_types::calls::*;
-use citadel_app_sdk_types::ops::{CallDecodeError, NodesOps, StorageOps};
+use citadel_app_sdk_types::ops::{CallDecodeError, IhttpOps, NodesOps, StorageOps};
 use citadel_app_sdk_types::{
     decode, encode, Bytes, Capability, Group, HostCall, HostOp, HostReply, Refused,
 };
@@ -74,7 +74,7 @@ fn a_call_round_trips_through_group_op_and_payload() {
     let (group, op, bytes) = (call.group(), call.op(), call.encode_args());
     assert_eq!((group, op), (Group::Nodes, NodeCreate::OP));
     assert_eq!(HostCall::decode(group, op, &bytes).unwrap(), call);
-    assert_eq!(call.capability(), Capability::NodesWrite);
+    assert_eq!(call.granted_by(), &[Capability::NodesWrite]);
     assert_eq!(
         HostCall::decode(Group::Nodes, 99, &bytes),
         Err(CallDecodeError::UnknownOp)
@@ -91,24 +91,33 @@ fn a_kv_op_needs_the_capability_of_its_backend() {
         backend,
         key: "k".into(),
     };
-    assert_eq!(get(KvBackend::User).capability(), Capability::StorageUser);
-    assert_eq!(get(KvBackend::Scope).capability(), Capability::StorageScope);
+    assert_eq!(
+        get(KvBackend::User).granted_by(),
+        &[Capability::StorageUser]
+    );
+    assert_eq!(
+        get(KvBackend::Scope).granted_by(),
+        &[Capability::StorageScope]
+    );
     assert_eq!(
         get(KvBackend::Node {
             node_id: "n".into()
         })
-        .capability(),
-        Capability::StorageNode
+        .granted_by(),
+        &[Capability::StorageNode]
     );
-    assert_eq!(get(KvBackend::Local).capability(), Capability::StorageLocal);
+    assert_eq!(
+        get(KvBackend::Local).granted_by(),
+        &[Capability::StorageLocal]
+    );
     let call = HostCall::Storage(StorageOps::KvGet(get(KvBackend::Local)));
-    assert_eq!(call.capability(), Capability::StorageLocal);
+    assert_eq!(call.granted_by(), &[Capability::StorageLocal]);
     assert_eq!(
         BlobPut {
             bytes: Bytes::default()
         }
-        .capability(),
-        Capability::StorageBlob
+        .granted_by(),
+        &[Capability::StorageBlob]
     );
 }
 
@@ -124,4 +133,27 @@ fn ihttp_frames_keep_r4_4_variant_names_and_events_are_snake_case() {
         b"\xa1\x6breply_ready\xa1\x66handle\x03"
     );
     assert_eq!(IhttpConsumed::OP, 4);
+}
+
+/// A client reading a streamed response returns credit exactly as a server reading a request
+/// body does, so either ihttp capability admits `IhttpConsumed`; nothing else does, and the
+/// other ihttp ops stay one-sided.
+#[test]
+fn ihttp_consumed_is_granted_by_either_ihttp_capability() {
+    let peer = Caller {
+        username: "bob".into(),
+        cid: 7,
+        app_id: "com.acme.srv".into(),
+        install_id: "i".into(),
+        via: Via::P2p,
+    };
+    let consumed = HostCall::Ihttp(IhttpOps::IhttpConsumed(IhttpConsumed { peer, stream: 1 }));
+    let held = |caps: &'static [Capability]| move |c: Capability| caps.contains(&c);
+    assert!(consumed.is_granted(held(&[Capability::IhttpCall])));
+    assert!(consumed.is_granted(held(&[Capability::IhttpServe])));
+    assert!(!consumed.is_granted(held(&[])));
+    assert!(!consumed.is_granted(held(&[Capability::NetHost, Capability::Log])));
+    let serve = HostCall::Ihttp(IhttpOps::IhttpServe(IhttpServe { routes: vec![] }));
+    assert!(!serve.is_granted(held(&[Capability::IhttpCall])));
+    assert!(serve.is_granted(held(&[Capability::IhttpServe])));
 }

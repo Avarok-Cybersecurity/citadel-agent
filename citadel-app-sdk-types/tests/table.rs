@@ -114,18 +114,21 @@ fn ops_are_unique_nonzero_and_need_a_capability_of_their_own_group() {
             op.group
         );
         assert!(names.insert(op.name), "duplicate op name {}", op.name);
-        if let Some(cap) = op.capability {
-            assert_eq!(
-                cap.group(),
-                op.group,
-                "{} needs {cap:?} from another group",
-                op.name
-            );
+        if let Some(caps) = op.granted_by {
+            assert!(!caps.is_empty(), "{} can never be granted", op.name);
+            for cap in caps {
+                assert_eq!(
+                    cap.group(),
+                    op.group,
+                    "{} is granted by {cap:?} from another group",
+                    op.name
+                );
+            }
         }
     }
     let derived: Vec<&str> = OPS
         .iter()
-        .filter(|o| o.capability.is_none())
+        .filter(|o| o.granted_by.is_none())
         .map(|o| o.name)
         .collect();
     assert_eq!(
@@ -136,7 +139,11 @@ fn ops_are_unique_nonzero_and_need_a_capability_of_their_own_group() {
 
 #[test]
 fn every_granted_capability_but_the_private_network_extension_has_an_op() {
-    let used: BTreeSet<Capability> = OPS.iter().filter_map(|o| o.capability).collect();
+    let used: BTreeSet<Capability> = OPS
+        .iter()
+        .flat_map(|o| o.granted_by.unwrap_or_default())
+        .copied()
+        .collect();
     let kv = [
         Capability::StorageUser,
         Capability::StorageScope,
@@ -170,4 +177,27 @@ fn the_intrinsic_capabilities_are_the_ones_that_reach_only_the_apps_own_surface(
     let names: Vec<&str> = Capability::INTRINSIC.iter().map(|c| c.name()).collect();
     assert_eq!(names, ["canvas", "ui", "events", "navigate", "log"]);
     assert!(!Capability::NetHost.is_intrinsic());
+}
+
+#[test]
+fn only_ihttp_consumed_is_granted_by_more_than_one_capability() {
+    let any_of: Vec<(&str, &[Capability])> = OPS
+        .iter()
+        .filter_map(|o| o.granted_by.map(|caps| (o.name, caps)))
+        .filter(|(_, caps)| caps.len() > 1)
+        .collect();
+    assert_eq!(
+        any_of,
+        [(
+            "IhttpConsumed",
+            &[Capability::IhttpServe, Capability::IhttpCall][..]
+        )]
+    );
+}
+
+#[test]
+fn alone_is_the_one_capability_as_a_static_slice() {
+    for c in Capability::ALL {
+        assert_eq!(c.alone(), &[*c]);
+    }
 }

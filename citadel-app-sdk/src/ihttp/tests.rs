@@ -182,11 +182,18 @@ fn a_client_call_sends_head_body_end_and_assembles_the_response_crediting_each_c
             body: b"ok!".to_vec()
         })]
     );
-    let credits = sent::<IhttpCall>(&fake)
+    // Credit goes back the way a server returns it, never as an app-made Credit frame: the
+    // host mints Credit, and a client holding only ihttp.call may send IhttpConsumed.
+    let consumed = sent::<IhttpConsumed>(&fake);
+    assert_eq!(consumed.len(), 2);
+    assert!(consumed
+        .iter()
+        .all(|c| c.peer == server && c.stream == stream));
+    let forged = sent::<IhttpCall>(&fake)
         .into_iter()
-        .filter(|c| c.frame.kind == FrameKind::Credit { n: 1 })
+        .filter(|c| matches!(c.frame.kind, FrameKind::Credit { .. }))
         .count();
-    assert_eq!(credits, 2);
+    assert_eq!(forged, 0);
     assert!(
         feed(&fake, &mut app, &server, stream, FrameKind::End).is_some(),
         "the stream is closed"

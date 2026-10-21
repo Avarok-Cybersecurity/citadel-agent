@@ -1,5 +1,5 @@
 //! THE op table: every import group with its number, and every op with its number, argument
-//! struct, reply type and the capability it needs. Group numbers are stable indexes (the
+//! struct, reply type and the capabilities that admit it. Group numbers are stable indexes (the
 //! TypeScript host reads them from `bindings/AbiConstants.ts`); op 0 is never assigned.
 
 use crate::calls::*;
@@ -15,17 +15,20 @@ pub trait HostOp: Serialize + DeserializeOwned {
     const OP: i32;
     const NAME: &'static str;
     type Reply: Serialize + DeserializeOwned;
-    /// The capability this call needs. Fixed per op, except the KV ops, whose backend decides.
-    fn capability(&self) -> Capability;
+    /// The capabilities any ONE of which admits this call; never empty. Fixed per op, except the
+    /// KV ops, whose backend decides. Only `IhttpConsumed` has two: credit flows back from
+    /// whichever end is reading a body, a server reading a request or a client a response.
+    fn granted_by(&self) -> &'static [Capability];
 }
 
-/// A row of [`OPS`]. `capability` is `None` where the arguments decide it (the KV ops).
+/// A row of [`OPS`]. `granted_by` is any-of, and `None` where the arguments decide it (the KV
+/// ops).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpInfo {
     pub group: Group,
     pub op: i32,
     pub name: &'static str,
-    pub capability: Option<Capability>,
+    pub granted_by: Option<&'static [Capability]>,
 }
 
 /// Why `(group, op, bytes)` is not a call.
@@ -108,7 +111,7 @@ groups! {
         IhttpServe = 1 -> (), IhttpServe;
         IhttpRespond = 2 -> (), IhttpServe;
         IhttpCall = 3 -> (), IhttpCall;
-        IhttpConsumed = 4 -> (), IhttpServe;
+        IhttpConsumed = 4 -> (), [IhttpServe, IhttpCall];
     }
     Clipboard = 12, "clipboard", ClipboardOps {
         ClipboardReadText = 1 -> Text, ClipboardRead;

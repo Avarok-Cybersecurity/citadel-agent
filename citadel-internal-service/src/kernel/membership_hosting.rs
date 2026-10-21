@@ -58,6 +58,7 @@ where
             multi_window: true,
             supervises_p2p: self.supervises_p2p(),
             notices_heard: self.notices.is_heard(),
+            ihttp: true,
             request_id: Some(request_id),
         })
     }

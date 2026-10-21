@@ -48,6 +48,7 @@ async fn a_new_agent_never_sends_an_old_one_a_frame_it_cannot_read() {
     let new = IlmOptions {
         piggyback_acks: true,
         dynamic_compression: DynamicCompression::All,
+        internal_http: false,
     };
     let tally = Arc::new(Tally::default());
     let (mut fresh, mut old) = two_agents(new, IlmOptions::LEGACY, &tally).await;

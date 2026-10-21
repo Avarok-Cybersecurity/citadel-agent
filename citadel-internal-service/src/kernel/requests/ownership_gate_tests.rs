@@ -142,6 +142,8 @@ fn refuses_anything_else() {
 }
 
 #[cfg(test)]
+mod apps;
+#[cfg(test)]
 mod decisions;
 #[cfg(test)]
 mod refusals;

@@ -15,16 +15,16 @@ use uuid::Uuid;
 
 impl<T: IOInterface + Sync, R: Ratchet> ConversationKv for CitadelWorkspaceService<T, R> {
     fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, KvResult<Option<Vec<u8>>>> {
-        Box::pin(async move { HostKv(self.host_io()).get(key).await })
+        Box::pin(async move { HostKv::global(self.host_io()).get(key).await })
     }
     fn set<'a>(&'a self, key: &'a str, value: Vec<u8>) -> BoxFuture<'a, KvResult<()>> {
-        Box::pin(async move { HostKv(self.host_io()).set(key, value).await })
+        Box::pin(async move { HostKv::global(self.host_io()).set(key, value).await })
     }
     fn delete<'a>(&'a self, key: &'a str) -> BoxFuture<'a, KvResult<()>> {
-        Box::pin(async move { HostKv(self.host_io()).delete(key).await })
+        Box::pin(async move { HostKv::global(self.host_io()).delete(key).await })
     }
     fn keys(&self) -> BoxFuture<'_, KvResult<Vec<String>>> {
-        Box::pin(async move { HostKv(self.host_io()).keys().await })
+        Box::pin(async move { HostKv::global(self.host_io()).keys().await })
     }
 }
 

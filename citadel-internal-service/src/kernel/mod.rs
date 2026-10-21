@@ -35,6 +35,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot::Receiver as OneshotReceiver;
 use uuid::Uuid;
 
+pub mod apps;
+mod apps_io;
 pub(crate) mod c2s_reader;
 pub(crate) mod conversations;
 mod conversations_io;
@@ -136,6 +138,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) browser_transfers: BrowserTransferRoot,
     /// Opt-in telemetry uploads, when the shipped binary configured them (telemetry/uplink).
     pub(crate) telemetry: Option<Arc<crate::telemetry::TelemetryUplink>>,
+    /// Citadel apps: host egress, `local` storage, the internal-HTTP relay (kernel/apps).
+    pub(crate) apps: Arc<apps::AppsHost>,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -163,6 +167,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             key_challenges: self.key_challenges.clone(),
             browser_transfers: self.browser_transfers.clone(),
             telemetry: self.telemetry.clone(),
+            apps: self.apps.clone(),
             io: self.io.clone(),
         }
     }
@@ -200,6 +205,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             key_challenges: Default::default(),
             browser_transfers,
             telemetry: None,
+            apps: Default::default(),
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -216,6 +222,14 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
     /// calls this uploads nothing.
     pub fn with_telemetry(mut self, uplink: crate::telemetry::TelemetryUplink) -> Self {
         self.telemetry = Some(Arc::new(uplink));
+        self
+    }
+
+    /// Answer apps' host egress (`AppFetch`) under `config` (kernel/apps/net). A service that
+    /// never calls this, or calls it with no page origin, refuses every `AppFetch` as
+    /// `NotConfigured`.
+    pub fn with_app_net(mut self, config: apps::AppNetConfig) -> Self {
+        self.apps = Arc::new(apps::AppsHost::with_net(config));
         self
     }
 

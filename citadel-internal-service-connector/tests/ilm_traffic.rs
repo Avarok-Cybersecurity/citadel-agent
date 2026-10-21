@@ -121,6 +121,7 @@ async fn the_reductions_cut_sdk_messages_and_bytes() {
     let on = workload(IlmOptions {
         piggyback_acks: true,
         dynamic_compression: DynamicCompression::All,
+        internal_http: false,
     })
     .await;
 

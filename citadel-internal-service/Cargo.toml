@@ -77,6 +77,11 @@ sigstore-trust-root = { version = "0.14", default-features = false }
 sigstore-types = "0.14"
 # The ML-DSA-65 signature every update must carry beside its attestation (updater/release_key.rs).
 citadel-release-signature = { workspace = true }
+# Citadel apps (kernel/apps): the one SSRF policy every egress host decides with, and the
+# internal-HTTP frames the agent validates at its boundary. Both pure and std-only.
+citadel-app-id = { workspace = true }
+citadel-app-net-policy = { workspace = true }
+citadel-ihttp-types = { workspace = true }
 # Probing whether the install location is writable, and atomic temporary files beside it.
 tempfile = "3"
 
@@ -105,6 +110,8 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage
 wayland-backend = { version = "0.3", features = ["dlopen"], optional = true }
 
 [dev-dependencies]
+# Paused time, for the host-egress time-budget tests (kernel/apps/net/tests).
+tokio = { workspace = true, features = ["test-util"] }
 # The scoping test installs the log bridge so `log::warn!` lines are exercised too.
 tracing-log = { version = "0.2", features = ["log-tracer", "std"] }
 citadel_sdk = { workspace = true, features=["multi-threaded", "localhost-testing"] }

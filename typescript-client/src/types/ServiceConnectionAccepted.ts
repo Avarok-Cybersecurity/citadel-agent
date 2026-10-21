@@ -35,4 +35,10 @@ native_picker: boolean,
  * diagnostic logs. Absent from an older agent's greeting, which is what `false` means: a
  * window never sends that agent a request it cannot parse.
  */
-browser_console: boolean, };
+browser_console: boolean, 
+/**
+ * This agent answers the Citadel apps requests (`AppFetch`, `AppKv`, `IhttpSend` and
+ * their companions). Absent from an older agent's greeting, which is what `false` means:
+ * a window never sends that agent a request it cannot parse.
+ */
+apps?: boolean, };

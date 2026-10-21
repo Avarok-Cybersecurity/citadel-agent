@@ -19,19 +19,34 @@ pub(crate) trait ConversationKv: Send + Sync {
     fn keys(&self) -> BoxFuture<'_, KvResult<Vec<String>>>;
 }
 
-/// LocalDB bucket 0 through the agent's own handlers (`HostIo::local_db`).
-pub(crate) struct HostKv(pub(crate) Arc<dyn HostIo>);
+/// A LocalDB bucket through the agent's own handlers (`HostIo::local_db`): bucket 0, the
+/// agent's own, for the conversation store (`HostKv::global`), or one account's.
+pub(crate) struct HostKv {
+    io: Arc<dyn HostIo>,
+    cid: u64,
+}
+
+impl HostKv {
+    pub(crate) fn global(io: Arc<dyn HostIo>) -> Self {
+        Self { io, cid: 0 }
+    }
+
+    /// The signed-in account `cid`'s own store, which only its own windows may read raw.
+    pub(crate) fn account(io: Arc<dyn HostIo>, cid: u64) -> Self {
+        Self { io, cid }
+    }
+}
 
 impl ConversationKv for HostKv {
     fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, KvResult<Option<Vec<u8>>>> {
         Box::pin(async move {
             let request = InternalServiceRequest::LocalDBGetKV {
                 request_id: Uuid::new_v4(),
-                cid: 0,
+                cid: self.cid,
                 peer_cid: None,
                 key: key.to_string(),
             };
-            match self.0.local_db(request).await {
+            match self.io.local_db(request).await {
                 InternalServiceResponse::LocalDBGetKVSuccess(ok) => Ok(Some(ok.value)),
                 InternalServiceResponse::LocalDBGetKVFailure(f) if f.message == KEY_NOT_FOUND => {
                     Ok(None)
@@ -46,12 +61,12 @@ impl ConversationKv for HostKv {
         Box::pin(async move {
             let request = InternalServiceRequest::LocalDBSetKV {
                 request_id: Uuid::new_v4(),
-                cid: 0,
+                cid: self.cid,
                 peer_cid: None,
                 key: key.to_string(),
                 value,
             };
-            match self.0.local_db(request).await {
+            match self.io.local_db(request).await {
                 InternalServiceResponse::LocalDBSetKVSuccess(_) => Ok(()),
                 other => Err(format!("writing {key} failed: {other:?}")),
             }
@@ -62,11 +77,11 @@ impl ConversationKv for HostKv {
         Box::pin(async move {
             let request = InternalServiceRequest::LocalDBDeleteKV {
                 request_id: Uuid::new_v4(),
-                cid: 0,
+                cid: self.cid,
                 peer_cid: None,
                 key: key.to_string(),
             };
-            match self.0.local_db(request).await {
+            match self.io.local_db(request).await {
                 InternalServiceResponse::LocalDBDeleteKVSuccess(_) => Ok(()),
                 InternalServiceResponse::LocalDBDeleteKVFailure(f)
                     if f.message.contains(KEY_NOT_FOUND) =>
@@ -82,10 +97,10 @@ impl ConversationKv for HostKv {
         Box::pin(async move {
             let request = InternalServiceRequest::LocalDBGetAllKV {
                 request_id: Uuid::new_v4(),
-                cid: 0,
+                cid: self.cid,
                 peer_cid: None,
             };
-            match self.0.local_db(request).await {
+            match self.io.local_db(request).await {
                 InternalServiceResponse::LocalDBGetAllKVSuccess(ok) => {
                     Ok(ok.map.into_keys().collect())
                 }

@@ -26,4 +26,9 @@ supervises_p2p: boolean,
  * is subscribed. Kept current by `NoticesHeardNotification`. Absent from an
  * older agent, which is what `false` means here.
  */
-notices_heard: boolean, request_id: string | null, };
+notices_heard: boolean, 
+/**
+ * The agent relays internal HTTP for the accounts whose ILM it hosts (`IhttpSend`), and
+ * its ILM advertises that to peers. Absent from an older agent, which is `false`.
+ */
+ihttp?: boolean, request_id: string | null, };

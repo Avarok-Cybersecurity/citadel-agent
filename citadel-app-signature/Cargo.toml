@@ -1,0 +1,25 @@
+[package]
+name = "citadel-app-signature"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The ML-DSA-65 signature a publisher makes over a Citadel app's manifest and wasm: its message, signing and verification."
+
+# No `workspace = true` keys: the server's wasm build, the browser wasm client, the native agent
+# and the parent workspace's kernel and tools depend on this crate by path, and must not need
+# this workspace's other members checked out to build it.
+#
+# Pure and wasm32-unknown-unknown clean: nothing here draws randomness or reads a clock. ML-DSA
+# signing is deterministic from the 32-byte seed, so `ml-dsa` builds without `rand_core`'s OS
+# source, exactly as citadel-release-signature does.
+[dependencies]
+citadel-app-id = { path = "../citadel-app-id", version = "0.1.0" }
+# The version and features citadel-release-signature uses; `zeroize` wipes the signing key on drop.
+ml-dsa = { version = "0.1.1", default-features = false, features = ["alloc", "zeroize"] }
+sha2 = "0.10"
+hex = "0.4"
+zeroize = "1.8"
+
+[dev-dependencies]
+# Only to prove an agent-release signature is never an app signature.
+citadel-release-signature = { path = "../citadel-release-signature", version = "0.1.0" }

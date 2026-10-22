@@ -9,6 +9,12 @@ members = [
     "citadel-internal-service/tests/common",
     "service",
     "citadel-release-signature",
+    "citadel-app-id",
+    "citadel-app-signature",
+    "citadel-app-net-policy",
+    "citadel-ihttp-types",
+    "citadel-app-sdk-types",
+    "citadel-app-abi-inspect",
     "intersession-layer-messaging", 
     "citadel-internal-service-wasm-client",
 ]
@@ -44,6 +50,10 @@ citadel-internal-service-macros = { path = "./citadel-internal-service-macros", 
 intersession-layer-messaging = { path = "intersession-layer-messaging", default-features = false, version = "0.2.0" }
 citadel-internal-service-wasm-client = { path = "citadel-internal-service-wasm-client", default-features = false, version = "0.1.0" }
 citadel-release-signature = { path = "citadel-release-signature", version = "0.1.0" }
+citadel-app-id = { path = "citadel-app-id", version = "0.1.0" }
+citadel-app-signature = { path = "citadel-app-signature", version = "0.1.0" }
+citadel-app-net-policy = { path = "citadel-app-net-policy", version = "0.1.0" }
+citadel-ihttp-types = { path = "citadel-ihttp-types", version = "0.1.0" }
 
 # Avarok deps
 citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "eb9c0b75" }

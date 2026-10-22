@@ -20,6 +20,9 @@ pub(crate) struct HandledRequestResult {
 }
 
 mod agent_own;
+mod apps_ihttp;
+mod apps_kv;
+mod apps_net;
 mod browser_console;
 mod connect;
 pub(crate) mod connect_mode;
@@ -172,6 +175,12 @@ where
                 crate::kernel::sign_in::recovery::RECOVERY_ONLY,
             );
         }
+    }
+
+    // Internal HTTP leaves only through `IhttpSend`, which checks the frame and the peer.
+    if apps_ihttp::smuggles_internal_http(&command) {
+        log::warn!(target: "citadel", "Refusing an internal-HTTP envelope sent as a plain message from connection {uuid}");
+        return refusal_response(&command, uuid, "internal HTTP is sent with IhttpSend");
     }
 
     // The agent is the only writer of a hosted account's conversations.
@@ -351,6 +360,15 @@ where
         }
 
         InternalServiceRequest::BrowserConsole { .. } => browser_console::handle(this, command),
+
+        InternalServiceRequest::AppFetch { .. }
+        | InternalServiceRequest::AppFetchCredit { .. }
+        | InternalServiceRequest::AppFetchCancel { .. }
+        | InternalServiceRequest::GetAppNetUsage { .. } => {
+            apps_net::handle(this, uuid, command).await
+        }
+        InternalServiceRequest::AppKv { .. } => apps_kv::handle(this, uuid, command).await,
+        InternalServiceRequest::IhttpSend { .. } => apps_ihttp::handle(this, uuid, command).await,
 
         InternalServiceRequest::Batched {
             request_id,
@@ -972,6 +990,34 @@ fn refusal_response(
             message: message.to_string(),
             request_id: Some(*request_id),
         }),
+        InternalServiceRequest::AppFetch {
+            request_id, cid, ..
+        }
+        | InternalServiceRequest::GetAppNetUsage {
+            request_id, cid, ..
+        } => InternalServiceResponse::AppFetchFailure(AppFetchFailure {
+            cid: *cid,
+            request_id: Some(*request_id),
+            refusal: AppFetchRefusal::Unavailable(AppFetchUnavailable::Session),
+        }),
+        InternalServiceRequest::AppKv {
+            request_id, cid, ..
+        } => InternalServiceResponse::AppKvFailure(AppKvFailure {
+            cid: *cid,
+            request_id: Some(*request_id),
+            refusal: AppKvRefusal::Session,
+        }),
+        InternalServiceRequest::IhttpSend {
+            request_id,
+            cid,
+            peer_cid,
+            ..
+        } => InternalServiceResponse::IhttpSendFailure(IhttpSendFailure {
+            cid: *cid,
+            peer_cid: *peer_cid,
+            request_id: Some(*request_id),
+            refusal: IhttpSendRefusal::Session,
+        }),
         InternalServiceRequest::GroupListJoined { request_id, cid } => {
             InternalServiceResponse::GroupListJoinedFailure(GroupListJoinedFailure {
                 cid: *cid,
@@ -990,12 +1036,15 @@ fn refusal_response(
         // RespondFileTransfer / PeerRegisterRespond answer over their own
         // notification streams rather than a request/response pair.
         //
-        // BrowserConsole is fire-and-forget: no window waits on an answer to it.
+        // BrowserConsole is fire-and-forget: no window waits on an answer to it, and so are
+        // AppFetchCredit and AppFetchCancel: a stream not this connection's is not there.
         //
         // Named individually so the exhaustiveness test below can assert this
         // list and nothing wider: a variant added to the gate without a
         // decision fails that test rather than joining a silent default.
         InternalServiceRequest::BrowserConsole { .. }
+        | InternalServiceRequest::AppFetchCredit { .. }
+        | InternalServiceRequest::AppFetchCancel { .. }
         | InternalServiceRequest::GroupListGroupsFor { .. }
         | InternalServiceRequest::MediaOpen { .. }
         | InternalServiceRequest::MediaClose { .. }
@@ -1042,6 +1091,13 @@ pub(crate) fn requires_owned_session(command: &InternalServiceRequest) -> bool {
             | InternalServiceRequest::ReadPulledFileChunk { .. }
             // A write into the account's diagnostic logs: only from its own windows.
             | InternalServiceRequest::BrowserConsole { .. }
+            // Apps act only for a session the caller is attached to (kernel/apps).
+            | InternalServiceRequest::AppFetch { .. }
+            | InternalServiceRequest::AppFetchCredit { .. }
+            | InternalServiceRequest::AppFetchCancel { .. }
+            | InternalServiceRequest::GetAppNetUsage { .. }
+            | InternalServiceRequest::AppKv { .. }
+            | InternalServiceRequest::IhttpSend { .. }
             | InternalServiceRequest::Deregister { .. } // The conversation store answers by CID from the agent's own store, not
                                                         // through `propose_target`, so a signed-out account would otherwise hand
                                                         // its history to any connection naming it.

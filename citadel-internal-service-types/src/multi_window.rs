@@ -93,6 +93,11 @@ pub struct SessionAttached {
 #[cfg_attr(feature = "typescript", ts(export))]
 pub struct ClientCapabilities {
     pub agent_ilm: bool,
+    /// This window hosts Citadel apps and takes `IhttpFrameNotification`s. Only such windows
+    /// are given one; an older client's declaration has no such field, which is `false`.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(as = "Option<bool>", optional))]
+    pub ihttp: bool,
 }
 
 /// The answer to `DeclareCapabilities`: what this agent offers.
@@ -116,6 +121,11 @@ pub struct AgentCapabilities {
     /// older agent, which is what `false` means here.
     #[serde(default)]
     pub notices_heard: bool,
+    /// The agent relays internal HTTP for the accounts whose ILM it hosts (`IhttpSend`), and
+    /// its ILM advertises that to peers. Absent from an older agent, which is `false`.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(as = "Option<bool>", optional))]
+    pub ihttp: bool,
     pub request_id: Option<Uuid>,
 }
 

@@ -64,9 +64,14 @@ pub use intersession_layer_messaging::{CompressionHint, DynamicCompression, IlmO
 /// One constant for every host -- the browser's messenger and the agent's
 /// (citadel-internal-service `kernel/ilm`) -- so an account's frames do not
 /// change shape when its ILM moves from one to the other.
+///
+/// It does not advertise internal HTTP: only the agent reads `citadel-ihttp/1`
+/// envelopes, validating each one before a window sees it, so only the
+/// agent's ILM may say it does (citadel-internal-service `kernel/apps/ihttp`).
 pub const ACCOUNT_ILM_OPTIONS: IlmOptions = IlmOptions {
     piggyback_acks: true,
     dynamic_compression: DynamicCompression::All,
+    internal_http: false,
 };
 pub use wire::WireWrapper;
 

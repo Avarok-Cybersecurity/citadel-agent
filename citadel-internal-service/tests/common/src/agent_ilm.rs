@@ -41,7 +41,10 @@ pub fn declare_agent_ilm() -> InternalServiceRequest {
     InternalServiceRequest::ConnectionManagement {
         request_id: Uuid::new_v4(),
         management_command: ConfigCommand::DeclareCapabilities {
-            capabilities: ClientCapabilities { agent_ilm: true },
+            capabilities: ClientCapabilities {
+                agent_ilm: true,
+                ihttp: false,
+            },
         },
     }
 }

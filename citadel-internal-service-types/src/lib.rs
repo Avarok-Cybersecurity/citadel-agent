@@ -25,6 +25,9 @@ mod group_responses_more;
 pub use group_responses::*;
 pub use group_responses_more::*;
 mod admission;
+mod apps_ihttp;
+mod apps_kv;
+mod apps_net;
 mod browser_console;
 mod multi_window;
 mod notices;
@@ -37,6 +40,19 @@ mod turn;
 pub use chat_level::{ChatSecurityLevel, PeerSecurityMinimum};
 mod updates;
 pub use admission::{AdmissionChallengeWire, AdmissionProviderWire};
+pub use apps_ihttp::{
+    IhttpFrameNotification, IhttpSendAccepted, IhttpSendFailure, IhttpSendRefusal,
+};
+pub use apps_kv::{
+    AppKvFailure, AppKvNamespace, AppKvOp, AppKvRefusal, AppKvResponse, AppKvResult,
+    APP_KV_ENTRY_OVERHEAD_BYTES, APP_KV_LIST_PAGE, APP_KV_MAX_KEY_BYTES, APP_KV_MAX_TOTAL_BYTES,
+    APP_KV_MAX_VALUE_BYTES,
+};
+pub use apps_net::{
+    AppFetchFailure, AppFetchLimit, AppFetchRefusal, AppFetchResponse, AppFetchStreamChunk,
+    AppFetchStreamEnd, AppFetchStreamHead, AppFetchUnavailable, AppHttpHeader, AppHttpRequest,
+    AppNetGrant, AppNetUsage,
+};
 pub use browser_console::{BrowserConsoleEntry, BrowserConsoleSource};
 pub use conversation::{
     Attachment, ConversationMessage, ConversationMetadata, ConversationPage, MessagePatch,
@@ -317,6 +333,12 @@ pub struct ServiceConnectionAccepted {
     /// window never sends that agent a request it cannot parse.
     #[serde(default)]
     pub browser_console: bool,
+    /// This agent answers the Citadel apps requests (`AppFetch`, `AppKv`, `IhttpSend` and
+    /// their companions). Absent from an older agent's greeting, which is what `false` means:
+    /// a window never sends that agent a request it cannot parse.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(as = "Option<bool>", optional))]
+    pub apps: bool,
 }
 
 impl ServiceConnectionAccepted {
@@ -337,6 +359,7 @@ impl ServiceConnectionAccepted {
             stages_uploads: true,
             native_picker,
             browser_console,
+            apps: true,
         })
     }
 }
@@ -1237,6 +1260,17 @@ pub enum InternalServiceResponse {
     SecurityKeyAnswerFailure(SecurityKeyAnswerFailure),
     SignInManagementSuccess(SignInManagementSuccess),
     SignInManagementFailure(SignInManagementFailure),
+    AppFetchResponse(AppFetchResponse),
+    AppFetchFailure(AppFetchFailure),
+    AppFetchStreamHead(AppFetchStreamHead),
+    AppFetchStreamChunk(AppFetchStreamChunk),
+    AppFetchStreamEnd(AppFetchStreamEnd),
+    AppNetUsage(AppNetUsage),
+    AppKvResponse(AppKvResponse),
+    AppKvFailure(AppKvFailure),
+    IhttpSendAccepted(IhttpSendAccepted),
+    IhttpSendFailure(IhttpSendFailure),
+    IhttpFrameNotification(IhttpFrameNotification),
     /// Results from a batched request, in the same order as input commands
     BatchedResponse(BatchedResponseData),
 }
@@ -1931,6 +1965,63 @@ pub enum InternalServiceRequest {
         cid: u64,
         entries: Vec<BrowserConsoleEntry>,
     },
+    /// An app's host egress (`net.host`), outbound from this agent only; see `apps_net.rs`.
+    /// Answered with `AppFetchResponse`, or with `stream` by `AppFetchStreamHead`, chunks
+    /// against credit and `AppFetchStreamEnd`; `AppFetchFailure` otherwise.
+    AppFetch {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        app_id: String,
+        install_id: String,
+        grant: AppNetGrant,
+        request: AppHttpRequest,
+        stream: bool,
+    },
+    /// `n` more chunks for the stream `AppFetch { request_id: fetch_id, stream: true }` opened
+    /// on this connection. Answered with nothing.
+    AppFetchCredit {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        fetch_id: Uuid,
+        n: u32,
+    },
+    /// End that stream now; it answers `AppFetchFailure` (`Cancelled`) under `fetch_id`.
+    AppFetchCancel {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        fetch_id: Uuid,
+    },
+    /// What `install_id` has moved for this account; answered with `AppNetUsage`.
+    GetAppNetUsage {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        install_id: String,
+    },
+    /// An app's `local` storage; see `apps_kv.rs`. Answered with `AppKvResponse` or
+    /// `AppKvFailure`.
+    AppKv {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        namespace: AppKvNamespace,
+        op: AppKvOp,
+    },
+    /// Send one internal-HTTP frame to `peer_cid`; see `apps_ihttp.rs`. Answered with
+    /// `IhttpSendAccepted` or `IhttpSendFailure`.
+    IhttpSend {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[debug(with = plaintext_debug_fmt)]
+        frame: Vec<u8>,
+    },
     /// Execute multiple requests in parallel, returning results in the same order as input.
     /// This enables single-roundtrip batch operations for efficiency.
     Batched {
@@ -2189,6 +2280,12 @@ impl InternalServiceRequest {
             | Self::GetAccountPreferences { cid, .. } => Some(*cid),
             Self::SignInManagement { cid, .. } => Some(*cid),
             Self::BrowserConsole { cid, .. } => Some(*cid),
+            Self::AppFetch { cid, .. }
+            | Self::AppFetchCredit { cid, .. }
+            | Self::AppFetchCancel { cid, .. }
+            | Self::GetAppNetUsage { cid, .. }
+            | Self::AppKv { cid, .. }
+            | Self::IhttpSend { cid, .. } => Some(*cid),
             // Exhaustive on purpose: no `_` arm.
             //
             // The catch-all made this gate fail OPEN by omission — a variant

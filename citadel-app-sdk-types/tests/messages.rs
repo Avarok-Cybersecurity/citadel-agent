@@ -2,7 +2,7 @@
 
 use citadel_app_sdk_types::calls::StorageBackend;
 use citadel_app_sdk_types::{
-    decode, encode, AppContext, AppEvent, AppScope, Capability, Size, Surface,
+    decode, encode, AppContext, AppEvent, AppScope, Capability, Size, Surface, SuspendReason,
 };
 
 fn context() -> AppContext {
@@ -25,6 +25,7 @@ fn context() -> AppContext {
         locale: "en".into(),
         acting_username: "alice".into(),
         node_id: "n2".into(),
+        close_grace_ms: 500,
     }
 }
 
@@ -53,6 +54,10 @@ fn events_round_trip_with_snake_case_tags() {
             key: "k".into(),
         },
         AppEvent::Frame { dt_ms: 16 },
+        AppEvent::Suspend {
+            reason: SuspendReason::Backgrounded,
+        },
+        AppEvent::Resume,
     ];
     for e in events {
         assert_eq!(decode::<AppEvent>(&encode(&e)).unwrap(), e);
@@ -60,4 +65,9 @@ fn events_round_trip_with_snake_case_tags() {
     assert_eq!(encode(&AppEvent::Init), b"\x64init");
     let ui = encode(&AppEvent::UiAction { id: "x".into() });
     assert_eq!(ui, b"\xa1\x69ui_action\xa1\x62id\x61x");
+    assert_eq!(encode(&AppEvent::Resume), b"\x66resume");
+    let hidden = encode(&AppEvent::Suspend {
+        reason: SuspendReason::Hidden,
+    });
+    assert_eq!(hidden, b"\xa1\x67suspend\xa1\x66reason\x66hidden");
 }

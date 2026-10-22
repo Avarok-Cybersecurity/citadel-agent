@@ -4,6 +4,7 @@ import type { IhttpFrame } from "./IhttpFrame";
 import type { KeyEvent } from "./KeyEvent";
 import type { PointerEvent } from "./PointerEvent";
 import type { StorageBackend } from "./StorageBackend";
+import type { SuspendReason } from "./SuspendReason";
 import type { WheelEvent } from "./WheelEvent";
 
-export type AppEvent = "init" | { "resize": { width: number, height: number, dpr: number, } } | { "pointer": PointerEvent } | { "key": KeyEvent } | { "wheel": WheelEvent } | { "focus": { focused: boolean, } } | { "visibility": { visible: boolean, } } | { "node_changed": { node_id: string, } } | { "storage_changed": { backend: StorageBackend, key: string, } } | { "ui_action": { id: string, } } | { "deep_link": { query: string, } } | { "frame": { dt_ms: number, } } | { "reply_ready": { handle: number, } } | { "ihttp": { from: Caller, frame: IhttpFrame, } };
+export type AppEvent = "init" | { "suspend": { reason: SuspendReason, } } | "resume" | { "resize": { width: number, height: number, dpr: number, } } | { "pointer": PointerEvent } | { "key": KeyEvent } | { "wheel": WheelEvent } | { "focus": { focused: boolean, } } | { "visibility": { visible: boolean, } } | { "node_changed": { node_id: string, } } | { "storage_changed": { backend: StorageBackend, key: string, } } | { "ui_action": { id: string, } } | { "deep_link": { query: string, } } | { "frame": { dt_ms: number, } } | { "reply_ready": { handle: number, } } | { "ihttp": { from: Caller, frame: IhttpFrame, } };

@@ -16,13 +16,15 @@ fn reply_len_sig() -> FuncSig {
     FuncSig::of(&[I], &[I])
 }
 
-/// The required exports and their signatures, in `abi::REQUIRED_EXPORTS` order.
-fn required_exports() -> [(&'static str, FuncSig); 4] {
+/// The required exports and their signatures, in `abi::REQUIRED_EXPORTS` order. `app_close`
+/// is among them: a module without its graceful end is refused, not run without one.
+fn required_exports() -> [(&'static str, FuncSig); 5] {
     [
         (abi::EXPORT_ALLOC, FuncSig::of(&[I], &[I])),
         (abi::EXPORT_FREE, FuncSig::of(&[I, I], &[])),
         (abi::EXPORT_INIT, FuncSig::of(&[I, I], &[I])),
         (abi::EXPORT_EVENT, FuncSig::of(&[I, I], &[])),
+        (abi::EXPORT_CLOSE, FuncSig::of(&[I], &[I])),
     ]
 }
 

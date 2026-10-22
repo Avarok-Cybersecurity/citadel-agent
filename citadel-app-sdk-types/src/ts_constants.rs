@@ -1,7 +1,7 @@
 //! Renders `bindings/AbiConstants.ts`: the numbers and names the TypeScript host must agree on,
 //! from the Rust tables, so the host never restates one. Written by the `ts` feature's test.
 
-use crate::abi::{self, AbiError, InitResult};
+use crate::abi::{self, AbiError, CloseResult, InitResult};
 use crate::calls::KvBackend;
 use crate::ops::{ts_reply_names, OPS};
 use crate::{encode, Capability, Group};
@@ -35,7 +35,15 @@ fn kv_tag(b: &KvBackend) -> String {
 
 pub fn render() -> String {
     let replies = ts_reply_names();
-    let mut types = BTreeSet::from(["Capability".to_string(), "Group".to_string()]);
+    let mut types: BTreeSet<String> = [
+        "Capability",
+        "Group",
+        "CloseReason",
+        "LifecycleState",
+        "LifecycleStep",
+    ]
+    .map(String::from)
+    .into();
     for (name, reply) in &replies {
         types.insert((*name).into());
         referenced(reply, &mut types);
@@ -58,6 +66,9 @@ pub fn render() -> String {
         ("EXPORT_INIT", abi::EXPORT_INIT),
         ("EXPORT_EVENT", abi::EXPORT_EVENT),
         ("EXPORT_FRAME", abi::EXPORT_FRAME),
+        ("EXPORT_CLOSE", abi::EXPORT_CLOSE),
+        ("REFUSED_CLOSING", abi::REFUSED_CLOSING),
+        ("REFUSED_CLOSED", abi::REFUSED_CLOSED),
         ("REFUSED_UNKNOWN_OP", abi::REFUSED_UNKNOWN_OP),
         ("REFUSED_BAD_ARGUMENTS", abi::REFUSED_BAD_ARGUMENTS),
         ("REFUSED_REQUEST_BYTES", abi::REFUSED_REQUEST_BYTES),
@@ -78,6 +89,12 @@ pub fn render() -> String {
     )
     .unwrap();
     writeln!(o, "export const PAGE_BYTES = {} as const;", abi::PAGE_BYTES).unwrap();
+    writeln!(
+        o,
+        "/** The ceiling on a manifest's limits.close_grace_ms. */\nexport const MAX_CLOSE_GRACE_MS = {} as const;",
+        abi::MAX_CLOSE_GRACE_MS
+    )
+    .unwrap();
     writeln!(
         o,
         "export const IHTTP_MAX_CHUNK_BYTES = {} as const;",
@@ -109,6 +126,10 @@ pub fn render() -> String {
     }
     writeln!(o, "}} as const;\n\nexport const INIT_RESULT = {{").unwrap();
     for r in InitResult::ALL {
+        writeln!(o, "  {}: {},", r.name(), r.code()).unwrap();
+    }
+    writeln!(o, "}} as const;\n\nexport const CLOSE_RESULT = {{").unwrap();
+    for r in CloseResult::ALL {
         writeln!(o, "  {}: {},", r.name(), r.code()).unwrap();
     }
     writeln!(o, "}} as const;\n\n/** Import name -> group index. */\nexport const GROUPS: Readonly<Record<Group, number>> = {{").unwrap();
@@ -160,5 +181,6 @@ pub fn render() -> String {
         writeln!(o, "  {name}: {reply};").unwrap();
     }
     writeln!(o, "}};").unwrap();
+    crate::lifecycle::render_ts(&mut o);
     o
 }

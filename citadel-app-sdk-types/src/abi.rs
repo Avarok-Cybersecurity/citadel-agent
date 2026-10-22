@@ -40,7 +40,17 @@ pub const EXPORT_INIT: &str = "app_init";
 pub const EXPORT_EVENT: &str = "app_event";
 /// `(dt_ms: i32)`: optional; one animation frame.
 pub const EXPORT_FRAME: &str = "app_frame";
-pub const REQUIRED_EXPORTS: [&str; 4] = [EXPORT_ALLOC, EXPORT_FREE, EXPORT_INIT, EXPORT_EVENT];
+/// `(reason: i32) -> i32`: the graceful end. `reason` is a `CloseReason::code`; answers a
+/// [`CloseResult`] code. REQUIRED (see the lifecycle doc): every app has a close path, so a host
+/// never has to guess whether ending one loses its state.
+pub const EXPORT_CLOSE: &str = "app_close";
+pub const REQUIRED_EXPORTS: [&str; 5] = [
+    EXPORT_ALLOC,
+    EXPORT_FREE,
+    EXPORT_INIT,
+    EXPORT_EVENT,
+    EXPORT_CLOSE,
+];
 pub const OPTIONAL_EXPORTS: [&str; 1] = [EXPORT_FRAME];
 
 /// Bytes in one wasm page; memory limits are counted in pages.
@@ -98,6 +108,16 @@ pub const REFUSED_BAD_ARGUMENTS: &str = "bad_arguments";
 /// The limit a request larger than the host's request cap is refused with.
 pub const REFUSED_REQUEST_BYTES: &str = "request_bytes";
 
+/// The refusal (`{unavailable: ...}`) of a call a CLOSING app makes outside `CLOSING_GROUPS`.
+pub const REFUSED_CLOSING: &str = "closing";
+/// The refusal of every call once the instance is CLOSED.
+pub const REFUSED_CLOSED: &str = "closed";
+
+/// The platform's ceiling on a manifest's `limits.close_grace_ms`: the longest `app_close` and
+/// the replies it waits on may take before the host ends the worker. A bounded-cleanup contract
+/// the app is told (`AppContext::close_grace_ms`), not a timeout that papers over a hang.
+pub const MAX_CLOSE_GRACE_MS: u32 = 2000;
+
 /// Internal HTTP (R4.4): body chunks are at most this many bytes.
 pub const IHTTP_MAX_CHUNK_BYTES: u32 = 65_536;
 /// Internal HTTP (R4.4): body frames each side may send before the other grants credit. Implicit:
@@ -127,6 +147,35 @@ impl InitResult {
             Self::Ok => "OK",
             Self::BadContext => "BAD_CONTEXT",
             Self::Declined => "DECLINED",
+        }
+    }
+}
+
+/// What `app_close` answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(i32)]
+pub enum CloseResult {
+    /// The app's close ran.
+    Ok = 0,
+    /// `reason` is not a `CloseReason` code; nothing ran.
+    UnknownReason = 1,
+    /// There is no running app to close (init never succeeded, or it is already closing or
+    /// closed); nothing ran. A second `app_close` answers this.
+    NotRunning = 2,
+}
+
+impl CloseResult {
+    pub const ALL: [CloseResult; 3] = [Self::Ok, Self::UnknownReason, Self::NotRunning];
+
+    pub const fn code(self) -> i32 {
+        self as i32
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Ok => "OK",
+            Self::UnknownReason => "UNKNOWN_REASON",
+            Self::NotRunning => "NOT_RUNNING",
         }
     }
 }

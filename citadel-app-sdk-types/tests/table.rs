@@ -168,7 +168,13 @@ fn abi_error_codes_are_negative_and_distinct_and_init_ok_is_zero() {
     assert_eq!(InitResult::Ok.code(), 0);
     assert_eq!(
         REQUIRED_EXPORTS,
-        ["app_alloc", "app_free", "app_init", "app_event"]
+        [
+            "app_alloc",
+            "app_free",
+            "app_init",
+            "app_event",
+            "app_close"
+        ]
     );
 }
 

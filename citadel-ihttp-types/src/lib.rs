@@ -141,4 +141,7 @@ pub enum CancelReason {
     Refused,
     /// The serving app failed.
     Failed,
+    /// The other end's app ended while the stream was open: it was closed (its zone unmounted,
+    /// its page went away), uninstalled, or its host withdrew the service.
+    Closed,
 }

@@ -27,9 +27,12 @@ impl App for Recorder {
     fn frame(&mut self, dt_ms: u32) {
         self.frames.push(dt_ms);
     }
+    fn suspend(&mut self, _: crate::SuspendReason) {}
+    fn resume(&mut self) {}
+    fn close(&mut self, _: &crate::CloseContext, _: crate::CloseReason) {}
 }
 
-fn ctx(locale: &str) -> Vec<u8> {
+pub(crate) fn ctx(locale: &str) -> Vec<u8> {
     encode(&AppContext {
         app_id: "a.b".into(),
         install_id: "i".into(),
@@ -45,6 +48,7 @@ fn ctx(locale: &str) -> Vec<u8> {
         locale: locale.into(),
         acting_username: "u".into(),
         node_id: "n".into(),
+        close_grace_ms: 250,
     })
 }
 
@@ -52,7 +56,7 @@ fn ctx(locale: &str) -> Vec<u8> {
 fn init_answers_ok_once_and_declines_a_second_init() {
     let slot = Slot::<Recorder>::new();
     assert_eq!(init_with(&slot, &Fake::default(), &ctx("en")), 0);
-    assert_eq!(slot.0.borrow().as_ref().unwrap().ctx.locale, "en");
+    assert_eq!(slot.app.borrow().as_ref().unwrap().ctx.locale, "en");
     assert_eq!(init_with(&slot, &Fake::default(), &ctx("en")), 2);
 }
 
@@ -61,7 +65,7 @@ fn a_context_that_does_not_decode_is_bad_context() {
     let slot = Slot::<Recorder>::new();
     assert_eq!(init_with(&slot, &Fake::default(), &[0xff]), 1);
     assert_eq!(init_with(&slot, &Fake::default(), &[]), 1);
-    assert!(slot.0.borrow().is_none());
+    assert!(slot.app.borrow().is_none());
 }
 
 #[test]
@@ -93,7 +97,7 @@ fn events_and_frames_reach_the_app_only_after_init() {
         Delivery::Delivered
     );
     frame_with(&slot, &Fake::default(), -5);
-    let app = slot.0.borrow();
+    let app = slot.app.borrow();
     let app = app.as_ref().unwrap();
     assert_eq!(app.seen, [AppEvent::Init]);
     assert_eq!(app.frames, [16, 0]);
@@ -103,7 +107,7 @@ fn events_and_frames_reach_the_app_only_after_init() {
 fn a_reentrant_event_is_refused_not_a_double_borrow() {
     let slot = Slot::<Recorder>::new();
     init_with(&slot, &Fake::default(), &ctx("en"));
-    let _held = slot.0.borrow_mut();
+    let _held = slot.app.borrow_mut();
     assert_eq!(
         event_with(&slot, &Fake::default(), AppEvent::Init),
         Delivery::Busy
@@ -153,6 +157,9 @@ impl App for Asker {
     fn event(&mut self, event: AppEvent) {
         self.seen.push(event);
     }
+    fn suspend(&mut self, _: crate::SuspendReason) {}
+    fn resume(&mut self) {}
+    fn close(&mut self, _: &crate::CloseContext, _: crate::CloseReason) {}
 }
 
 #[test]
@@ -173,14 +180,14 @@ fn reply_ready_for_an_sdk_handle_runs_its_continuation_and_any_other_reaches_the
             event_with(&slot, h, AppEvent::ReplyReady { handle: 1 }),
             Delivery::Delivered
         );
-        assert_eq!(slot.0.borrow().as_ref().unwrap().names, ["late"]);
+        assert_eq!(slot.app.borrow().as_ref().unwrap().names, ["late"]);
         assert!(
-            slot.0.borrow().as_ref().unwrap().seen.is_empty(),
+            slot.app.borrow().as_ref().unwrap().seen.is_empty(),
             "the SDK's own reply is not the app's event"
         );
         event_with(&slot, h, AppEvent::ReplyReady { handle: 99 });
         assert_eq!(
-            slot.0.borrow().as_ref().unwrap().seen,
+            slot.app.borrow().as_ref().unwrap().seen,
             [AppEvent::ReplyReady { handle: 99 }]
         );
     });

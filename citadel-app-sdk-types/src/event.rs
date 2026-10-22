@@ -1,6 +1,7 @@
 //! What the host delivers through `app_event`, one CBOR [`AppEvent`] per call.
 
 use crate::calls::{Caller, IhttpFrame, StorageBackend};
+use crate::lifecycle::SuspendReason;
 use alloc::string::String;
 
 abi_types! {
@@ -57,8 +58,12 @@ abi_types! {
 
     #[serde(rename_all = "snake_case")]
     pub enum AppEvent {
-        /// The first event after `app_init` answered OK.
+        /// The first event after `app_init` answered OK: the start (`Initialised -> Running`).
         Init,
+        /// The surface is out of sight: frames and input stop until `Resume`. Always delivered.
+        Suspend { reason: SuspendReason },
+        /// The surface is back. Always delivered.
+        Resume,
         Resize { width: u32, height: u32, dpr: f32 },
         Pointer(PointerEvent),
         Key(KeyEvent),

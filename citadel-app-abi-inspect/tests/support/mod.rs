@@ -17,6 +17,7 @@ pub const FREE: &str = r#"(func (export "app_free") (param i32 i32))"#;
 pub const INIT: &str = r#"(func (export "app_init") (param i32 i32) (result i32) i32.const 0)"#;
 pub const EVENT: &str = r#"(func (export "app_event") (param i32 i32))"#;
 pub const FRAME: &str = r#"(func (export "app_frame") (param i32))"#;
+pub const CLOSE: &str = r#"(func (export "app_close") (param i32) (result i32) i32.const 0)"#;
 
 #[derive(Clone)]
 pub struct Parts {
@@ -31,7 +32,9 @@ impl Parts {
         Parts {
             memory: MEMORY.into(),
             imports: format!("{CANVAS}{REPLIES}"),
-            exports: [ALLOC, FREE, INIT, EVENT, FRAME].map(String::from).to_vec(),
+            exports: [ALLOC, FREE, INIT, EVENT, CLOSE, FRAME]
+                .map(String::from)
+                .to_vec(),
             extra: String::new(),
         }
     }

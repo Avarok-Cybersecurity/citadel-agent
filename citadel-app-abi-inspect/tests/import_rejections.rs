@@ -15,7 +15,7 @@ fn the_valid_module_is_accepted_and_reports_its_boundary() {
     };
     assert_eq!(insp.imports.len(), 4);
     assert_eq!(insp.memory().unwrap().initial_pages, 1);
-    assert_eq!(insp.exports.len(), 5);
+    assert_eq!(insp.exports.len(), 6);
 }
 
 #[test]

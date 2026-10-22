@@ -13,6 +13,7 @@ import type { ChatRecent } from "./ChatRecent";
 import type { ChatSend } from "./ChatSend";
 import type { ClipboardReadText } from "./ClipboardReadText";
 import type { ClipboardWriteText } from "./ClipboardWriteText";
+import type { CloseReason } from "./CloseReason";
 import type { DocApply } from "./DocApply";
 import type { DocOpen } from "./DocOpen";
 import type { DocPull } from "./DocPull";
@@ -39,6 +40,8 @@ import type { KvPage } from "./KvPage";
 import type { KvSet } from "./KvSet";
 import type { KvSetMany } from "./KvSetMany";
 import type { KvValue } from "./KvValue";
+import type { LifecycleState } from "./LifecycleState";
+import type { LifecycleStep } from "./LifecycleStep";
 import type { LogWrite } from "./LogWrite";
 import type { MdAppend } from "./MdAppend";
 import type { MdReadZone } from "./MdReadZone";
@@ -84,12 +87,17 @@ export const EXPORT_FREE = "app_free" as const;
 export const EXPORT_INIT = "app_init" as const;
 export const EXPORT_EVENT = "app_event" as const;
 export const EXPORT_FRAME = "app_frame" as const;
+export const EXPORT_CLOSE = "app_close" as const;
+export const REFUSED_CLOSING = "closing" as const;
+export const REFUSED_CLOSED = "closed" as const;
 export const REFUSED_UNKNOWN_OP = "unknown_op" as const;
 export const REFUSED_BAD_ARGUMENTS = "bad_arguments" as const;
 export const REFUSED_REQUEST_BYTES = "request_bytes" as const;
-export const REQUIRED_EXPORTS = ["app_alloc", "app_free", "app_init", "app_event"] as const;
+export const REQUIRED_EXPORTS = ["app_alloc", "app_free", "app_init", "app_event", "app_close"] as const;
 export const OPTIONAL_EXPORTS = ["app_frame"] as const;
 export const PAGE_BYTES = 65536 as const;
+/** The ceiling on a manifest's limits.close_grace_ms. */
+export const MAX_CLOSE_GRACE_MS = 2000 as const;
 export const IHTTP_MAX_CHUNK_BYTES = 65536 as const;
 export const IHTTP_INITIAL_CREDIT = 4 as const;
 /** Held by every install; declarable without listing. */
@@ -107,6 +115,12 @@ export const INIT_RESULT = {
   OK: 0,
   BAD_CONTEXT: 1,
   DECLINED: 2,
+} as const;
+
+export const CLOSE_RESULT = {
+  OK: 0,
+  UNKNOWN_REASON: 1,
+  NOT_RUNNING: 2,
 } as const;
 
 /** Import name -> group index. */
@@ -342,3 +356,26 @@ export type OpReplies = {
   DocPull: DocUpdates;
   LogWrite: null;
 };
+
+/** THE lifecycle transition table (citadel-app-sdk-types lifecycle.rs): state -> step -> next. A step not listed is illegal. */
+export const LIFECYCLE_TRANSITIONS: Readonly<Record<LifecycleState, Readonly<Partial<Record<LifecycleStep, LifecycleState>>>>> = {
+  created: { initialised: "initialised", abort: "closed" },
+  initialised: { start: "running", close: "closing", abort: "closed" },
+  running: { suspend: "suspended", close: "closing", abort: "closed" },
+  suspended: { resume: "running", close: "closing", abort: "closed" },
+  closing: { settled: "closed", abort: "closed" },
+  closed: {},
+};
+
+/** `app_close`'s argument: the code of each CloseReason. */
+export const CLOSE_REASON_CODE: Readonly<Record<CloseReason, number>> = {
+  unmount: 0,
+  uninstall: 1,
+  access_revoked: 2,
+  host_shutdown: 3,
+  version_update: 4,
+  host_error: 5,
+};
+
+/** The groups a closing app may still call. */
+export const CLOSING_GROUPS = ["storage", "log"] as const satisfies readonly Group[];

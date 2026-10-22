@@ -1,22 +1,38 @@
-//! The exports' machinery: the alloc protocol, the app's slot, and init/event/frame dispatch.
+//! The exports' machinery: the alloc protocol, the app's slot (the app and where it is in its
+//! lifecycle), and init/event/frame dispatch; `app_close` is [`crate::life`]'s.
 //! The pure parts take bytes and an [`App`]; only the `wasm_*` entry points touch raw pointers
 //! and the host.
 
 use crate::abi::RawAbi;
+use crate::life::{admit, Admit};
 use crate::{ihttp, pending, App, InitFailure};
 use citadel_app_sdk_types::abi::InitResult;
 use citadel_app_sdk_types::calls::{LogLevel, LogWrite};
-use citadel_app_sdk_types::{decode, AppContext, AppEvent};
-use core::cell::RefCell;
+use citadel_app_sdk_types::lifecycle::IllegalTransition;
+use citadel_app_sdk_types::{decode, AppContext, AppEvent, LifecycleState};
+use core::cell::{Cell, RefCell};
 use std::alloc::{alloc, dealloc, Layout};
 
-/// Where the one app instance lives between calls.
-pub struct Slot<A>(RefCell<Option<A>>);
+/// Where the one app instance lives between calls, and where it is in its lifecycle.
+pub struct Slot<A> {
+    pub(crate) app: RefCell<Option<A>>,
+    pub(crate) life: Cell<LifecycleState>,
+    /// The context's `close_grace_ms`, for the `CloseContext`.
+    pub(crate) grace_ms: Cell<u32>,
+}
 
 impl<A> Slot<A> {
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
-        Slot(RefCell::new(None))
+        Slot {
+            app: RefCell::new(None),
+            life: Cell::new(LifecycleState::Created),
+            grace_ms: Cell::new(0),
+        }
+    }
+
+    pub fn lifecycle(&self) -> LifecycleState {
+        self.life.get()
     }
 }
 
@@ -50,7 +66,7 @@ pub unsafe fn free_bytes(ptr: *mut u8, len: i32) {
 }
 
 /// Run what became ready, then log what the SDK's own background calls noted.
-fn settle(raw: &(impl RawAbi + 'static), app: &mut dyn std::any::Any) {
+pub(crate) fn settle(raw: &(impl RawAbi + 'static), app: &mut dyn std::any::Any) {
     pending::drain(app);
     for message in pending::take_notes() {
         let _ = pending::now(
@@ -72,14 +88,17 @@ pub(crate) fn init_with<A: App>(
     let Ok(ctx) = decode::<AppContext>(bytes) else {
         return InitResult::BadContext.code();
     };
-    let Ok(mut cell) = slot.0.try_borrow_mut() else {
+    let Ok(mut cell) = slot.app.try_borrow_mut() else {
         return InitFailure::DECLINED.0;
     };
-    if cell.is_some() {
+    if cell.is_some() || slot.life.get() != LifecycleState::Created {
         return InitFailure::DECLINED.0;
     }
+    let grace_ms = ctx.close_grace_ms;
     match A::init(ctx) {
         Ok(app) => {
+            slot.grace_ms.set(grace_ms);
+            slot.life.set(LifecycleState::Initialised);
             settle(raw, cell.insert(app));
             InitResult::Ok.code()
         }
@@ -100,6 +119,10 @@ pub enum Delivery {
     NotStarted,
     /// The host re-entered the app during one of its own calls.
     Busy,
+    /// Not an event for an app in this state (input while suspended, anything once closing).
+    Dropped(LifecycleState),
+    /// A lifecycle event the state machine does not allow from here.
+    Illegal(IllegalTransition),
 }
 
 pub(crate) fn event_with<A: App>(
@@ -107,13 +130,24 @@ pub(crate) fn event_with<A: App>(
     raw: &(impl RawAbi + 'static),
     event: AppEvent,
 ) -> Delivery {
-    let Ok(mut cell) = slot.0.try_borrow_mut() else {
+    let Ok(mut cell) = slot.app.try_borrow_mut() else {
         return Delivery::Busy;
     };
     let Some(app) = cell.as_mut() else {
         return Delivery::NotStarted;
     };
+    let state = slot.life.get();
+    match admit(state, &event) {
+        Admit::Drop => return Delivery::Dropped(state),
+        Admit::Step(step) => match state.step(step) {
+            Ok(next) => slot.life.set(next),
+            Err(illegal) => return Delivery::Illegal(illegal),
+        },
+        Admit::Deliver => {}
+    }
     match event {
+        AppEvent::Suspend { reason } => app.suspend(reason),
+        AppEvent::Resume => app.resume(),
         AppEvent::ReplyReady { handle } if pending::reply_ready(raw, handle) => {}
         AppEvent::Ihttp { from, frame } => {
             if let Some((from, frame)) = ihttp::route(raw, from, frame, app) {
@@ -185,13 +219,12 @@ mod wasm {
             return;
         };
         match decode::<AppEvent>(b) {
-            Ok(event) => {
-                if let delivery @ (Delivery::NotStarted | Delivery::Busy) =
-                    event_with(slot, &WASM, event)
-                {
+            Ok(event) => match event_with(slot, &WASM, event) {
+                Delivery::Delivered | Delivery::Dropped(_) => {}
+                delivery => {
                     let _ = log::warn(&format!("app_event dropped: {delivery:?}"));
                 }
-            }
+            },
             Err(e) => {
                 let _ = log::warn(&format!("app_event: {e}"));
             }
@@ -201,6 +234,10 @@ mod wasm {
     pub fn wasm_frame<A: App>(slot: &Slot<A>, dt_ms: i32) {
         frame_with(slot, &WASM, dt_ms)
     }
+
+    pub fn wasm_close<A: App>(slot: &Slot<A>, reason: i32) -> i32 {
+        crate::life::close_with(slot, &WASM, reason)
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -208,4 +245,4 @@ pub use wasm::*;
 
 #[cfg(test)]
 #[path = "rt_tests.rs"]
-mod tests;
+pub(crate) mod tests;

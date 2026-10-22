@@ -1,0 +1,2 @@
+# The signed-app fixture is compared byte for byte with what the crate signs, so a CRLF checkout (Windows) must not change it.
+citadel-app-signature/fixtures/*.json text eol=lf

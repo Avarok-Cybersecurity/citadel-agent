@@ -17,6 +17,10 @@ crate-type = ["cdylib"]
 citadel-internal-service-connector = { workspace = true, features = ["js", "compression-zstd", "compression-deflate"]}
 citadel-internal-service-types = { workspace = true }
 citadel_io = { workspace = true, default-features = false }
+# The page's ML-DSA-65 check of an app before it runs (src/app_signature.rs): verification is
+# Rust everywhere, never JavaScript. Pure, wasm32-unknown-unknown clean, draws no randomness.
+citadel-app-signature = { workspace = true }
+hex = "0.4"
 # v4 needs a randomness source; on wasm32 that is the JS crypto API, which the
 # "js" feature of getrandom (pulled in transitively) provides.
 uuid = { workspace = true }

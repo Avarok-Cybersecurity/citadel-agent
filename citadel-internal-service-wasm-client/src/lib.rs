@@ -19,6 +19,7 @@ use ws_stream_wasm::{WsMessage, WsMeta};
 use once_cell::sync::{Lazy, OnceCell};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod app_signature;
 mod connection_lifecycle;
 mod traffic;
 use connection_lifecycle::{refuse_init, should_report_death, teardown_before_connect};

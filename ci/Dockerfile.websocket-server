@@ -21,6 +21,12 @@ COPY citadel-internal-service-macros ./citadel-internal-service-macros
 COPY citadel-internal-service-types ./citadel-internal-service-types
 COPY citadel-internal-service-wasm-client ./citadel-internal-service-wasm-client
 COPY citadel-release-signature ./citadel-release-signature
+COPY citadel-app-id ./citadel-app-id
+COPY citadel-app-signature ./citadel-app-signature
+COPY citadel-app-net-policy ./citadel-app-net-policy
+COPY citadel-ihttp-types ./citadel-ihttp-types
+COPY citadel-app-sdk-types ./citadel-app-sdk-types
+COPY citadel-app-abi-inspect ./citadel-app-abi-inspect
 COPY intersession-layer-messaging ./intersession-layer-messaging
 COPY service ./service
 

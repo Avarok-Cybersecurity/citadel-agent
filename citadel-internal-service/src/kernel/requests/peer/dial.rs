@@ -165,7 +165,7 @@ pub(crate) async fn dial<T: IOInterface + Sync, R: Ratchet>(
                     // report below and the notifications that follow it.
                     let cell = peer_connect_success.channel.p2p_path_cell();
                     let path_watch = PathWatch::new(&cell);
-                    this.telemetry_track_turn(cid, peer_cid, cell);
+                    this.peer_path_up(cid, peer_cid, cell);
                     let (path, upgrading) = path_watch.current();
                     this.supervisors.set_path_control(
                         cid,

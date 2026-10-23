@@ -51,6 +51,7 @@ impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
             self.supervisors.stop(cid);
             self.telemetry_forget_session(cid);
         }
+        self.peer_paths_forget(cid, peer_cid);
         self.prune_cid_keyed_maps(cid, peer_cid)
     }
 

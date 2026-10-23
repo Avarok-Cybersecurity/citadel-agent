@@ -58,6 +58,12 @@ pub async fn handle_open<T: IOInterface, R: Ratchet>(
             uuid,
         });
     };
+    if let Some(reason) = super::path_gate::media_path_refusal(this, cid, peer_cid) {
+        return Some(HandledRequestResult {
+            response: failed(cid, peer_cid, request_id, reason.to_string()),
+            uuid,
+        });
+    }
 
     let path = {
         let mut map = this.server_connection_map.write();

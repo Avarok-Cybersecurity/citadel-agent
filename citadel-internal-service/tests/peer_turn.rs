@@ -139,12 +139,11 @@ mod tests {
         Ok(())
     }
 
-    /// 4c. Relay-only on ONE side (the other sends none) should still never connect directly,
-    ///     and should connect. Today it does neither: the other side's direct attempt waits for
-    ///     a hole punch that never comes and PeerConnect times out after 30 s. This is why the
-    ///     UI offers no per-chat relay choice: a policy one person sets must reach the other
-    ///     side (it is not carried in the offer), or the chat breaks.
-    #[ignore = "one-sided relay-only times out: the policy is not carried in the offer"]
+    /// 4c. Relay-only on ONE side (the other sends none) never connects directly, and connects.
+    ///     It used to do neither: the other side's direct attempt waited for a hole punch that
+    ///     never came and PeerConnect timed out after 30 s. Since the protocol's PathPolicy
+    ///     (ad6f04d9) the server stamps one plan for the pair, in which either peer's relay-only
+    ///     restriction removes Direct for both.
     #[tokio::test(flavor = "multi_thread")]
     async fn relay_only_on_one_side_never_connects_directly() -> Result<(), Box<dyn Error>> {
         setup_log();

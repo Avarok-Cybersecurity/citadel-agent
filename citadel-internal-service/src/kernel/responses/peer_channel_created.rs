@@ -34,7 +34,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     // Subscribed before the path is read, so no change falls between the report below and the
     // notifications that follow it.
     let path_watch = PathWatch::new(&channel.p2p_path_cell());
-    this.telemetry_track_turn(session_cid, peer_cid, channel.p2p_path_cell());
+    this.peer_path_up(session_cid, peer_cid, channel.p2p_path_cell());
     let (path, upgrading) = path_watch.current();
     this.supervisors
         .set_path_control(session_cid, peer_cid, channel.path_control());

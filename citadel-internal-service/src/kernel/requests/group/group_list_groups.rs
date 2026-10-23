@@ -4,7 +4,10 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     GroupListGroupsFailure, GroupListGroupsSuccess, InternalServiceRequest, InternalServiceResponse,
 };
-use citadel_sdk::prelude::{ProtocolRemoteTargetExt, Ratchet};
+use citadel_sdk::prefabs::ClientServerRemote;
+use citadel_sdk::prelude::{
+    MessageGroupKey, NetworkError, ProtocolRemoteExt, ProtocolRemoteTargetExt, Ratchet,
+};
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -21,57 +24,44 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
 
-    // Enum to hold either a peer remote or client-server remote
-    enum RemoteType<R: Ratchet> {
-        Peer(citadel_sdk::prelude::remote_specialization::PeerRemote<R>),
-        Server(citadel_sdk::prefabs::ClientServerRemote<R>),
-    }
-
-    // Extract the remote inside lock block, then drop before await
-    let remote_result: Result<RemoteType<R>, String> = {
+    // Only the connection's existence is checked under the lock. A peer's
+    // groups are asked for through the registered-peer handle (find_target),
+    // not the live peer connection's remote: ListGroupsFor is a
+    // client-to-server command, and an acceptor-only (agent-answered)
+    // connection carries no remote, which refused every such lister.
+    let server_remote: Result<ClientServerRemote<R>, String> = {
         let server_connection_map = this.server_connection_map.read();
         match server_connection_map.get(&cid) {
-            Some(connection) => {
-                if let Some(peer_cid_val) = peer_cid {
-                    match connection.peers.get(&peer_cid_val) {
-                        Some(peer_connection) => match &peer_connection.remote {
-                            Some(peer_remote) => Ok(RemoteType::Peer(peer_remote.clone())),
-                            None => Err("Could Not List Groups - Peer connection missing remote (acceptor-only connection)".to_string()),
-                        },
-                        None => Err("Could Not List Groups - Peer not found".to_string()),
-                    }
-                } else {
-                    Ok(RemoteType::Server(connection.client_server_remote.clone()))
-                }
-            }
+            Some(connection) => Ok(connection.client_server_remote.clone()),
             None => Err("Could Not List Groups - Connection not found".to_string()),
         }
     }; // Lock dropped here - BEFORE any await
 
+    let remote_result: Result<Result<Vec<MessageGroupKey>, NetworkError>, String> =
+        match (server_remote, peer_cid) {
+            (Err(message), _) => Err(message),
+            (Ok(remote), None) => Ok(remote.list_owned_groups().await),
+            (Ok(_), Some(peer_cid_val)) => match this.remote().find_target(cid, peer_cid_val).await
+            {
+                Ok(peer) => Ok(peer.list_owned_groups().await),
+                Err(e) => Err(format!("Could Not List Groups - Peer not found: {e}")),
+            },
+        };
+
     let response = match remote_result {
-        Ok(remote_type) => {
-            let result = match remote_type {
-                RemoteType::Peer(remote) => remote.list_owned_groups().await,
-                RemoteType::Server(remote) => remote.list_owned_groups().await,
-            };
-            match result {
-                Ok(groups) => {
-                    InternalServiceResponse::GroupListGroupsSuccess(GroupListGroupsSuccess {
-                        cid,
-                        peer_cid,
-                        request_id: Some(request_id),
-                        group_list: Some(groups),
-                    })
-                }
-                Err(err) => {
-                    InternalServiceResponse::GroupListGroupsFailure(GroupListGroupsFailure {
-                        cid,
-                        message: err.to_string(),
-                        request_id: Some(request_id),
-                    })
-                }
-            }
-        }
+        Ok(result) => match result {
+            Ok(groups) => InternalServiceResponse::GroupListGroupsSuccess(GroupListGroupsSuccess {
+                cid,
+                peer_cid,
+                request_id: Some(request_id),
+                group_list: Some(groups),
+            }),
+            Err(err) => InternalServiceResponse::GroupListGroupsFailure(GroupListGroupsFailure {
+                cid,
+                message: err.to_string(),
+                request_id: Some(request_id),
+            }),
+        },
         Err(message) => InternalServiceResponse::GroupListGroupsFailure(GroupListGroupsFailure {
             cid,
             message,

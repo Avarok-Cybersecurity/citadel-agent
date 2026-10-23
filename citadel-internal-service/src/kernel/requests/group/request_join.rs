@@ -7,9 +7,7 @@ use citadel_internal_service_types::{
     InternalServiceResponse,
 };
 use citadel_sdk::logging::warn;
-use citadel_sdk::prelude::{
-    GroupBroadcast, GroupBroadcastCommand, NodeRequest, Ratchet, TargetLockedRemote,
-};
+use citadel_sdk::prelude::{GroupBroadcast, GroupBroadcastCommand, NodeRequest, Ratchet};
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface, R: Ratchet>(
@@ -26,24 +24,22 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
 
-    // Extract peer_remote inside lock block, then drop before await
-    let target_cid = group_key.cid;
-    let peer_remote_result = {
+    // RequestJoin is a client-to-server broadcast command: the SERVER owns
+    // group membership and forwards the ask to the group's owner, so it goes
+    // out on the node remote, like respond_request.rs and create.rs. Requiring
+    // a peer remote to the owner refused every joiner whose P2P connection to
+    // the owner was ACCEPTED rather than dialled -- an acceptor-only (and every
+    // agent-answered) connection carries no remote -- before any request left.
+    let remote_result = {
         let server_connection_map = this.server_connection_map.read();
         match server_connection_map.get(&cid) {
-            Some(connection) => match connection.peers.get(&target_cid) {
-                Some(peer_connection) => match &peer_connection.remote {
-                    Some(peer_remote) => Ok(peer_remote.clone()),
-                    None => Err("Could not Request to join Group - Peer connection missing remote (acceptor-only connection)".to_string()),
-                },
-                None => Err("Could not Request to join Group - Peer not found".to_string()),
-            },
+            Some(_connection) => Ok(this.remote().clone()),
             None => Err("Could not Request to join Group - Connection not found".to_string()),
         }
     }; // Lock dropped here - BEFORE any await
 
-    let response = match peer_remote_result {
-        Ok(peer_remote) => {
+    let response = match remote_result {
+        Ok(remote) => {
             let group_request = GroupBroadcast::RequestJoin {
                 sender: cid,
                 key: group_key,
@@ -52,11 +48,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 session_cid: cid,
                 command: group_request,
             });
-            match peer_remote
-                .remote()
-                .send_callback_subscription(request)
-                .await
-            {
+            match remote.send_callback_subscription(request).await {
                 Ok(mut subscription) => {
                     // Bounded, and matching every terminal variant — see
                     // request_join_wait. The loop here named only

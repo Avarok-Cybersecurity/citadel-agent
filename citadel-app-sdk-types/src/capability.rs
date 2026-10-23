@@ -63,10 +63,14 @@ capabilities! {
     NetServer = "net.server" => Net,
     IhttpServe = "ihttp.serve" => Ihttp,
     IhttpCall = "ihttp.call" => Ihttp,
+    IhttpP2pServe = "ihttp.p2p.serve" => Ihttp,
+    IhttpP2pCall = "ihttp.p2p.call" => Ihttp,
     ClipboardRead = "clipboard.read" => Clipboard,
     ClipboardWrite = "clipboard.write" => Clipboard,
     Notifications = "notifications" => Notify,
     Documents = "documents" => Documents,
+    GroupTopicSubscribe = "group.topic.subscribe" => Topic,
+    GroupTopicPublish = "group.topic.publish" => Topic,
 }
 
 impl Capability {

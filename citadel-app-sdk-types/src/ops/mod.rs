@@ -16,8 +16,9 @@ pub trait HostOp: Serialize + DeserializeOwned {
     const NAME: &'static str;
     type Reply: Serialize + DeserializeOwned;
     /// The capabilities any ONE of which admits this call; never empty. Fixed per op, except the
-    /// KV ops, whose backend decides. Only `IhttpConsumed` has two: credit flows back from
-    /// whichever end is reading a body, a server reading a request or a client a response.
+    /// KV ops, whose backend decides. The ihttp ops admit either plane's capability (relay or
+    /// P2P), and the host then checks the plane the call names (`Transport`, `ServeOn`, the
+    /// peer's `via`); credit (`IhttpConsumed`) flows back from whichever end is reading a body.
     fn granted_by(&self) -> &'static [Capability];
 }
 
@@ -108,10 +109,10 @@ groups! {
         NetStreamClose = 5 -> (), NetHost;
     }
     Ihttp = 11, "ihttp", IhttpOps {
-        IhttpServe = 1 -> (), IhttpServe;
-        IhttpRespond = 2 -> (), IhttpServe;
-        IhttpCall = 3 -> (), IhttpCall;
-        IhttpConsumed = 4 -> (), [IhttpServe, IhttpCall];
+        IhttpServe = 1 -> (), [IhttpServe, IhttpP2pServe];
+        IhttpRespond = 2 -> (), [IhttpServe, IhttpP2pServe];
+        IhttpCall = 3 -> (), [IhttpCall, IhttpP2pCall];
+        IhttpConsumed = 4 -> (), [IhttpServe, IhttpCall, IhttpP2pServe, IhttpP2pCall];
     }
     Clipboard = 12, "clipboard", ClipboardOps {
         ClipboardReadText = 1 -> Text, ClipboardRead;
@@ -127,5 +128,10 @@ groups! {
     }
     Log = 15, "log", LogOps {
         LogWrite = 1 -> (), Log;
+    }
+    Topic = 16, "topic", TopicOps {
+        TopicOpen = 1 -> TopicOpened, [GroupTopicSubscribe, GroupTopicPublish];
+        TopicPublish = 2 -> (), GroupTopicPublish;
+        TopicClose = 3 -> (), [GroupTopicSubscribe, GroupTopicPublish];
     }
 }

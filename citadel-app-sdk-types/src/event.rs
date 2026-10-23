@@ -1,6 +1,6 @@
 //! What the host delivers through `app_event`, one CBOR [`AppEvent`] per call.
 
-use crate::calls::{Caller, IhttpFrame, StorageBackend};
+use crate::calls::{Caller, IhttpFrame, StorageBackend, TopicEvent};
 use crate::lifecycle::SuspendReason;
 use alloc::string::String;
 
@@ -82,5 +82,7 @@ abi_types! {
         /// An internal-HTTP frame: a request for a route the app serves, or the response on a
         /// stream it opened.
         Ihttp { from: Caller, frame: IhttpFrame },
+        /// Something happened on topic `name`, which the app opened.
+        Topic { name: String, event: TopicEvent },
     }
 }

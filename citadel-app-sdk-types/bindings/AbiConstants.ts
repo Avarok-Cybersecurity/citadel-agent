@@ -64,6 +64,7 @@ import type { Notify } from "./Notify";
 import type { OpenMenu } from "./OpenMenu";
 import type { RequestFrames } from "./RequestFrames";
 import type { RequestHeight } from "./RequestHeight";
+import type { ServeOn } from "./ServeOn";
 import type { ServerFetch } from "./ServerFetch";
 import type { SetToolbar } from "./SetToolbar";
 import type { ShowDialog } from "./ShowDialog";
@@ -76,6 +77,11 @@ import type { StreamHead } from "./StreamHead";
 import type { Subscribe } from "./Subscribe";
 import type { Text } from "./Text";
 import type { TextMetrics } from "./TextMetrics";
+import type { TopicClose } from "./TopicClose";
+import type { TopicOpen } from "./TopicOpen";
+import type { TopicOpened } from "./TopicOpened";
+import type { TopicPublish } from "./TopicPublish";
+import type { Transport } from "./Transport";
 
 export const ABI_NAMESPACE = "citadel_app_abi_1" as const;
 export const ABI_ID = "citadel-app-abi-1" as const;
@@ -141,6 +147,7 @@ export const GROUPS: Readonly<Record<Group, number>> = {
   notify: 13,
   documents: 14,
   log: 15,
+  topic: 16,
 };
 
 /** The group each capability opens. */
@@ -169,10 +176,14 @@ export const CAPABILITY_GROUP: Readonly<Record<Capability, Group>> = {
   "net.server": "net",
   "ihttp.serve": "ihttp",
   "ihttp.call": "ihttp",
+  "ihttp.p2p.serve": "ihttp",
+  "ihttp.p2p.call": "ihttp",
   "clipboard.read": "clipboard",
   "clipboard.write": "clipboard",
   "notifications": "notify",
   "documents": "documents",
+  "group.topic.subscribe": "topic",
+  "group.topic.publish": "topic",
 };
 
 /** The capability a Kv* op needs, by its `backend` tag. */
@@ -182,6 +193,26 @@ export const KV_BACKEND_CAPABILITY = {
   node: "storage.node",
   local: "storage.local",
 } as const;
+
+/** The capability a client stream's first attempt needs, and its relay fallback's (null: none). */
+export const TRANSPORT_CAPABILITY = {
+  p2p: { first: "ihttp.p2p.call", fallback: null },
+  relay: { first: "ihttp.call", fallback: null },
+  prefer_p2p_then_relay: { first: "ihttp.p2p.call", fallback: "ihttp.call" },
+} as const satisfies Readonly<Record<Transport, { first: Capability; fallback: Capability | null }>>;
+
+/** The capability serving on each plane of ServeOn needs. */
+export const SERVE_PLANE_CAPABILITY = {
+  relay: "ihttp.serve",
+  p2p: "ihttp.p2p.serve",
+} as const satisfies Readonly<Record<keyof ServeOn, Capability>>;
+
+export const MAX_TOPICS = 4 as const;
+export const MAX_TOPIC_NAME_LEN = 32 as const;
+export const TOPIC_MAX_MSG_BYTES_CEILING = 16384 as const;
+export const TOPIC_MAX_MSGS_PER_S_CEILING = 4 as const;
+export const LIMIT_TOPIC_RATE = "topic_rate" as const;
+export const LIMIT_TOPIC_BYTES = "topic_bytes" as const;
 
 /** Every op. `granted_by`: holding ANY ONE of these admits the call; null = decided by the arguments (KV_BACKEND_CAPABILITY). */
 export const OPS = [
@@ -228,10 +259,10 @@ export const OPS = [
   { group: "net", op: 3, name: "HostFetchOpen", granted_by: ["net.host"] },
   { group: "net", op: 4, name: "NetStreamRead", granted_by: ["net.host"] },
   { group: "net", op: 5, name: "NetStreamClose", granted_by: ["net.host"] },
-  { group: "ihttp", op: 1, name: "IhttpServe", granted_by: ["ihttp.serve"] },
-  { group: "ihttp", op: 2, name: "IhttpRespond", granted_by: ["ihttp.serve"] },
-  { group: "ihttp", op: 3, name: "IhttpCall", granted_by: ["ihttp.call"] },
-  { group: "ihttp", op: 4, name: "IhttpConsumed", granted_by: ["ihttp.serve", "ihttp.call"] },
+  { group: "ihttp", op: 1, name: "IhttpServe", granted_by: ["ihttp.serve", "ihttp.p2p.serve"] },
+  { group: "ihttp", op: 2, name: "IhttpRespond", granted_by: ["ihttp.serve", "ihttp.p2p.serve"] },
+  { group: "ihttp", op: 3, name: "IhttpCall", granted_by: ["ihttp.call", "ihttp.p2p.call"] },
+  { group: "ihttp", op: 4, name: "IhttpConsumed", granted_by: ["ihttp.serve", "ihttp.call", "ihttp.p2p.serve", "ihttp.p2p.call"] },
   { group: "clipboard", op: 1, name: "ClipboardReadText", granted_by: ["clipboard.read"] },
   { group: "clipboard", op: 2, name: "ClipboardWriteText", granted_by: ["clipboard.write"] },
   { group: "notify", op: 1, name: "Notify", granted_by: ["notifications"] },
@@ -239,6 +270,9 @@ export const OPS = [
   { group: "documents", op: 2, name: "DocApply", granted_by: ["documents"] },
   { group: "documents", op: 3, name: "DocPull", granted_by: ["documents"] },
   { group: "log", op: 1, name: "LogWrite", granted_by: ["log"] },
+  { group: "topic", op: 1, name: "TopicOpen", granted_by: ["group.topic.subscribe", "group.topic.publish"] },
+  { group: "topic", op: 2, name: "TopicPublish", granted_by: ["group.topic.publish"] },
+  { group: "topic", op: 3, name: "TopicClose", granted_by: ["group.topic.subscribe", "group.topic.publish"] },
 ] as const satisfies readonly { group: Group; op: number; name: string; granted_by: readonly Capability[] | null }[];
 
 /** Op name -> its argument struct. */
@@ -297,6 +331,9 @@ export type OpArgs = {
   DocApply: DocApply;
   DocPull: DocPull;
   LogWrite: LogWrite;
+  TopicOpen: TopicOpen;
+  TopicPublish: TopicPublish;
+  TopicClose: TopicClose;
 };
 
 /** Op name -> the `ok` payload of its HostReply. */
@@ -355,6 +392,9 @@ export type OpReplies = {
   DocApply: null;
   DocPull: DocUpdates;
   LogWrite: null;
+  TopicOpen: TopicOpened;
+  TopicPublish: null;
+  TopicClose: null;
 };
 
 /** THE lifecycle transition table (citadel-app-sdk-types lifecycle.rs): state -> step -> next. A step not listed is illegal. */

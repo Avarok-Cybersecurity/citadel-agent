@@ -51,6 +51,7 @@ pub(crate) fn owns(from: &Caller, stream: u64) -> bool {
 pub(crate) fn serve<A: 'static, R: RawAbi + 'static>(
     raw: &R,
     routes: Vec<Route>,
+    on: ServeOn,
     mut handler: impl FnMut(&mut A, Request, ResponseWriter) + 'static,
 ) -> Pending<()> {
     let handler: Handler = Box::new(move |app, request, writer| {
@@ -63,7 +64,7 @@ pub(crate) fn serve<A: 'static, R: RawAbi + 'static>(
     });
     SERVER.with(|s| s.borrow_mut().handler = Some(handler));
     super::install::<R>();
-    start(raw, &IhttpServe { routes })
+    start(raw, &IhttpServe { routes, on })
 }
 
 fn complete(from: Caller, stream: u64, app: &mut dyn Any) {

@@ -5,7 +5,7 @@
 
 use crate::abi::RawAbi;
 use crate::life::{admit, Admit};
-use crate::{ihttp, pending, App, InitFailure};
+use crate::{pending, App, InitFailure};
 use citadel_app_sdk_types::abi::InitResult;
 use citadel_app_sdk_types::calls::{LogLevel, LogWrite};
 use citadel_app_sdk_types::lifecycle::IllegalTransition;
@@ -145,18 +145,7 @@ pub(crate) fn event_with<A: App>(
         },
         Admit::Deliver => {}
     }
-    match event {
-        AppEvent::Suspend { reason } => app.suspend(reason),
-        AppEvent::Resume => app.resume(),
-        AppEvent::ReplyReady { handle } if pending::reply_ready(raw, handle) => {}
-        AppEvent::Ihttp { from, frame } => {
-            if let Some((from, frame)) = ihttp::route(raw, from, frame, app) {
-                app.event(AppEvent::Ihttp { from, frame });
-            }
-        }
-        AppEvent::Frame { dt_ms } => app.frame(dt_ms),
-        other => app.event(other),
-    }
+    crate::route::deliver(raw, app, event);
     settle(raw, app);
     Delivery::Delivered
 }

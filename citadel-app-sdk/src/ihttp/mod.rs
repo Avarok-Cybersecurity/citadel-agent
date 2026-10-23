@@ -4,11 +4,19 @@
 //! and assembles the response. Who called is [`Caller`], stamped by the session or the kernel.
 
 mod client;
+mod client_whole;
+mod fanout;
+mod fanout_plan;
 mod outbox;
 mod server;
 
-pub use citadel_app_sdk_types::calls::{Address, Caller, Headers, ResponseHead, Route};
+pub use citadel_app_sdk_types::calls::{
+    Address, Caller, Headers, ResponseHead, Route, ServeOn, Transport, Via,
+};
 pub use client::ClientEvent;
+pub(crate) use fanout::tick as fanout_tick;
+pub use fanout::{FanoutHandle, FanoutLimits, Outcome};
+pub use fanout_plan::{LIMIT_PER_CALL_MS, LIMIT_TOTAL_BYTES, POLICY_ZERO_LIMIT};
 pub use server::ResponseWriter;
 
 use crate::abi::RawAbi;
@@ -38,11 +46,20 @@ pub struct Outbound {
     pub body: Vec<u8>,
 }
 
-/// A whole response.
+/// A whole response, and the plane that carried it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Response {
     pub head: ResponseHead,
+    pub via: Via,
     pub body: Vec<u8>,
+}
+
+/// A call in flight. Dropping it does not cancel; [`CallHandle::cancel`] does.
+#[derive(Debug)]
+#[must_use = "keep the handle to cancel the call, or drop it to let the call run"]
+pub struct CallHandle {
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    key: client::Key,
 }
 
 type Hook<R> = fn(&R, Caller, IhttpFrame, &mut dyn Any) -> Option<(Caller, IhttpFrame)>;
@@ -101,12 +118,50 @@ mod wasm {
     use crate::Pending;
     use citadel_app_sdk_types::Refused;
 
-    /// Advertise `routes` and hand every complete request to `handler`, with the app.
+    /// Advertise `routes` on the planes `on` names and hand every complete request to
+    /// `handler`, with the app. Who called, and over which plane, is `Request::caller`.
     pub fn serve<A: 'static>(
         routes: Vec<Route>,
+        on: ServeOn,
         handler: impl FnMut(&mut A, Request, ResponseWriter) + 'static,
     ) -> Pending<()> {
-        server::serve(&WASM, routes, handler)
+        server::serve(&WASM, routes, on, handler)
+    }
+
+    impl CallHandle {
+        /// Give up: `Cancel { caller }` goes to the server; the call ends `Failed`.
+        pub fn cancel(self) {
+            client::cancel(&WASM, &self.key)
+        }
+    }
+
+    impl FanoutHandle {
+        /// End the fan-out: running calls are cancelled, and they and the waiting ones skipped.
+        pub fn cancel(self) {
+            fanout::cancel(self.id)
+        }
+    }
+
+    /// Call every target with `request` on `transport`, at most `limits.max_concurrency` at
+    /// once, within `limits`. `each` runs as each target finishes (its index and outcome);
+    /// `done` runs once, with every target's outcome and plane, whatever failed.
+    pub fn fanout<A: 'static>(
+        targets: Vec<Address>,
+        request: Outbound,
+        transport: Transport,
+        limits: FanoutLimits,
+        each: impl FnMut(&mut A, usize, &Outcome) + 'static,
+        done: impl FnOnce(&mut A, Vec<(Address, Outcome, Via)>) + 'static,
+    ) -> FanoutHandle {
+        fanout::start(
+            std::rc::Rc::new(crate::ffi::Wasm),
+            targets,
+            request,
+            transport,
+            limits,
+            each,
+            done,
+        )
     }
 
     impl ResponseWriter {
@@ -116,15 +171,17 @@ mod wasm {
         }
     }
 
-    /// Calls the internal HTTP server at one address.
+    /// Calls the internal HTTP server at one address, on one transport. There is no default
+    /// transport: every client names one.
     #[derive(Clone, Debug)]
     pub struct Client {
         pub to: Address,
+        pub transport: Transport,
     }
 
     impl Client {
-        pub fn new(to: Address) -> Client {
-            Client { to }
+        pub fn new(to: Address, transport: Transport) -> Client {
+            Client { to, transport }
         }
 
         /// The response, whole, to `f` with the app.
@@ -132,8 +189,9 @@ mod wasm {
             &self,
             request: Outbound,
             f: impl FnOnce(&mut A, Result<Response, Refused>) + 'static,
-        ) {
-            client::call(&WASM, self.to.clone(), request, f)
+        ) -> CallHandle {
+            let key = client_whole::call(&WASM, self.to.clone(), self.transport, request, f);
+            CallHandle { key }
         }
 
         /// The response as it streams, to `on` with the app.
@@ -141,8 +199,9 @@ mod wasm {
             &self,
             request: Outbound,
             on: impl FnMut(&mut A, ClientEvent) + 'static,
-        ) {
-            client::call_stream(&WASM, self.to.clone(), request, on)
+        ) -> CallHandle {
+            let key = client::call_stream(&WASM, self.to.clone(), self.transport, request, on);
+            CallHandle { key }
         }
     }
 }

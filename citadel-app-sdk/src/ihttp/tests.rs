@@ -5,12 +5,12 @@ use citadel_app_sdk_types::calls::*;
 use citadel_app_sdk_types::{decode, encode, Bytes, HostOp, HostReply, Refused};
 
 #[derive(Default)]
-struct App {
-    served: Vec<Request>,
-    responses: Vec<Result<Response, Refused>>,
+pub(crate) struct App {
+    pub served: Vec<Request>,
+    pub responses: Vec<Result<Response, Refused>>,
 }
 
-fn ok_host() -> Fake {
+pub(crate) fn ok_host() -> Fake {
     let f = Fake::default();
     for _ in 0..64 {
         f.queue.borrow_mut().push_back(encode(&HostReply::Ok(())));
@@ -18,7 +18,7 @@ fn ok_host() -> Fake {
     f
 }
 
-fn caller(app_id: &str) -> Caller {
+pub(crate) fn caller(app_id: &str) -> Caller {
     Caller {
         username: "bob".into(),
         cid: 9,
@@ -48,7 +48,7 @@ fn body(b: &[u8]) -> FrameKind {
 }
 
 /// The frames the app sent with `op`, decoded.
-fn sent<O: HostOp>(fake: &Fake) -> Vec<O> {
+pub(crate) fn sent<O: HostOp>(fake: &Fake) -> Vec<O> {
     fake.calls
         .borrow()
         .iter()
@@ -57,7 +57,7 @@ fn sent<O: HostOp>(fake: &Fake) -> Vec<O> {
         .collect()
 }
 
-fn feed(
+pub(crate) fn feed(
     fake: &Fake,
     app: &mut App,
     from: &Caller,
@@ -84,9 +84,14 @@ fn a_served_request_is_assembled_each_chunk_credited_and_the_response_waits_for_
         method: HttpMethod::Post,
         path: "/x".into(),
     }];
+    let on = ServeOn {
+        relay: true,
+        p2p: true,
+    };
     let mut advertised = super::server::serve(
         &*fake,
         routes,
+        on,
         move |app: &mut App, req: Request, w: ResponseWriter| {
             app.served.push(req);
             w.respond_with(&*respond_host, 200, vec![], &vec![7u8; 5 * 65_536 + 1])
@@ -95,6 +100,7 @@ fn a_served_request_is_assembled_each_chunk_credited_and_the_response_waits_for_
     );
     assert_eq!(advertised.take_ready(), Some(Ok(())));
     assert_eq!(sent::<IhttpServe>(&fake)[0].routes[0].path, "/x");
+    assert_eq!(sent::<IhttpServe>(&fake)[0].on, on, "the planes as asked");
     let from = caller("other");
     for kind in [head(4), body(b"ab"), body(b"cd"), FrameKind::End] {
         assert!(feed(&fake, &mut app, &from, 3, kind).is_none());
@@ -147,7 +153,14 @@ fn a_client_call_sends_head_body_end_and_assembles_the_response_crediting_each_c
         headers: vec![("x".into(), "y".into())],
         body: b"hi".to_vec(),
     };
-    super::client::call(&fake, to, out, |app: &mut App, r| app.responses.push(r));
+    super::client_whole::call(&fake, to, Transport::P2p, out, |app: &mut App, r| {
+        app.responses.push(r)
+    });
+    let calls = sent::<IhttpCall>(&fake);
+    assert!(
+        calls.iter().all(|c| c.transport == Transport::P2p),
+        "every frame names it"
+    );
     let frames: Vec<IhttpFrame> = sent::<IhttpCall>(&fake)
         .into_iter()
         .map(|c| c.frame)
@@ -179,6 +192,7 @@ fn a_client_call_sends_head_body_end_and_assembles_the_response_crediting_each_c
         app.responses,
         [Ok(Response {
             head: rh,
+            via: Via::P2p,
             body: b"ok!".to_vec()
         })]
     );
@@ -215,7 +229,9 @@ fn a_refused_call_fails_the_client_once_and_never_inside_the_callers_borrow() {
         headers: vec![],
         body: vec![],
     };
-    super::client::call(&fake, to, out, |app: &mut App, r| app.responses.push(r));
+    super::client_whole::call(&fake, to, Transport::Relay, out, |app: &mut App, r| {
+        app.responses.push(r)
+    });
     assert!(app.responses.is_empty(), "not run inside call");
     drain(&mut app);
     assert_eq!(app.responses, [Err(Refused::Ungranted)]);

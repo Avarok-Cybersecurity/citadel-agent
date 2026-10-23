@@ -17,7 +17,8 @@ impl TelemetryUplink {
     }
 
     /// Sends each metered session's growth since the last flush. A report that cannot be framed
-    /// or sent is dropped, not retried: the bytes it carried go unmetered.
+    /// or sent is dropped, not retried: the bytes it carried go unmetered. Accepted for v1, as
+    /// it under-meters, in the customer's favour; the ledger has already counted them reported.
     pub(super) async fn flush_turn(&self, link: &dyn SessionLink) {
         let due = self.turn.lock().take();
         for (cid, bytes) in due {

@@ -21,6 +21,10 @@ async fn a_metered_session_reports_its_turn_bytes_without_opting_in() {
         !uplink.on_server_frame(ALICE, b"recorded"),
         "the answer stops at the agent"
     );
+    assert!(
+        !uplink.on_server_frame(ALICE, b"over-cap"),
+        "so does a refusal"
+    );
     bytes.store(500, Ordering::SeqCst);
     let link = Link::default();
     uplink.flush(&link).await;

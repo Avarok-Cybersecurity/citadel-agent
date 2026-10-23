@@ -29,7 +29,7 @@ use std::time::Duration;
 const LOG_TARGET: &str = "citadel::telemetry";
 
 /// What a frame the server sent a session means for telemetry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerSignal {
     /// Not a telemetry answer: forwarded to the session's windows untouched.
     Unrelated,
@@ -43,6 +43,8 @@ pub enum ServerSignal {
     },
     /// A TURN usage report was recorded.
     TurnUsageRecorded,
+    /// A TURN usage report was refused whole, with the server's reason (its per-member cap).
+    TurnUsageRefused(String),
     /// An upload was stored.
     UploadStored,
     /// An upload was refused: consent is off or the terms changed since it was given.
@@ -151,6 +153,11 @@ impl TelemetryUplink {
                 }
             }
             ServerSignal::UploadStored | ServerSignal::TurnUsageRecorded => return false,
+            // Not retried: those bytes go unmetered, in the customer's favour.
+            ServerSignal::TurnUsageRefused(reason) => {
+                warn!(target: LOG_TARGET, "TURN usage report for session {cid} refused: {reason}");
+                return false;
+            }
             // Stop, and discard what is held, until a consent answer allows uploads again.
             ServerSignal::UploadRefused => (self.collector.opt_out(cid), false),
         };

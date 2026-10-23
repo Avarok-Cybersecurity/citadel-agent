@@ -46,6 +46,7 @@ impl TelemetryCodec for Codec {
             b"denied" => consent(false, true, false),
             b"metered" => consent(false, true, true),
             b"recorded" => ServerSignal::TurnUsageRecorded,
+            b"over-cap" => ServerSignal::TurnUsageRefused("over the cap".into()),
             b"stored" => ServerSignal::UploadStored,
             b"refused" => ServerSignal::UploadRefused,
             _ => ServerSignal::Unrelated,

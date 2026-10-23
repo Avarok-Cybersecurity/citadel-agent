@@ -1668,6 +1668,13 @@ pub enum InternalServiceRequest {
         #[cfg_attr(feature = "typescript", ts(type = "UserIdentifier[] | null"))]
         initial_users_to_invite: Option<Vec<UserIdentifier>>,
     },
+    /// The group one app topic rides: owner-accepted joins, no invitees (see the agent's
+    /// `app_topic_group_options`). Answered with `GroupCreateSuccess`/`GroupCreateFailure`.
+    GroupCreateAppTopic {
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        request_id: Uuid,
+    },
     GroupLeave {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
@@ -2255,6 +2262,7 @@ impl InternalServiceRequest {
             Self::LocalDBGetAllKV { cid, .. } => Some(*cid),
             Self::LocalDBClearAllKV { cid, .. } => Some(*cid),
             Self::GroupCreate { cid, .. } => Some(*cid),
+            Self::GroupCreateAppTopic { cid, .. } => Some(*cid),
             Self::GroupLeave { cid, .. } => Some(*cid),
             Self::GroupEnd { cid, .. } => Some(*cid),
             Self::GroupMessage { cid, .. } => Some(*cid),

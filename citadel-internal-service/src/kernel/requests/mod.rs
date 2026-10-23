@@ -315,6 +315,10 @@ where
             group::create::handle(this, uuid, command).await
         }
 
+        InternalServiceRequest::GroupCreateAppTopic { .. } => {
+            group::app_topic::handle(this, uuid, command).await
+        }
+
         InternalServiceRequest::GroupLeave { .. } => {
             group::leave::handle(this, uuid, command).await
         }
@@ -813,11 +817,14 @@ fn refusal_response(
         }),
         InternalServiceRequest::GroupCreate {
             request_id, cid, ..
-        } => InternalServiceResponse::GroupCreateFailure(GroupCreateFailure {
-            cid: *cid,
-            message: message.to_string(),
-            request_id: Some(*request_id),
-        }),
+        }
+        | InternalServiceRequest::GroupCreateAppTopic { request_id, cid } => {
+            InternalServiceResponse::GroupCreateFailure(GroupCreateFailure {
+                cid: *cid,
+                message: message.to_string(),
+                request_id: Some(*request_id),
+            })
+        }
         InternalServiceRequest::GroupEnd {
             request_id, cid, ..
         } => InternalServiceResponse::GroupEndFailure(GroupEndFailure {

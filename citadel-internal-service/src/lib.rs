@@ -1,4 +1,5 @@
 pub mod kernel;
+pub mod path_policy;
 pub mod stun;
 pub mod telemetry;
 pub mod updater;

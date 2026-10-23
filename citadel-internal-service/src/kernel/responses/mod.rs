@@ -11,6 +11,7 @@ mod peer_channel_created;
 
 mod group_channel_created;
 pub(crate) mod group_event;
+pub(crate) mod group_refusal;
 mod peer_event;
 
 pub async fn handle_node_result<T: IOInterface + Sync, R: Ratchet>(

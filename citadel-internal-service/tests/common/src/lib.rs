@@ -789,6 +789,7 @@ pub fn server_test_node_on_listener<'a, K: NetKernel<R> + 'a, R: Ratchet>(
         .with_stun_servers(test_stun_servers().as_slice().to_vec())
         .with_backend(test_backend())
         .with_node_type(NodeType::Server(bind_addr))
+        .with_path_policy(citadel_sdk::test_common::localhost_path_policy())
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(ServerMode::OrderedReliable(
             NativeOrderedReliableConfig::from_std_listener(tcp_listener).unwrap(),
@@ -815,6 +816,7 @@ pub fn server_test_node_skip_cert_verification_with_password<
         .with_stun_servers(test_stun_servers().as_slice().to_vec())
         .with_backend(test_backend())
         .with_node_type(NodeType::Server(bind_addr))
+        .with_path_policy(citadel_sdk::test_common::localhost_path_policy())
         .with_server_password(server_password)
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(ServerMode::OrderedReliable(

@@ -24,6 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_node = stun_servers
         .apply(&mut NodeBuilder::<RatchetType>::default())
         .with_node_type(NodeType::Server(server_addr))
+        .with_path_policy(citadel_internal_service::path_policy::every_path_policy()?)
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(ServerMode::OrderedReliable(
             NativeOrderedReliableConfig::from_std_listener(server_listener)?,

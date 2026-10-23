@@ -19,7 +19,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut builder = stun_servers
         .apply(&mut builder)
         .with_backend(BackendType::InMemory)
-        .with_node_type(NodeType::server(opts.bind)?);
+        .with_node_type(NodeType::server(opts.bind)?)
+        .with_path_policy(citadel_internal_service::path_policy::every_path_policy()?);
 
     if opts.dangerous.unwrap_or(false) {
         builder = builder.with_insecure_skip_cert_verification()

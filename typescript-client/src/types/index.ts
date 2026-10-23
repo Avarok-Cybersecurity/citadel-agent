@@ -93,6 +93,8 @@ export * from './GroupListJoinedSuccess.js';
 export * from './GroupMemberStateChangeNotification.js';
 export * from './GroupMembershipResponse.js';
 export * from './GroupMessageDroppedNotification.js';
+export * from './GroupMessageRefusalReason.js';
+export * from './GroupMessageRefusedNotification.js';
 export * from './GroupMessageFailure.js';
 export * from './GroupMessageNotification.js';
 export * from './GroupMessageResponse.js';

@@ -82,6 +82,8 @@ citadel-release-signature = { workspace = true }
 citadel-app-id = { workspace = true }
 citadel-app-net-policy = { workspace = true }
 citadel-ihttp-types = { workspace = true }
+# The app ABI's topic ceilings, which an app-topic group's server-side caps are held to.
+citadel-app-sdk-types = { path = "../citadel-app-sdk-types" }
 # Probing whether the install location is writable, and atomic temporary files beside it.
 tempfile = "3"
 

@@ -31,9 +31,15 @@ impl TelemetryCodec for Codec {
         match frame {
             b"allowed" => ServerSignal::Consent {
                 uploads_allowed: true,
+                takes_metrics: true,
+            },
+            b"allowed-no-metrics" => ServerSignal::Consent {
+                uploads_allowed: true,
+                takes_metrics: false,
             },
             b"denied" => ServerSignal::Consent {
                 uploads_allowed: false,
+                takes_metrics: true,
             },
             b"stored" => ServerSignal::UploadStored,
             b"refused" => ServerSignal::UploadRefused,
@@ -226,4 +232,16 @@ async fn a_window_s_lines_follow_the_server_s_consent_and_nothing_else() {
     assert!(sent[0].1.ends_with(" clicked") && !sent[0].1.contains("alice"));
     uplink.on_server_frame(ALICE, b"denied");
     assert_eq!(uplink.browser_console(ALICE, &console_line("late")), 0);
+}
+
+#[test]
+fn metrics_are_captured_only_for_a_server_that_stores_them() {
+    let uplink = uplink();
+    let metric = crate::telemetry::metric_fixture::path_report(1);
+    uplink.on_server_frame(ALICE, b"allowed-no-metrics");
+    assert!(!uplink
+        .collector()
+        .capture_metric(ALICE, BOB, metric.clone()));
+    uplink.on_server_frame(ALICE, b"allowed");
+    assert!(uplink.collector().capture_metric(ALICE, BOB, metric));
 }

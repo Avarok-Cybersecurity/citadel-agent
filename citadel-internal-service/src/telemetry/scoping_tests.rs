@@ -25,8 +25,8 @@ fn collector() -> Arc<TelemetryCollector> {
     collector
         .learn_peer(ALICE, REMOTE_PEER, name("carol"))
         .unwrap();
-    collector.opt_in(ALICE).unwrap();
-    collector.opt_in(BOB).unwrap();
+    collector.opt_in(ALICE, true).unwrap();
+    collector.opt_in(BOB, true).unwrap();
     collector
 }
 

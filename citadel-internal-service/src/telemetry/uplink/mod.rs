@@ -31,8 +31,12 @@ const LOG_TARGET: &str = "citadel::telemetry";
 pub enum ServerSignal {
     /// Not a telemetry answer: forwarded to the session's windows untouched.
     Unrelated,
-    /// The session's consent as the server holds it: whether an upload would be stored.
-    Consent { uploads_allowed: bool },
+    /// The session's consent as the server holds it: whether an upload would be stored, and
+    /// whether the server stores metric entries (one built before metrics does not).
+    Consent {
+        uploads_allowed: bool,
+        takes_metrics: bool,
+    },
     /// An upload was stored.
     UploadStored,
     /// An upload was refused: consent is off or the terms changed since it was given.
@@ -125,9 +129,11 @@ impl TelemetryUplink {
             ServerSignal::Unrelated => return true,
             ServerSignal::Consent {
                 uploads_allowed: true,
-            } => (self.collector.opt_in(cid), true),
+                takes_metrics,
+            } => (self.collector.opt_in(cid, takes_metrics), true),
             ServerSignal::Consent {
                 uploads_allowed: false,
+                ..
             } => (self.collector.opt_out(cid), true),
             ServerSignal::UploadStored => return false,
             // Stop, and discard what is held, until a consent answer allows uploads again.

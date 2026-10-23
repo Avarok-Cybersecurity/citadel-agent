@@ -26,4 +26,6 @@ pub use redact::{KnownValue, RedactionKind};
 pub use uplink::{ServerSignal, SessionLink, TelemetryCodec, TelemetryUplink};
 
 #[cfg(test)]
+mod metric_fixture;
+#[cfg(test)]
 mod scoping_tests;

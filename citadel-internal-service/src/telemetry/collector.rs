@@ -50,9 +50,10 @@ impl TelemetryCollector {
         self.core.lock().learn_peer(session_cid, peer_cid, identity)
     }
 
-    pub fn opt_in(&self, cid: u64) -> Result<(), TelemetryError> {
+    /// See `CollectorCore::opt_in`.
+    pub fn opt_in(&self, cid: u64, takes_metrics: bool) -> Result<(), TelemetryError> {
         let salt = fresh_salt()?;
-        self.update(|core| core.opt_in(cid, salt))
+        self.update(|core| core.opt_in(cid, salt, takes_metrics))
     }
 
     pub fn opt_out(&self, cid: u64) -> Result<(), TelemetryError> {

@@ -47,7 +47,7 @@ fn messages(core: &mut CollectorCore, cid: u64) -> Vec<String> {
 #[test]
 fn the_ring_evicts_oldest_at_the_count_bound() {
     let mut core = core(2, 1_000, 100);
-    core.opt_in(A, salt(1)).unwrap();
+    core.opt_in(A, salt(1), true).unwrap();
     for line in ["one", "two", "three"] {
         core.capture(&event(Some(A), line));
     }
@@ -58,7 +58,7 @@ fn the_ring_evicts_oldest_at_the_count_bound() {
 fn the_ring_evicts_oldest_at_the_byte_bound() {
     // Each entry is 10 bytes of message plus 7 of target: two fit in 40, three do not.
     let mut core = core(100, 40, 20);
-    core.opt_in(A, salt(1)).unwrap();
+    core.opt_in(A, salt(1), true).unwrap();
     for line in ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"] {
         core.capture(&event(Some(A), line));
     }
@@ -68,7 +68,7 @@ fn the_ring_evicts_oldest_at_the_byte_bound() {
 #[test]
 fn long_messages_are_cut_on_a_char_boundary() {
     let mut core = core(10, 100, 5);
-    core.opt_in(A, salt(1)).unwrap();
+    core.opt_in(A, salt(1), true).unwrap();
     core.capture(&event(Some(A), "abcdé-more"));
     assert_eq!(messages(&mut core, A), ["abcd"]);
 }
@@ -76,13 +76,13 @@ fn long_messages_are_cut_on_a_char_boundary() {
 #[test]
 fn opting_out_discards_the_ring_and_stops_capture() {
     let mut core = core(10, 1_000, 100);
-    core.opt_in(A, salt(1)).unwrap();
+    core.opt_in(A, salt(1), true).unwrap();
     core.capture(&event(Some(A), "kept until opt-out"));
     core.opt_out(A).unwrap();
     assert!(!core.is_capturing());
     core.capture(&event(Some(A), "after"));
     assert_eq!(core.drain(A, salt(0)), Err(TelemetryError::NotOptedIn(A)));
-    core.opt_in(A, salt(1)).unwrap();
+    core.opt_in(A, salt(1), true).unwrap();
     assert!(messages(&mut core, A).is_empty());
 }
 
@@ -90,7 +90,7 @@ fn opting_out_discards_the_ring_and_stops_capture() {
 fn unknown_sessions_fail_fast() {
     let mut core = core(10, 1_000, 100);
     assert_eq!(
-        core.opt_in(7, salt(1)),
+        core.opt_in(7, salt(1), true),
         Err(TelemetryError::UnknownSession(7))
     );
     assert_eq!(
@@ -104,8 +104,8 @@ fn unknown_sessions_fail_fast() {
 #[test]
 fn a_session_line_goes_only_to_that_session() {
     let mut core = core(10, 1_000, 100);
-    core.opt_in(A, salt(1)).unwrap();
-    core.opt_in(B, salt(2)).unwrap();
+    core.opt_in(A, salt(1), true).unwrap();
+    core.opt_in(B, salt(2), true).unwrap();
     core.capture(&event(Some(A), "for a"));
     assert_eq!(messages(&mut core, A), ["for a"]);
     assert!(messages(&mut core, B).is_empty());
@@ -115,8 +115,8 @@ fn a_session_line_goes_only_to_that_session() {
 fn agent_wide_lines_are_redacted_and_scoped() {
     let mut core = core(10, 1_000, 100);
     core.learn_peer(A, REMOTE, user("carol")).unwrap();
-    core.opt_in(A, salt(1)).unwrap();
-    core.opt_in(B, salt(2)).unwrap();
+    core.opt_in(A, salt(1), true).unwrap();
+    core.opt_in(B, salt(2), true).unwrap();
     core.capture(&event(None, "carol at 10.0.0.1 failed"));
     core.capture(&event(None, &format!("session {B} dropped")));
     core.capture(&event(None, &format!("peer {REMOTE} dropped")));
@@ -141,7 +141,7 @@ fn agent_wide_lines_are_redacted_and_scoped() {
 #[test]
 fn a_drain_starts_a_new_salt() {
     let mut core = core(10, 1_000, 100);
-    core.opt_in(A, salt(1)).unwrap();
+    core.opt_in(A, salt(1), true).unwrap();
     core.capture(&event(Some(A), "alice"));
     let first = core.drain(A, salt(2)).unwrap();
     core.capture(&event(Some(A), "alice"));
@@ -153,7 +153,7 @@ fn a_drain_starts_a_new_salt() {
 #[test]
 fn a_session_line_naming_another_local_session_redacts_that_cid() {
     let mut core = core(10, 1_000, 100);
-    core.opt_in(A, salt(1)).unwrap();
+    core.opt_in(A, salt(1), true).unwrap();
     core.capture(&event(Some(A), &format!("route {B} via {REMOTE} for {A}")));
     let a = messages(&mut core, A);
     assert_eq!(a.len(), 1, "{a:?}");

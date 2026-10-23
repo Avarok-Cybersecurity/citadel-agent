@@ -11,7 +11,8 @@ pub const METRIC_TARGET: &str = "citadel::metric";
 
 impl CollectorCore {
     /// Keeps `metric`, measured at `time_ms` on `cid`'s connection to `peer_cid`; returns whether
-    /// it was kept (it is not for a session that is unknown or has not opted in).
+    /// it was kept (it is not for a session that is unknown, has not opted in, or whose server
+    /// stores no metrics).
     pub fn capture_metric(
         &mut self,
         cid: u64,
@@ -20,7 +21,12 @@ impl CollectorCore {
         metric: TelemetryMetric,
     ) -> bool {
         let config = self.config;
-        let Some(ring) = self.sessions.get_mut(&cid).and_then(|s| s.ring.as_mut()) else {
+        let Some(ring) = self
+            .sessions
+            .get_mut(&cid)
+            .and_then(|s| s.ring.as_mut())
+            .filter(|ring| ring.takes_metrics)
+        else {
             return false;
         };
         let entry = TelemetryEntry {

@@ -1,9 +1,9 @@
 //! The STUN servers the agent hands the SDK for NAT identification.
 //!
-//! There is no default. The SDK falls back to a built-in list when none is
-//! given, which means every agent quietly reports its public address to
-//! whichever third parties that list names. The operator chooses them instead,
-//! and the agent refuses to start until they have.
+//! There is no default, here or in the SDK, whose `NodeBuilder::build` refuses a
+//! node without a list: a built-in one would have every agent quietly report its
+//! public address to whichever third parties it names. The operator chooses
+//! them, and the agent refuses to start until they have.
 
 use citadel_sdk::prelude::{NodeBuilder, Ratchet};
 use std::net::Ipv6Addr;
@@ -13,10 +13,11 @@ pub const STUN_SERVERS_ENV: &str = "INTERNAL_SERVICE_STUN_SERVERS";
 /// The command-line flag the binaries accept the list on.
 pub const STUN_SERVERS_FLAG: &str = "--stun-servers";
 
-/// Exactly how many servers the SDK accepts. `NodeBuilder::build` refuses any
-/// other count ("There must be exactly 3 specified STUN servers"), because NAT
-/// classification compares the address each of three servers reports. Checked
-/// here so a wrong count names the flag instead of surfacing from the SDK.
+/// How many servers the agent takes. The SDK requires at least three distinct
+/// endpoints (`StunServers::new`), because NAT classification compares the
+/// address each reports; the agent's flag, its installers and the setup page
+/// all name exactly three. Checked here so a wrong count names the flag instead
+/// of surfacing from the SDK.
 pub const STUN_SERVER_COUNT: usize = 3;
 
 /// Longest `host:port` accepted: a maximal DNS name plus `:65535`.

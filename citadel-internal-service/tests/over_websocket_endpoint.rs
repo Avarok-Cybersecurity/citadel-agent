@@ -49,6 +49,7 @@ async fn spawn_agent(insecure: bool) -> Result<SocketAddr, Box<dyn Error>> {
     .await?;
     let mut builder = NodeBuilder::default();
     let builder = builder
+        .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
         .with_backend(BackendType::InMemory)
         .with_node_type(NodeType::Peer);
     if insecure {

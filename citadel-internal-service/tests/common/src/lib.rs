@@ -786,6 +786,7 @@ pub fn server_test_node_on_listener<'a, K: NetKernel<R> + 'a, R: Ratchet>(
     let mut builder = NodeBuilder::<R>::default();
     let bind_addr = tcp_listener.local_addr().unwrap();
     let builder = builder
+        .with_stun_servers(test_stun_servers().as_slice().to_vec())
         .with_backend(test_backend())
         .with_node_type(NodeType::Server(bind_addr))
         .with_insecure_skip_cert_verification()
@@ -811,6 +812,7 @@ pub fn server_test_node_skip_cert_verification_with_password<
     let tcp_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let bind_addr = tcp_listener.local_addr().unwrap();
     let builder = builder
+        .with_stun_servers(test_stun_servers().as_slice().to_vec())
         .with_backend(test_backend())
         .with_node_type(NodeType::Server(bind_addr))
         .with_server_password(server_password)

@@ -56,14 +56,14 @@ citadel-app-net-policy = { path = "citadel-app-net-policy", version = "0.1.0" }
 citadel-ihttp-types = { path = "citadel-ihttp-types", version = "0.1.0" }
 
 # Avarok deps
-citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "eb9c0b75" }
-citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "eb9c0b75" }
-citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "eb9c0b75" }
-citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "eb9c0b75" }
-citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "eb9c0b75" }
-citadel_proto = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "eb9c0b75" }
+citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "71c01205" }
+citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "71c01205" }
+citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "71c01205" }
+citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "71c01205" }
+citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "71c01205" }
+citadel_proto = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "71c01205" }
 # Tests only: the server-side post-quantum sign-in settings (tests/common/src/pq.rs).
-citadel_user = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "eb9c0b75" }
+citadel_user = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "71c01205" }
 
 # Standard deps
 serde = { version = "1.0.104", features = ["derive"] }

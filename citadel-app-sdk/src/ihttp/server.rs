@@ -184,7 +184,13 @@ fn flush(raw: &impl RawAbi, k: &Key) -> Result<(), Refused> {
                 return Err(e);
             }
             Some(Ok(())) => {}
-            None => sent.watch("ihttp respond"),
+            // Refused later (the host awaits the agent or the server): the stream is closed then.
+            None => {
+                let k = k.clone();
+                sent.watch_then("ihttp respond", move |_| {
+                    SERVER.with(|s| s.borrow_mut().outgoing.remove(&k));
+                });
+            }
         }
         if last {
             SERVER.with(|s| s.borrow_mut().outgoing.remove(k));

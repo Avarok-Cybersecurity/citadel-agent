@@ -169,7 +169,11 @@ fn flush(raw: &impl RawAbi, k: &Key) {
         match sent.take_ready() {
             Some(Err(e)) => return finish(k, ClientEvent::Failed(e)),
             Some(Ok(())) => {}
-            None => sent.watch("ihttp call"),
+            // Answered later (the host awaits the kernel or the agent): a refusal still ends the call.
+            None => {
+                let k = k.clone();
+                sent.watch_then("ihttp call", move |e| finish(&k, ClientEvent::Failed(e)));
+            }
         }
     }
 }

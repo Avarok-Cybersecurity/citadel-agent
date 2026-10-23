@@ -39,6 +39,7 @@ async fn agent(transfers: BrowserTransferRoot, backend: BackendType) -> SocketAd
     .await
     .unwrap();
     let node = NodeBuilder::default()
+        .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
         .with_backend(backend)
         .with_node_type(NodeType::Peer)
         .with_insecure_skip_cert_verification()

@@ -53,7 +53,7 @@ fn drained(core: &mut CollectorCore, cid: u64) -> Vec<TelemetryEntry> {
 #[test]
 fn nothing_is_kept_for_a_session_that_has_not_opted_in() {
     let mut core = core(100);
-    core.opt_in(B, Salt::from_bytes([1; 32])).unwrap();
+    core.opt_in(B, Salt::from_bytes([1; 32]), true).unwrap();
     assert_eq!(core.capture_browser(A, 1, &[line("boom")], &limits(10)), 0);
     assert!(
         drained(&mut core, B).is_empty(),
@@ -65,8 +65,8 @@ fn nothing_is_kept_for_a_session_that_has_not_opted_in() {
 #[test]
 fn a_kept_line_is_the_window_s_session_s_alone() {
     let mut core = core(100);
-    core.opt_in(A, Salt::from_bytes([1; 32])).unwrap();
-    core.opt_in(B, Salt::from_bytes([2; 32])).unwrap();
+    core.opt_in(A, Salt::from_bytes([1; 32]), true).unwrap();
+    core.opt_in(B, Salt::from_bytes([2; 32]), true).unwrap();
     assert_eq!(core.capture_browser(A, 9, &[line("boom")], &limits(10)), 1);
     let mine = drained(&mut core, A);
     assert_eq!(mine.len(), 1);
@@ -80,7 +80,7 @@ fn a_kept_line_is_the_window_s_session_s_alone() {
 #[test]
 fn a_flooding_window_cannot_evict_the_agent_s_own_lines() {
     let mut core = core(10);
-    core.opt_in(A, Salt::from_bytes([1; 32])).unwrap();
+    core.opt_in(A, Salt::from_bytes([1; 32]), true).unwrap();
     core.capture(&CapturedEvent {
         time_ms: 1,
         level: TelemetryLevel::Error,
@@ -106,7 +106,7 @@ fn a_flooding_window_cannot_evict_the_agent_s_own_lines() {
 #[test]
 fn one_request_carries_at_most_its_bound() {
     let mut core = core(500);
-    core.opt_in(A, Salt::from_bytes([1; 32])).unwrap();
+    core.opt_in(A, Salt::from_bytes([1; 32]), true).unwrap();
     let many: Vec<BrowserConsoleEntry> = (0..80).map(|i| line(&format!("l{i}"))).collect();
     assert_eq!(core.capture_browser(A, 1, &many, &limits(1_000)), 50);
 }
@@ -114,7 +114,7 @@ fn one_request_carries_at_most_its_bound() {
 #[test]
 fn extension_lines_never_reach_the_ring() {
     let mut core = core(100);
-    core.opt_in(A, Salt::from_bytes([1; 32])).unwrap();
+    core.opt_in(A, Salt::from_bytes([1; 32]), true).unwrap();
     let mut noise = line("Uncaught TypeError: e.closest is not a function");
     noise.stack = Some(
         "at n (chrome-extension://kbfnbcaeplbcioakkpcpgfkobkghlhen/src/js/Grammarly.js:2:1)".into(),
@@ -173,7 +173,7 @@ const ADVERSARIAL: &[(&str, &[&str])] = &[
 #[test]
 fn adversarial_lines_lose_every_identifying_part() {
     let mut core = core(100);
-    core.opt_in(A, Salt::from_bytes([1; 32])).unwrap();
+    core.opt_in(A, Salt::from_bytes([1; 32]), true).unwrap();
     let mut entries: Vec<BrowserConsoleEntry> = ADVERSARIAL.iter().map(|(l, _)| line(l)).collect();
     entries[3].stack = Some("at x (/home/alice/src/app.ts:3:9)".into());
     let kept = core.capture_browser(A, 1, &entries, &limits(100));
@@ -194,7 +194,7 @@ fn adversarial_lines_lose_every_identifying_part() {
 #[test]
 fn a_peer_cid_is_kept_as_the_agent_s_own_lines_keep_it() {
     let mut core = core(100);
-    core.opt_in(A, Salt::from_bytes([1; 32])).unwrap();
+    core.opt_in(A, Salt::from_bytes([1; 32]), true).unwrap();
     core.capture_browser(A, 1, &[line("peer 9999 did not answer")], &limits(10));
     assert_eq!(drained(&mut core, A)[0].message, "peer 9999 did not answer");
 }

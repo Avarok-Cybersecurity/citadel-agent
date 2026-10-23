@@ -47,6 +47,7 @@ pub(crate) mod ilm;
 mod inbound_connect;
 pub(crate) mod media;
 pub(crate) mod peer_path;
+pub(crate) mod peer_paths;
 pub(crate) mod pending_group_invites;
 pub(crate) mod picked_files;
 pub(crate) mod pulled_files;
@@ -124,6 +125,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     /// is a service that does not supervise, and so does not declare `supervises_p2p`.
     pub(crate) supervisor: Option<supervisor::SupervisorPolicy>,
     pub(crate) supervisors: Arc<supervisor::Supervisors>,
+    /// Each live peer connection's path cell (kernel/peer_paths).
+    pub(crate) peer_paths: Arc<peer_paths::PeerPaths>,
     /// The single writer of hosted accounts' conversations (kernel/conversations).
     pub(crate) conversations: Arc<conversations::Engine>,
     /// What each localhost connection's client declared it can do.
@@ -160,6 +163,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             ilm_hosts: self.ilm_hosts.clone(),
             supervisor: self.supervisor,
             supervisors: self.supervisors.clone(),
+            peer_paths: self.peer_paths.clone(),
             conversations: self.conversations.clone(),
             client_capabilities: self.client_capabilities.clone(),
             notices: self.notices.clone(),
@@ -199,6 +203,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             ilm_hosts: Default::default(),
             supervisor: None,
             supervisors: Default::default(),
+            peer_paths: Default::default(),
             conversations: Default::default(),
             client_capabilities: Default::default(),
             updates: Default::default(),

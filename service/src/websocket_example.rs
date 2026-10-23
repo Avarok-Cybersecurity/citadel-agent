@@ -18,8 +18,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_addr = server_listener.local_addr()?;
     println!("📡 Citadel server listening on {}", server_addr);
 
-    let server_node = NodeBuilder::<RatchetType>::default()
+    let stun_servers = StunServers::parse(
+        "stun.cloudflare.com:3478,stun1.l.google.com:19302,stun4.l.google.com:19302",
+    )?;
+    let server_node = stun_servers
+        .apply(&mut NodeBuilder::<RatchetType>::default())
         .with_node_type(NodeType::Server(server_addr))
+        .with_path_policy(citadel_internal_service::path_policy::every_path_policy()?)
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(ServerMode::OrderedReliable(
             NativeOrderedReliableConfig::from_std_listener(server_listener)?,
@@ -59,9 +64,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Build and run the internal service node
-    let stun_servers = StunServers::parse(
-        "stun.cloudflare.com:3478,stun1.l.google.com:19302,stun4.l.google.com:19302",
-    )?;
     let internal_service_node = stun_servers
         .apply(&mut NodeBuilder::default())
         .with_node_type(NodeType::Peer)

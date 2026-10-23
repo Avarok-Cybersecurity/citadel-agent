@@ -315,6 +315,10 @@ where
             group::create::handle(this, uuid, command).await
         }
 
+        InternalServiceRequest::GroupCreateAppTopic { .. } => {
+            group::app_topic::handle(this, uuid, command).await
+        }
+
         InternalServiceRequest::GroupLeave { .. } => {
             group::leave::handle(this, uuid, command).await
         }
@@ -522,6 +526,13 @@ pub(crate) fn spawn_group_channel_receiver(
                                 sender,
                                 reason,
                             )),
+                            GroupBroadcast::MessageRefused { key, refusal } => {
+                                Some(crate::kernel::responses::group_refusal::message_refused(
+                                    implicated_cid,
+                                    key,
+                                    refusal,
+                                ))
+                            }
                             GroupBroadcast::MessageResponse { key, success } => {
                                 Some(InternalServiceResponse::GroupMessageResponse(
                                     GroupMessageResponse {
@@ -812,6 +823,9 @@ fn refusal_response(
             request_id: Some(*request_id),
         }),
         InternalServiceRequest::GroupCreate {
+            request_id, cid, ..
+        }
+        | InternalServiceRequest::GroupCreateAppTopic {
             request_id, cid, ..
         } => InternalServiceResponse::GroupCreateFailure(GroupCreateFailure {
             cid: *cid,

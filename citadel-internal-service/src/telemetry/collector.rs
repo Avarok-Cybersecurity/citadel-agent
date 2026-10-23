@@ -6,7 +6,7 @@
 use super::browser::BrowserLimits;
 use super::config::{RingConfig, TelemetryError};
 use super::core::CollectorCore;
-use super::entry::{CapturedEvent, TelemetryEntry};
+use super::entry::{CapturedEvent, TelemetryEntry, TelemetryMetric};
 use super::redact::{KnownValue, Salt};
 use citadel_internal_service_types::BrowserConsoleEntry;
 use parking_lot::Mutex;
@@ -50,9 +50,10 @@ impl TelemetryCollector {
         self.core.lock().learn_peer(session_cid, peer_cid, identity)
     }
 
-    pub fn opt_in(&self, cid: u64) -> Result<(), TelemetryError> {
+    /// See `CollectorCore::opt_in`.
+    pub fn opt_in(&self, cid: u64, takes_metrics: bool) -> Result<(), TelemetryError> {
         let salt = fresh_salt()?;
-        self.update(|core| core.opt_in(cid, salt))
+        self.update(|core| core.opt_in(cid, salt, takes_metrics))
     }
 
     pub fn opt_out(&self, cid: u64) -> Result<(), TelemetryError> {
@@ -85,6 +86,14 @@ impl TelemetryCollector {
         self.core
             .lock()
             .capture_browser(cid, time_ms, entries, limits)
+    }
+
+    /// A measurement on `cid`'s connection to `peer_cid`, stamped now; whether it was kept
+    /// (see `CollectorCore::capture_metric`).
+    pub fn capture_metric(&self, cid: u64, peer_cid: u64, metric: TelemetryMetric) -> bool {
+        self.core
+            .lock()
+            .capture_metric(cid, super::layer::now_ms(), peer_cid, metric)
     }
 
     pub(super) fn capture(&self, event: &CapturedEvent<'_>) {

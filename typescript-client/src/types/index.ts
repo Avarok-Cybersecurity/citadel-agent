@@ -95,6 +95,8 @@ export * from './GroupMembershipResponse.js';
 export * from './GroupMessageDroppedNotification.js';
 export * from './GroupMessageFailure.js';
 export * from './GroupMessageNotification.js';
+export * from './GroupMessageRefusalReason.js';
+export * from './GroupMessageRefusedNotification.js';
 export * from './GroupMessageResponse.js';
 export * from './GroupMessageSuccess.js';
 export * from './GroupRequestJoinAcceptResponse.js';

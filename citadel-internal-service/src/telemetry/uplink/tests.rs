@@ -7,15 +7,24 @@
 
 use super::*;
 use crate::telemetry::span::session_span;
+use crate::telemetry::turn_ledger::TurnBytes;
 use crate::telemetry::{BrowserLimits, KnownValue, RedactionKind, RingConfig, TelemetryLayer};
 use citadel_sdk::logging::tracing::{self, Instrument};
 use parking_lot::Mutex;
 use tracing_subscriber::layer::SubscriberExt;
 
-const ALICE: u64 = 4_404;
-const BOB: u64 = 5_505;
+pub(super) const ALICE: u64 = 4_404;
+pub(super) const BOB: u64 = 5_505;
 
-struct Codec;
+pub(super) struct Codec;
+
+fn consent(uploads_allowed: bool, takes_metrics: bool, meters_turn: bool) -> ServerSignal {
+    ServerSignal::Consent {
+        uploads_allowed,
+        takes_metrics,
+        meters_turn,
+    }
+}
 
 impl TelemetryCodec for Codec {
     fn consent_query(&self) -> Result<Vec<u8>, String> {
@@ -27,14 +36,17 @@ impl TelemetryCodec for Codec {
             .map(|e| e.message.into_bytes())
             .collect())
     }
+    fn turn_usage_frames(&self, bytes: TurnBytes) -> Result<Vec<Vec<u8>>, String> {
+        Ok(vec![format!("turn {} {}", bytes.0, bytes.1).into_bytes()])
+    }
     fn classify(&self, frame: &[u8]) -> ServerSignal {
         match frame {
-            b"allowed" => ServerSignal::Consent {
-                uploads_allowed: true,
-            },
-            b"denied" => ServerSignal::Consent {
-                uploads_allowed: false,
-            },
+            b"allowed" => consent(true, true, false),
+            b"allowed-no-metrics" => consent(true, false, false),
+            b"denied" => consent(false, true, false),
+            b"metered" => consent(false, true, true),
+            b"recorded" => ServerSignal::TurnUsageRecorded,
+            b"over-cap" => ServerSignal::TurnUsageRefused("over the cap".into()),
             b"stored" => ServerSignal::UploadStored,
             b"refused" => ServerSignal::UploadRefused,
             _ => ServerSignal::Unrelated,
@@ -44,7 +56,7 @@ impl TelemetryCodec for Codec {
 
 /// Records every frame per session; `failing` sessions fail every send.
 #[derive(Default)]
-struct Link {
+pub(super) struct Link {
     sent: Mutex<Vec<(u64, String)>>,
     failing: Vec<u64>,
 }
@@ -65,7 +77,7 @@ impl SessionLink for Link {
     }
 }
 
-fn uplink() -> TelemetryUplink {
+pub(super) fn uplink() -> TelemetryUplink {
     let collector = TelemetryCollector::new(RingConfig::new(100, 100_000, 1_000).unwrap());
     for (cid, name) in [(ALICE, "alice"), (BOB, "bob")] {
         let identity = vec![KnownValue {
@@ -90,7 +102,7 @@ async fn warn_each_and_flush(uplink: &TelemetryUplink, link: &Link) {
     uplink.flush(link).await;
 }
 
-fn sent(link: &Link) -> Vec<(u64, String)> {
+pub(super) fn sent(link: &Link) -> Vec<(u64, String)> {
     link.sent.lock().clone()
 }
 

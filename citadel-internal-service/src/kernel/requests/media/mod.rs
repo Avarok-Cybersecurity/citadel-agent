@@ -10,6 +10,7 @@
 
 mod commit;
 mod open;
+mod path_gate;
 
 pub use open::handle_open;
 

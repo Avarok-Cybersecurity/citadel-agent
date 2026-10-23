@@ -151,7 +151,7 @@ fn the_sdk_builder_accepts_a_parsed_list() {
 
 #[test]
 fn the_sdk_builder_receives_the_list_through_the_sink() {
-    // The SDK has no getter, but it rejects any count but three at build().
+    // The SDK has no getter, but it rejects fewer than three at build().
     // Delivering a wrong-count list through the sink and seeing build() fail
     // proves the sink reaches the SDK's own field rather than a no-op.
     let mut builder = peer_builder();

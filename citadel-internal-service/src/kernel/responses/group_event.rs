@@ -110,6 +110,11 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 reason,
             } => Some(message_dropped(implicated_cid, key, sender, reason)),
 
+            // No channel gate either: the refusal answers this session's own send.
+            GroupBroadcast::MessageRefused { key, refusal } => Some(
+                super::group_refusal::message_refused(implicated_cid, key, refusal),
+            ),
+
             GroupBroadcast::MessageResponse {
                 key: group_key,
                 success,

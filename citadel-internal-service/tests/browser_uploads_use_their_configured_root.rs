@@ -38,6 +38,7 @@ async fn agent_with(transfers: BrowserTransferRoot) -> SocketAddr {
     .await
     .unwrap();
     let node = NodeBuilder::default()
+        .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
         .with_backend(BackendType::InMemory)
         .with_node_type(NodeType::Peer)
         .with_insecure_skip_cert_verification()

@@ -6,7 +6,7 @@ use citadel_app_sdk_types::{Capability, Group, OPS};
 use std::collections::BTreeSet;
 
 /// Design 2.2 + R4.1, exactly. A rename or an addition must be made here deliberately.
-const DESIGN_CAPABILITIES: [&str; 28] = [
+const DESIGN_CAPABILITIES: [&str; 32] = [
     "canvas",
     "ui",
     "events",
@@ -31,14 +31,18 @@ const DESIGN_CAPABILITIES: [&str; 28] = [
     "net.server",
     "ihttp.serve",
     "ihttp.call",
+    "ihttp.p2p.serve",
+    "ihttp.p2p.call",
     "clipboard.read",
     "clipboard.write",
     "notifications",
     "documents",
+    "group.topic.subscribe",
+    "group.topic.publish",
 ];
 
 /// The ABI's import list, in index order.
-const DESIGN_GROUPS: [&str; 16] = [
+const DESIGN_GROUPS: [&str; 17] = [
     "canvas",
     "ui",
     "events",
@@ -55,6 +59,7 @@ const DESIGN_GROUPS: [&str; 16] = [
     "notify",
     "documents",
     "log",
+    "topic",
 ];
 
 #[test]
@@ -185,19 +190,30 @@ fn the_intrinsic_capabilities_are_the_ones_that_reach_only_the_apps_own_surface(
     assert!(!Capability::NetHost.is_intrinsic());
 }
 
+/// Any-of rows: the ihttp ops admit either plane (the host then checks the plane the call
+/// names), and the topic ops that a subscriber and a publisher both make.
 #[test]
-fn only_ihttp_consumed_is_granted_by_more_than_one_capability() {
+fn only_the_ihttp_and_topic_ops_are_granted_by_more_than_one_capability() {
+    use Capability::*;
     let any_of: Vec<(&str, &[Capability])> = OPS
         .iter()
         .filter_map(|o| o.granted_by.map(|caps| (o.name, caps)))
         .filter(|(_, caps)| caps.len() > 1)
         .collect();
+    let topic: &[Capability] = &[GroupTopicSubscribe, GroupTopicPublish];
     assert_eq!(
         any_of,
-        [(
-            "IhttpConsumed",
-            &[Capability::IhttpServe, Capability::IhttpCall][..]
-        )]
+        [
+            ("IhttpServe", &[IhttpServe, IhttpP2pServe][..]),
+            ("IhttpRespond", &[IhttpServe, IhttpP2pServe][..]),
+            ("IhttpCall", &[IhttpCall, IhttpP2pCall][..]),
+            (
+                "IhttpConsumed",
+                &[IhttpServe, IhttpCall, IhttpP2pServe, IhttpP2pCall][..]
+            ),
+            ("TopicOpen", topic),
+            ("TopicClose", topic),
+        ]
     );
 }
 

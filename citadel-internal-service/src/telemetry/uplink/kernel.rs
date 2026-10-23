@@ -6,7 +6,7 @@ use crate::kernel::{CitadelWorkspaceService, Connection};
 use crate::telemetry::{KnownValue, RedactionKind, TelemetryError};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_sdk::logging::warn;
-use citadel_sdk::prelude::{Ratchet, SecurityLevel, SessionScope};
+use citadel_sdk::prelude::{P2pPathCell, Ratchet, SecurityLevel, SessionScope};
 use futures::future::BoxFuture;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -165,10 +165,26 @@ impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
         }
     }
 
-    /// The session ended: its ring and identities go with it.
+    /// The session ended: its ring, identities and TURN counting go with it.
     pub(crate) fn telemetry_forget_session(&self, cid: u64) {
         if let Some(uplink) = self.telemetry.as_ref() {
             uplink.collector().forget_session(cid);
+            uplink.forget_turn(cid);
+        }
+    }
+
+    /// `cid`'s connection to `peer_cid` is up: its TURN bytes are counted for the session's
+    /// server, if that server meters them (telemetry/turn_ledger).
+    pub(crate) fn telemetry_track_turn(&self, cid: u64, peer_cid: u64, cell: P2pPathCell) {
+        if let Some(uplink) = self.telemetry.as_ref() {
+            uplink.track_turn(
+                cid,
+                peer_cid,
+                Box::new(move || {
+                    let turn = cell.bytes().turn;
+                    (turn.tx, turn.rx)
+                }),
+            );
         }
     }
 }

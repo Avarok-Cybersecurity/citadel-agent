@@ -14,9 +14,10 @@ import type { NetOps } from "./NetOps";
 import type { NodesOps } from "./NodesOps";
 import type { NotifyOps } from "./NotifyOps";
 import type { StorageOps } from "./StorageOps";
+import type { TopicOps } from "./TopicOps";
 import type { UiOps } from "./UiOps";
 
 /**
  * Any call, as the kernel's server re-check carries it (`AppsRequest::Call`).
  */
-export type HostCall = { "Canvas": CanvasOps } | { "Ui": UiOps } | { "Events": EventsOps } | { "Navigate": NavigateOps } | { "Nodes": NodesOps } | { "Md": MdOps } | { "Files": FilesOps } | { "Chat": ChatOps } | { "Members": MembersOps } | { "Storage": StorageOps } | { "Net": NetOps } | { "Ihttp": IhttpOps } | { "Clipboard": ClipboardOps } | { "Notify": NotifyOps } | { "Documents": DocumentsOps } | { "Log": LogOps };
+export type HostCall = { "Canvas": CanvasOps } | { "Ui": UiOps } | { "Events": EventsOps } | { "Navigate": NavigateOps } | { "Nodes": NodesOps } | { "Md": MdOps } | { "Files": FilesOps } | { "Chat": ChatOps } | { "Members": MembersOps } | { "Storage": StorageOps } | { "Net": NetOps } | { "Ihttp": IhttpOps } | { "Clipboard": ClipboardOps } | { "Notify": NotifyOps } | { "Documents": DocumentsOps } | { "Log": LogOps } | { "Topic": TopicOps };

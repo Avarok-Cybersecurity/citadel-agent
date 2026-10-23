@@ -7,6 +7,7 @@ mod misc;
 mod net;
 mod nodes;
 mod storage;
+pub mod topic;
 mod ui;
 
 pub use canvas::*;
@@ -16,6 +17,7 @@ pub use misc::*;
 pub use net::*;
 pub use nodes::*;
 pub use storage::*;
+pub use topic::{TopicClose, TopicEvent, TopicOpen, TopicOpened, TopicPublish};
 pub use ui::*;
 
 use alloc::string::String;

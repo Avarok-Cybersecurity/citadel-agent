@@ -31,8 +31,10 @@ mod ffi;
 pub mod ihttp;
 mod life;
 mod pending;
+mod route;
 #[doc(hidden)]
 pub mod rt;
+pub mod topic;
 
 #[cfg(target_arch = "wasm32")]
 pub use api::*;

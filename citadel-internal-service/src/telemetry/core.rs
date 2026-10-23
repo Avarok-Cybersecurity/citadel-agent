@@ -31,6 +31,9 @@ struct Ring {
     salt: Salt,
     /// Opens with the opt-in and goes with it, like everything else the ring holds.
     browser: BrowserPacer,
+    /// Whether the session's server stores metric entries: one built before metrics refuses
+    /// the whole batch they ride in, so none are captured for it. Set by every opt-in.
+    takes_metrics: bool,
 }
 
 impl CollectorCore {
@@ -71,15 +74,23 @@ impl CollectorCore {
         Ok(())
     }
 
-    /// Starts capturing for `cid`. Already opted in: the ring and its salt are kept.
-    pub fn opt_in(&mut self, cid: u64, salt: Salt) -> Result<(), TelemetryError> {
+    /// Starts capturing for `cid`, metrics only when `takes_metrics` (its server stores them).
+    /// Already opted in: the ring and its salt are kept, and `takes_metrics` replaced.
+    pub fn opt_in(
+        &mut self,
+        cid: u64,
+        salt: Salt,
+        takes_metrics: bool,
+    ) -> Result<(), TelemetryError> {
         let session = self.session_mut(cid)?;
-        session.ring.get_or_insert_with(|| Ring {
+        let ring = session.ring.get_or_insert_with(|| Ring {
             entries: VecDeque::new(),
             bytes: 0,
             salt,
             browser: BrowserPacer::default(),
+            takes_metrics,
         });
+        ring.takes_metrics = takes_metrics;
         Ok(())
     }
 
@@ -191,6 +202,7 @@ fn entry(
         target,
         message,
         peer_cid: event.peer_cid,
+        metric: None,
     }
 }
 
@@ -222,6 +234,7 @@ impl Ring {
 }
 
 mod browser;
+mod metric;
 
 #[cfg(test)]
 mod tests;

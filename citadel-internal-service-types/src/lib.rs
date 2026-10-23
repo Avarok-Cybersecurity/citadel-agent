@@ -20,6 +20,7 @@ mod chat_level;
 mod conversation;
 mod conversation_api;
 mod group_drop;
+mod group_refusal;
 mod group_responses;
 mod group_responses_more;
 pub use group_responses::*;
@@ -64,6 +65,7 @@ pub use conversation_api::{
     NotificationPreview, PeerRetention, Retention,
 };
 pub use group_drop::GroupMessageDroppedNotification;
+pub use group_refusal::{GroupMessageRefusalReason, GroupMessageRefusedNotification};
 pub use multi_window::{
     AgentCapabilities, AttachProof, ClientCapabilities, SendReliableAccepted, SessionAttached,
     SessionRole, SessionRoleNotification,
@@ -1192,6 +1194,7 @@ pub enum InternalServiceResponse {
     GroupEndNotification(GroupEndNotification),
     GroupMessageNotification(GroupMessageNotification),
     GroupMessageDroppedNotification(GroupMessageDroppedNotification),
+    GroupMessageRefusedNotification(GroupMessageRefusedNotification),
     GroupMessageResponse(GroupMessageResponse),
     GroupMessageSuccess(GroupMessageSuccess),
     GroupMessageFailure(GroupMessageFailure),
@@ -1667,6 +1670,19 @@ pub enum InternalServiceRequest {
         request_id: Uuid,
         #[cfg_attr(feature = "typescript", ts(type = "UserIdentifier[] | null"))]
         initial_users_to_invite: Option<Vec<UserIdentifier>>,
+    },
+    /// The group one app topic rides: owner-accepted joins, no invitees (see the agent's
+    /// `app_topic_group_options`). Answered with `GroupCreateSuccess`/`GroupCreateFailure`.
+    GroupCreateAppTopic {
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        request_id: Uuid,
+        /// The install's manifest `limits.topics.max_msg_bytes`: the server refuses a larger
+        /// message to the group. At most `TOPIC_MAX_MSG_BYTES_CEILING`.
+        max_msg_bytes: u32,
+        /// The install's manifest `limits.topics.max_msgs_per_s`, per sender. At most
+        /// `TOPIC_MAX_MSGS_PER_S_CEILING`.
+        max_msgs_per_s: u32,
     },
     GroupLeave {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
@@ -2255,6 +2271,7 @@ impl InternalServiceRequest {
             Self::LocalDBGetAllKV { cid, .. } => Some(*cid),
             Self::LocalDBClearAllKV { cid, .. } => Some(*cid),
             Self::GroupCreate { cid, .. } => Some(*cid),
+            Self::GroupCreateAppTopic { cid, .. } => Some(*cid),
             Self::GroupLeave { cid, .. } => Some(*cid),
             Self::GroupEnd { cid, .. } => Some(*cid),
             Self::GroupMessage { cid, .. } => Some(*cid),

@@ -2,7 +2,7 @@
 //! a server does) as response chunks are read, and hand the response to the app as it streams.
 
 use super::outbox::Outbox;
-use super::{Outbound, Response};
+use super::Outbound;
 use crate::abi::RawAbi;
 use crate::pending::{spawn, start};
 use citadel_app_sdk_types::calls::*;
@@ -11,20 +11,21 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-/// One step of a streamed response.
+/// One step of a streamed response. `Head` says which plane answered.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClientEvent {
-    Head(ResponseHead),
+    Head(ResponseHead, Via),
     Body(Vec<u8>),
     End,
     Failed(Refused),
 }
 
-type Sink = Box<dyn FnMut(&mut dyn Any, ClientEvent)>;
-type Key = (String, u64);
+pub(crate) type Sink = Box<dyn FnMut(&mut dyn Any, ClientEvent)>;
+pub(crate) type Key = (String, u64);
 
 struct Stream {
     to: Address,
+    transport: Transport,
     sink: Option<Sink>,
     outbox: Outbox,
 }
@@ -49,9 +50,10 @@ fn target(to: &Address) -> (String, String) {
 pub(crate) fn call_stream<A: 'static, R: RawAbi + 'static>(
     raw: &R,
     to: Address,
+    transport: Transport,
     request: Outbound,
     mut on: impl FnMut(&mut A, ClientEvent) + 'static,
-) {
+) -> Key {
     let sink: Sink = Box::new(move |app, event| {
         on(
             app.downcast_mut::<A>()
@@ -59,6 +61,17 @@ pub(crate) fn call_stream<A: 'static, R: RawAbi + 'static>(
             event,
         )
     });
+    open(raw, to, transport, request, sink)
+}
+
+/// Open a stream whose events go to `sink`, with the app as `dyn Any`.
+pub(crate) fn open<R: RawAbi + 'static>(
+    raw: &R,
+    to: Address,
+    transport: Transport,
+    request: Outbound,
+    sink: Sink,
+) -> Key {
     let (app_id, scope_key) = target(&to);
     let mut outbox = Outbox::new();
     let head = RequestHead {
@@ -79,6 +92,7 @@ pub(crate) fn call_stream<A: 'static, R: RawAbi + 'static>(
             k.clone(),
             Stream {
                 to,
+                transport,
                 sink: Some(sink),
                 outbox,
             },
@@ -87,37 +101,41 @@ pub(crate) fn call_stream<A: 'static, R: RawAbi + 'static>(
     });
     super::install::<R>();
     flush(raw, &k);
+    k
 }
 
-pub(crate) fn call<A: 'static, R: RawAbi + 'static>(
-    raw: &R,
-    to: Address,
-    request: Outbound,
-    f: impl FnOnce(&mut A, Result<Response, Refused>) + 'static,
-) {
-    let (mut f, mut head, mut body) = (Some(f), None, Vec::new());
-    call_stream::<A, R>(raw, to, request, move |app, event| match event {
-        ClientEvent::Head(h) => head = Some(h),
-        ClientEvent::Body(b) => body.extend_from_slice(&b),
-        ClientEvent::End => {
-            let result = head.take().map(|head| Response {
-                head,
-                body: std::mem::take(&mut body),
-            });
-            if let Some(f) = f.take() {
-                f(
-                    app,
-                    result.ok_or_else(|| Refused::Unavailable("response without a head".into())),
-                );
-            }
-        }
-        ClientEvent::Failed(e) => {
-            if let Some(f) = f.take() {
-                f(app, Err(e));
-            }
-        }
+/// The caller gives up: `Cancel` goes to the server and the stream ends with `Failed`.
+pub(crate) fn cancel(raw: &impl RawAbi, k: &Key) {
+    let open = CLIENTS.with(|c| {
+        c.borrow()
+            .streams
+            .get(k)
+            .map(|s| (s.to.clone(), s.transport))
     });
+    let Some((to, transport)) = open else { return };
+    let frame = IhttpFrame::new(
+        k.1,
+        FrameKind::Cancel {
+            reason: CANCEL_CALLER.into(),
+        },
+    );
+    start(
+        raw,
+        &IhttpCall {
+            to,
+            frame,
+            transport,
+        },
+    )
+    .watch("ihttp cancel");
+    finish(
+        k,
+        ClientEvent::Failed(Refused::Unavailable(CANCEL_CALLER.into())),
+    );
 }
+
+/// The reason a caller's own `Cancel` names (`CancelReason::Caller` on the wire).
+pub(crate) const CANCEL_CALLER: &str = "caller";
 
 /// End the stream with `event`: run later, since the app may be the caller.
 fn finish(k: &Key, event: ClientEvent) {
@@ -134,14 +152,18 @@ fn flush(raw: &impl RawAbi, k: &Key) {
             c.borrow_mut()
                 .streams
                 .get_mut(k)
-                .map(|s| (s.to.clone(), s.outbox.next()))
+                .map(|s| (s.to.clone(), s.transport, s.outbox.next()))
         });
-        let Some((to, Some(kind))) = next else { return };
+        let Some((to, transport, Some(kind))) = next else {
+            return;
+        };
+        let frame = IhttpFrame::new(k.1, kind);
         let mut sent = start(
             raw,
             &IhttpCall {
                 to,
-                frame: IhttpFrame::new(k.1, kind),
+                frame,
+                transport,
             },
         );
         match sent.take_ready() {
@@ -183,7 +205,7 @@ pub(crate) fn on_frame(
         return Some((from, frame));
     }
     match frame.kind {
-        FrameKind::ResponseHead(h) => deliver(&k, app, ClientEvent::Head(h), false),
+        FrameKind::ResponseHead(h) => deliver(&k, app, ClientEvent::Head(h, from.via), false),
         FrameKind::Body { bytes } => {
             deliver(&k, app, ClientEvent::Body(bytes.0), false);
             let consumed = IhttpConsumed {

@@ -2,7 +2,7 @@
 //! from the Rust tables, so the host never restates one. Written by the `ts` feature's test.
 
 use crate::abi::{self, AbiError, CloseResult, InitResult};
-use crate::calls::KvBackend;
+use crate::calls::{topic, KvBackend, Transport, Via};
 use crate::ops::{ts_reply_names, OPS};
 use crate::{encode, Capability, Group};
 use std::collections::BTreeSet;
@@ -41,6 +41,8 @@ pub fn render() -> String {
         "CloseReason",
         "LifecycleState",
         "LifecycleStep",
+        "Transport",
+        "ServeOn",
     ]
     .map(String::from)
     .into();
@@ -147,7 +149,50 @@ pub fn render() -> String {
     for b in [KvBackend::User, KvBackend::Scope, node, KvBackend::Local] {
         writeln!(o, "  {}: {},", kv_tag(&b), q(b.capability().name())).unwrap();
     }
-    writeln!(o, "}} as const;\n\n/** Every op. `granted_by`: holding ANY ONE of these admits the call; null = decided by the arguments (KV_BACKEND_CAPABILITY). */").unwrap();
+    writeln!(o, "}} as const;\n\n/** The capability a client stream's first attempt needs, and its relay fallback's (null: none). */\nexport const TRANSPORT_CAPABILITY = {{").unwrap();
+    for t in Transport::ALL {
+        let fallback = t
+            .fallback_capability()
+            .map_or("null".into(), |c| q(c.name()));
+        writeln!(
+            o,
+            "  {}: {{ first: {}, fallback: {fallback} }},",
+            t.tag(),
+            q(t.first_capability().name())
+        )
+        .unwrap();
+    }
+    writeln!(o, "}} as const satisfies Readonly<Record<Transport, {{ first: Capability; fallback: Capability | null }}>>;\n\n/** The capability serving on each plane of ServeOn needs. */\nexport const SERVE_PLANE_CAPABILITY = {{").unwrap();
+    for (plane, via) in [("relay", Via::Relay), ("p2p", Via::P2p)] {
+        let cap = via.serve_capability().expect("a serving plane");
+        writeln!(o, "  {plane}: {},", q(cap.name())).unwrap();
+    }
+    writeln!(
+        o,
+        "}} as const satisfies Readonly<Record<keyof ServeOn, Capability>>;\n"
+    )
+    .unwrap();
+    for (name, value) in [
+        ("MAX_TOPICS", topic::MAX_TOPICS as u32),
+        ("MAX_TOPIC_NAME_LEN", topic::MAX_TOPIC_NAME_LEN as u32),
+        (
+            "TOPIC_MAX_MSG_BYTES_CEILING",
+            topic::TOPIC_MAX_MSG_BYTES_CEILING,
+        ),
+        (
+            "TOPIC_MAX_MSGS_PER_S_CEILING",
+            topic::TOPIC_MAX_MSGS_PER_S_CEILING,
+        ),
+    ] {
+        writeln!(o, "export const {name} = {value} as const;").unwrap();
+    }
+    for (name, value) in [
+        ("LIMIT_TOPIC_RATE", topic::LIMIT_TOPIC_RATE),
+        ("LIMIT_TOPIC_BYTES", topic::LIMIT_TOPIC_BYTES),
+    ] {
+        writeln!(o, "export const {name} = {} as const;", q(value)).unwrap();
+    }
+    writeln!(o, "\n/** Every op. `granted_by`: holding ANY ONE of these admits the call; null = decided by the arguments (KV_BACKEND_CAPABILITY). */").unwrap();
     writeln!(o, "export const OPS = [").unwrap();
     for op in OPS {
         let caps = op.granted_by.map_or("null".into(), |cs| {

@@ -47,6 +47,7 @@ This document catalogs all `InternalServiceResponse` variants, their handlers (i
 | **GroupEndNotification** | `src/kernel/responses/group_event.rs` | Group ended by admin | Should remove from `Connection::groups` | **VERIFY CLEANUP** |
 | **GroupMessageNotification** | `src/kernel/responses/group_event.rs` | Incoming group message | N/A | Message delivery |
 | **GroupMessageDroppedNotification** | `src/kernel/responses/group_event.rs`, group channel receiver | A group message reached this session but could not be decrypted (no group key yet, e.g. before a rejoin's Welcome) | N/A | Visible loss; `sender` is the sender's CID |
+| **GroupMessageRefusedNotification** | `src/kernel/responses/group_refusal.rs` (from `group_event.rs` and the group channel receiver) | The server refused this session's message to a group with caps (app topics): too large, or over the per-sender rate | N/A | Typed refusal to the sending window; the message was not delivered |
 | **GroupMessageResponse** | Group message handler | Group message acknowledgment | N/A | Delivery confirmation |
 | **GroupMessageSuccess** | Group message handler | Group message sent | N/A | Send confirmation |
 | **GroupMessageFailure** | Group message handler | Group message send failed | N/A | Send failure |

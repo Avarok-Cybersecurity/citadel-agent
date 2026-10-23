@@ -136,10 +136,10 @@ fn ihttp_frames_keep_r4_4_variant_names_and_events_are_snake_case() {
 }
 
 /// A client reading a streamed response returns credit exactly as a server reading a request
-/// body does, so either ihttp capability admits `IhttpConsumed`; nothing else does, and the
-/// other ihttp ops stay one-sided.
+/// body does, so any ihttp capability, on either plane, admits `IhttpConsumed`; nothing else
+/// does, and the other ihttp ops stay one-sided.
 #[test]
-fn ihttp_consumed_is_granted_by_either_ihttp_capability() {
+fn ihttp_consumed_is_granted_by_any_ihttp_capability() {
     let peer = Caller {
         username: "bob".into(),
         cid: 7,
@@ -149,11 +149,56 @@ fn ihttp_consumed_is_granted_by_either_ihttp_capability() {
     };
     let consumed = HostCall::Ihttp(IhttpOps::IhttpConsumed(IhttpConsumed { peer, stream: 1 }));
     let held = |caps: &'static [Capability]| move |c: Capability| caps.contains(&c);
-    assert!(consumed.is_granted(held(&[Capability::IhttpCall])));
-    assert!(consumed.is_granted(held(&[Capability::IhttpServe])));
+    for cap in [
+        Capability::IhttpCall,
+        Capability::IhttpServe,
+        Capability::IhttpP2pCall,
+        Capability::IhttpP2pServe,
+    ] {
+        assert!(consumed.is_granted(held(cap.alone())), "{cap:?}");
+    }
     assert!(!consumed.is_granted(held(&[])));
     assert!(!consumed.is_granted(held(&[Capability::NetHost, Capability::Log])));
-    let serve = HostCall::Ihttp(IhttpOps::IhttpServe(IhttpServe { routes: vec![] }));
+    let on = ServeOn {
+        relay: true,
+        p2p: false,
+    };
+    let serve = HostCall::Ihttp(IhttpOps::IhttpServe(IhttpServe { routes: vec![], on }));
     assert!(!serve.is_granted(held(&[Capability::IhttpCall])));
+    assert!(!serve.is_granted(held(&[Capability::IhttpP2pCall])));
     assert!(serve.is_granted(held(&[Capability::IhttpServe])));
+    assert!(serve.is_granted(held(&[Capability::IhttpP2pServe])));
+}
+
+/// The op admits either plane; the plane a call names needs its own capability, and only
+/// `PreferP2pThenRelay` has a fallback, which needs the relay's.
+#[test]
+fn each_transport_and_serving_plane_names_the_capability_it_needs() {
+    use Capability::*;
+    let firsts: Vec<_> = Transport::ALL
+        .iter()
+        .map(|t| t.first_capability())
+        .collect();
+    assert_eq!(firsts, [IhttpP2pCall, IhttpCall, IhttpP2pCall]);
+    let fallbacks: Vec<_> = Transport::ALL
+        .iter()
+        .map(|t| t.fallback_capability())
+        .collect();
+    assert_eq!(fallbacks, [None, None, Some(IhttpCall)]);
+    for t in Transport::ALL {
+        assert_eq!(encode(&t), encode(&t.tag()), "the tag is the serde name");
+    }
+    let planes = |relay, p2p| ServeOn { relay, p2p }.planes().collect::<Vec<_>>();
+    assert_eq!(
+        planes(true, true),
+        [(Via::Relay, IhttpServe), (Via::P2p, IhttpP2pServe)]
+    );
+    assert_eq!(planes(false, true), [(Via::P2p, IhttpP2pServe)]);
+    assert!(planes(false, false).is_empty());
+    assert!(ServeOn {
+        relay: false,
+        p2p: false
+    }
+    .is_empty());
+    assert_eq!(Via::Group.serve_capability(), None);
 }

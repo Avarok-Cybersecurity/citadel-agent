@@ -134,6 +134,18 @@ impl Core {
             }
             return self.up(peer, P2pPathReport::ServerRelay, now);
         }
+        if outcome == DialOutcome::InProgress {
+            // Wait for the running exchange's PeerUp; look again after the current backoff,
+            // unescalated, in case that exchange ends without one.
+            let wait = rng.delay(
+                policy.dial_backoff,
+                entry.dial.attempts,
+                policy.jitter_permille,
+            );
+            entry.dial.next_at = now.after(wait);
+            self.rng = rng;
+            return Vec::new();
+        }
         entry.failed_dials = entry.failed_dials.saturating_add(1);
         let wait = if entry.failed_dials >= policy.unreachable_after {
             rng.delay(

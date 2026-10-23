@@ -54,24 +54,37 @@ impl<T: IOInterface + Sync, R: Ratchet> PeerDialer for KernelDialer<T, R> {
                 },
             )
             .await;
-            let outcome = match &response {
-                InternalServiceResponse::PeerConnectSuccess(_) => DialOutcome::Connected,
-                InternalServiceResponse::PeerConnectFailure(failure)
-                    if failure.message.starts_with(ALREADY_CONNECTED) =>
-                {
-                    DialOutcome::Connected
-                }
-                _ => DialOutcome::Failed,
-            };
+            let outcome = outcome_of(&response);
             info!(target: "citadel::supervisor", "{cid}: dialling {peer}: {outcome:?}");
             if outcome == DialOutcome::Connected {
                 // Windows learn of it as they do of an accepted connection.
                 SessionRoute::new(subscribers, this.tx_to_localhost_clients.clone()).send(response);
             } else {
-                debug!(target: "citadel::supervisor", "{cid}: dialling {peer} failed: {response:?}");
+                debug!(target: "citadel::supervisor", "{cid}: dialling {peer}: {response:?}");
             }
             outcome
         }
         .boxed()
+    }
+}
+
+/// The SDK's refusal of a second key exchange while the first runs (protocol #372). It is
+/// wrapped in the SDK's own prefix, so it is looked for, not matched at the start.
+pub(super) const ALREADY_EXCHANGING_KEYS: &str = "Already exchanging keys with peer";
+
+pub(super) fn outcome_of(response: &InternalServiceResponse) -> DialOutcome {
+    match response {
+        InternalServiceResponse::PeerConnectSuccess(_) => DialOutcome::Connected,
+        InternalServiceResponse::PeerConnectFailure(failure)
+            if failure.message.starts_with(ALREADY_CONNECTED) =>
+        {
+            DialOutcome::Connected
+        }
+        InternalServiceResponse::PeerConnectFailure(failure)
+            if failure.message.contains(ALREADY_EXCHANGING_KEYS) =>
+        {
+            DialOutcome::InProgress
+        }
+        _ => DialOutcome::Failed,
     }
 }

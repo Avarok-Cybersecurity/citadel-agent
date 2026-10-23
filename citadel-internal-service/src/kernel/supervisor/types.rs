@@ -45,6 +45,9 @@ pub enum ProbeOutcome {
 pub enum DialOutcome {
     Connected,
     Failed,
+    /// Refused because an exchange with the peer is already under way (most often the peer's
+    /// own dial, crossing ours). That exchange's `PeerUp` is the answer; it is not a failure.
+    InProgress,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

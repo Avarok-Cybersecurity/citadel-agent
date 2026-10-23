@@ -2,6 +2,8 @@
 
 mod clock;
 mod dialer;
+#[cfg(test)]
+mod dialer_tests;
 mod network;
 mod paths;
 mod reporter;

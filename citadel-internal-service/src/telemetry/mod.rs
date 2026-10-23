@@ -15,6 +15,7 @@ pub mod entry;
 pub mod layer;
 pub mod redact;
 pub mod span;
+pub mod turn_ledger;
 pub mod uplink;
 
 pub use browser::BrowserLimits;

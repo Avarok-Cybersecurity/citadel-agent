@@ -11,6 +11,7 @@
 //! so the binary that ships supplies it as a `TelemetryCodec`.
 
 mod kernel;
+mod turn;
 
 pub(crate) use kernel::run;
 
@@ -18,6 +19,7 @@ use super::browser::BrowserLimits;
 use super::collector::TelemetryCollector;
 use super::entry::TelemetryEntry;
 use super::layer::now_ms;
+use super::turn_ledger::{TurnBytes, TurnLedger};
 use citadel_internal_service_types::BrowserConsoleEntry;
 use citadel_sdk::logging::warn;
 use futures::future::BoxFuture;
@@ -31,12 +33,16 @@ const LOG_TARGET: &str = "citadel::telemetry";
 pub enum ServerSignal {
     /// Not a telemetry answer: forwarded to the session's windows untouched.
     Unrelated,
-    /// The session's consent as the server holds it: whether an upload would be stored, and
-    /// whether the server stores metric entries (one built before metrics does not).
+    /// The session's consent as the server holds it: whether an upload would be stored,
+    /// whether the server stores metric entries (one built before metrics does not), and
+    /// whether it meters TURN (a hosted server with a relay quota), which is not consent-gated.
     Consent {
         uploads_allowed: bool,
         takes_metrics: bool,
+        meters_turn: bool,
     },
+    /// A TURN usage report was recorded.
+    TurnUsageRecorded,
     /// An upload was stored.
     UploadStored,
     /// An upload was refused: consent is off or the terms changed since it was given.
@@ -49,6 +55,9 @@ pub trait TelemetryCodec: Send + Sync + 'static {
     fn consent_query(&self) -> Result<Vec<u8>, String>;
     /// Upload frames carrying `entries`, split so each one is within the server's limits.
     fn upload_frames(&self, entries: Vec<TelemetryEntry>) -> Result<Vec<Vec<u8>>, String>;
+    /// Report frames carrying `bytes` (sent, received) of TURN, split so each is within the
+    /// server's per-report bound (`turn_ledger::split_report`).
+    fn turn_usage_frames(&self, bytes: TurnBytes) -> Result<Vec<Vec<u8>>, String>;
     fn classify(&self, frame: &[u8]) -> ServerSignal;
 }
 
@@ -63,6 +72,8 @@ pub struct TelemetryUplink {
     flush_interval: Duration,
     /// `None` until the shipped binary configures it: then windows are told they may send.
     browser: Option<BrowserLimits>,
+    /// Each session's TURN bytes not yet reported to its server (`uplink/turn.rs`).
+    turn: parking_lot::Mutex<TurnLedger>,
 }
 
 impl TelemetryUplink {
@@ -81,6 +92,7 @@ impl TelemetryUplink {
             codec,
             flush_interval,
             browser: None,
+            turn: parking_lot::Mutex::new(TurnLedger::default()),
         })
     }
 
@@ -128,14 +140,17 @@ impl TelemetryUplink {
         let (applied, forward) = match self.codec.classify(frame) {
             ServerSignal::Unrelated => return true,
             ServerSignal::Consent {
-                uploads_allowed: true,
+                uploads_allowed,
                 takes_metrics,
-            } => (self.collector.opt_in(cid, takes_metrics), true),
-            ServerSignal::Consent {
-                uploads_allowed: false,
-                ..
-            } => (self.collector.opt_out(cid), true),
-            ServerSignal::UploadStored => return false,
+                meters_turn,
+            } => {
+                self.turn.lock().set_metered(cid, meters_turn);
+                match uploads_allowed {
+                    true => (self.collector.opt_in(cid, takes_metrics), true),
+                    false => (self.collector.opt_out(cid), true),
+                }
+            }
+            ServerSignal::UploadStored | ServerSignal::TurnUsageRecorded => return false,
             // Stop, and discard what is held, until a consent answer allows uploads again.
             ServerSignal::UploadRefused => (self.collector.opt_out(cid), false),
         };
@@ -171,8 +186,11 @@ impl TelemetryUplink {
                 }
             }
         }
+        self.flush_turn(link).await;
     }
 }
 
+#[cfg(test)]
+mod capability_tests;
 #[cfg(test)]
 mod tests;

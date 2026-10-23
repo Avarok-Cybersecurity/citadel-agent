@@ -7,15 +7,24 @@
 
 use super::*;
 use crate::telemetry::span::session_span;
+use crate::telemetry::turn_ledger::TurnBytes;
 use crate::telemetry::{BrowserLimits, KnownValue, RedactionKind, RingConfig, TelemetryLayer};
 use citadel_sdk::logging::tracing::{self, Instrument};
 use parking_lot::Mutex;
 use tracing_subscriber::layer::SubscriberExt;
 
-const ALICE: u64 = 4_404;
-const BOB: u64 = 5_505;
+pub(super) const ALICE: u64 = 4_404;
+pub(super) const BOB: u64 = 5_505;
 
-struct Codec;
+pub(super) struct Codec;
+
+fn consent(uploads_allowed: bool, takes_metrics: bool, meters_turn: bool) -> ServerSignal {
+    ServerSignal::Consent {
+        uploads_allowed,
+        takes_metrics,
+        meters_turn,
+    }
+}
 
 impl TelemetryCodec for Codec {
     fn consent_query(&self) -> Result<Vec<u8>, String> {
@@ -27,20 +36,16 @@ impl TelemetryCodec for Codec {
             .map(|e| e.message.into_bytes())
             .collect())
     }
+    fn turn_usage_frames(&self, bytes: TurnBytes) -> Result<Vec<Vec<u8>>, String> {
+        Ok(vec![format!("turn {} {}", bytes.0, bytes.1).into_bytes()])
+    }
     fn classify(&self, frame: &[u8]) -> ServerSignal {
         match frame {
-            b"allowed" => ServerSignal::Consent {
-                uploads_allowed: true,
-                takes_metrics: true,
-            },
-            b"allowed-no-metrics" => ServerSignal::Consent {
-                uploads_allowed: true,
-                takes_metrics: false,
-            },
-            b"denied" => ServerSignal::Consent {
-                uploads_allowed: false,
-                takes_metrics: true,
-            },
+            b"allowed" => consent(true, true, false),
+            b"allowed-no-metrics" => consent(true, false, false),
+            b"denied" => consent(false, true, false),
+            b"metered" => consent(false, true, true),
+            b"recorded" => ServerSignal::TurnUsageRecorded,
             b"stored" => ServerSignal::UploadStored,
             b"refused" => ServerSignal::UploadRefused,
             _ => ServerSignal::Unrelated,
@@ -50,7 +55,7 @@ impl TelemetryCodec for Codec {
 
 /// Records every frame per session; `failing` sessions fail every send.
 #[derive(Default)]
-struct Link {
+pub(super) struct Link {
     sent: Mutex<Vec<(u64, String)>>,
     failing: Vec<u64>,
 }
@@ -71,7 +76,7 @@ impl SessionLink for Link {
     }
 }
 
-fn uplink() -> TelemetryUplink {
+pub(super) fn uplink() -> TelemetryUplink {
     let collector = TelemetryCollector::new(RingConfig::new(100, 100_000, 1_000).unwrap());
     for (cid, name) in [(ALICE, "alice"), (BOB, "bob")] {
         let identity = vec![KnownValue {
@@ -96,7 +101,7 @@ async fn warn_each_and_flush(uplink: &TelemetryUplink, link: &Link) {
     uplink.flush(link).await;
 }
 
-fn sent(link: &Link) -> Vec<(u64, String)> {
+pub(super) fn sent(link: &Link) -> Vec<(u64, String)> {
     link.sent.lock().clone()
 }
 
@@ -232,16 +237,4 @@ async fn a_window_s_lines_follow_the_server_s_consent_and_nothing_else() {
     assert!(sent[0].1.ends_with(" clicked") && !sent[0].1.contains("alice"));
     uplink.on_server_frame(ALICE, b"denied");
     assert_eq!(uplink.browser_console(ALICE, &console_line("late")), 0);
-}
-
-#[test]
-fn metrics_are_captured_only_for_a_server_that_stores_them() {
-    let uplink = uplink();
-    let metric = crate::telemetry::metric_fixture::path_report(1);
-    uplink.on_server_frame(ALICE, b"allowed-no-metrics");
-    assert!(!uplink
-        .collector()
-        .capture_metric(ALICE, BOB, metric.clone()));
-    uplink.on_server_frame(ALICE, b"allowed");
-    assert!(uplink.collector().capture_metric(ALICE, BOB, metric));
 }

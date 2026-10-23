@@ -29,6 +29,7 @@ mod api;
 #[cfg(target_arch = "wasm32")]
 mod ffi;
 pub mod ihttp;
+mod life;
 mod pending;
 #[doc(hidden)]
 pub mod rt;
@@ -36,7 +37,7 @@ pub mod rt;
 #[cfg(target_arch = "wasm32")]
 pub use api::*;
 pub use citadel_app_sdk_types as types;
-pub use citadel_app_sdk_types::{AppContext, AppEvent, Refused};
+pub use citadel_app_sdk_types::{AppContext, AppEvent, CloseReason, Refused, SuspendReason};
 #[cfg(target_arch = "wasm32")]
 pub use ffi::{call, call_now};
 pub use pending::Pending;
@@ -50,15 +51,37 @@ impl InitFailure {
     pub const DECLINED: InitFailure = InitFailure(types::abi::InitResult::Declined.code());
 }
 
+/// How long a closing app has: the install's `close_grace_ms` (`AppContext::close_grace_ms`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CloseContext {
+    /// From the moment `app_close` is called until the host ends the instance, whether or not
+    /// `close` returned and its replies arrived. A bound on cleanup, not a timeout to retry in.
+    pub grace_ms: u32,
+}
+
 /// An app. One instance per `app_init`; the host calls it from one thread, never re-entrantly.
+///
+/// Its life is [`types::lifecycle`]'s state machine: `init` -> started by `AppEvent::Init` ->
+/// `suspend`/`resume` while its surface is out of sight -> `close`, exactly once. Every method
+/// is required except `frame`, so an app states what each step means to it.
 pub trait App: Sized + 'static {
     fn init(ctx: AppContext) -> Result<Self, InitFailure>;
     fn event(&mut self, event: AppEvent);
-    /// One animation frame (`app_frame`, or `AppEvent::Frame`).
+    /// One animation frame (`app_frame`, or `AppEvent::Frame`), only while running.
     fn frame(&mut self, _dt_ms: u32) {}
+    /// The surface is out of sight: no frames or input arrive until [`App::resume`]. Replies,
+    /// storage changes and internal-HTTP frames still do.
+    fn suspend(&mut self, reason: SuspendReason);
+    fn resume(&mut self);
+    /// The graceful end, called once. Persist what must survive through `storage` (the only
+    /// group besides `log` a closing app may call); attach `Pending::then` to the writes, and
+    /// the host delivers their replies before it ends the instance, within `ctx.grace_ms`.
+    /// Nothing of the app runs after that.
+    fn close(&mut self, ctx: &CloseContext, reason: CloseReason);
 }
 
-/// Export `app_alloc`, `app_free`, `app_init`, `app_event` and `app_frame` for `$app`.
+/// Export `app_alloc`, `app_free`, `app_init`, `app_event`, `app_frame` and `app_close` for
+/// `$app`: an app built with it cannot lack the close path the ABI requires.
 #[macro_export]
 macro_rules! export_app {
     ($app:ty) => {
@@ -93,6 +116,11 @@ macro_rules! export_app {
         #[no_mangle]
         pub extern "C" fn app_frame(dt_ms: i32) {
             $crate::rt::wasm_frame(&__CITADEL_APP, dt_ms)
+        }
+
+        #[no_mangle]
+        pub extern "C" fn app_close(reason: i32) -> i32 {
+            $crate::rt::wasm_close(&__CITADEL_APP, reason)
         }
     };
 }

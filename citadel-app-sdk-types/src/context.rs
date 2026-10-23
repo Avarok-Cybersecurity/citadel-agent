@@ -42,6 +42,9 @@ abi_types! {
         pub acting_username: String,
         /// The node whose pane or zone hosts this instance.
         pub node_id: String,
+        /// How long `app_close` and the replies it waits on may take before the host ends the
+        /// instance: the manifest's `limits.close_grace_ms`, at most `abi::MAX_CLOSE_GRACE_MS`.
+        pub close_grace_ms: u32,
     }
 }
 

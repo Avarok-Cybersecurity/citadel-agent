@@ -911,6 +911,7 @@ name = "citadel-internal-service-wasm-client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "citadel-app-signature",
  "citadel-internal-service-connector",
  "citadel-internal-service-types",
  "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=eb9c0b75)",
@@ -920,6 +921,7 @@ dependencies = [
  "futures",
  "futures-util",
  "getrandom 0.2.17",
+ "hex",
  "js-sys",
  "log",
  "once_cell",

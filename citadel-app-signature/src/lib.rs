@@ -212,4 +212,6 @@ fn decode_exact<const N: usize>(text: &str) -> Result<[u8; N], String> {
 }
 
 #[cfg(test)]
+mod fixture_tests;
+#[cfg(test)]
 mod tests;

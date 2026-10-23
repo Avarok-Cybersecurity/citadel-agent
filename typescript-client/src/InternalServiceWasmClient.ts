@@ -9,6 +9,7 @@ import type { ConfigCommand } from './types/ConfigCommand';
 import type { ConnectionManagementSuccess } from './types/ConnectionManagementSuccess';
 import type { ConnectionManagementFailure } from './types/ConnectionManagementFailure';
 import { isResponseType } from './type-guards.js';
+import { loadWasmModule } from './wasm-module.js';
 
 // WASM module will be loaded dynamically
 
@@ -33,6 +34,8 @@ export interface WasmModule {
     send_p2p_message_reliable(localCid: string, peerCid: string, message: Uint8Array, securityLevel: string | null, compressionHint?: string | null): Promise<void>;
     send_direct_to_internal_service(message: any): Promise<void>;
     close_connection(): Promise<void>;
+    /** ML-DSA-65 app signature check (citadel-app-signature); needs no connection. */
+    verify_app_signature(publicKeyHex: string, appId: string, version: string, manifestSha256Hex: string, wasmSha256Hex: string, signature: Uint8Array): boolean;
     get_version(): string;
     is_initialized(): boolean;
 }
@@ -117,7 +120,7 @@ export class InternalServiceWasmClient {
             this.isRecovering = false;
 
             // Load the shared WASM module
-            const wasmModule = await this.loadWasmModule();
+            const wasmModule = await loadWasmModule();
             this.wasmModule = wasmModule;
 
             // Initialize the WASM client with WebSocket URL
@@ -348,40 +351,6 @@ export class InternalServiceWasmClient {
     }
 
     // Private methods
-
-    private async loadWasmModule(): Promise<WasmModule> {
-        try {
-            console.log('Loading WASM module...');
-
-            // Imported from the PACKAGE, not from /wasm/.
-            //
-            // Tried and reverted: pointing this at the served /wasm/ copy makes
-            // `vite build` stop needing an uncommitted wasm-pack artefact, and
-            // the production build does succeed. But Vite refuses to let source
-            // import anything under /public — "copied as-is during build
-            // without going through the plugin transforms" — so the dev server
-            // answers 500 and WASM never initialises. Prod-only verification
-            // would have shipped that.
-            //
-            // The CI consequence (bundle-budget and PWA gates cannot build
-            // without a prior WASM build) belongs in CI, not here.
-            // @ts-ignore - Dynamic import of WASM glue code
-            const wasmModule = await import('../citadel_internal_service_wasm_client.js');
-
-            // Initialize the WASM module with explicit path to .wasm binary in public directory
-            // This is needed because Vite mangles import.meta.url used by wasm-bindgen
-            const wasmBinaryUrl = '/wasm/citadel_internal_service_wasm_client_bg.wasm';
-            console.log('Initializing WASM module with binary from:', wasmBinaryUrl);
-            await wasmModule.default(wasmBinaryUrl);
-            console.log('WASM module initialized successfully');
-
-            // WASM-BOUNDARY: dynamic import returns untyped module namespace, cast to our interface
-            return wasmModule as unknown as WasmModule;
-        } catch (error) {
-            console.error('Failed to load WASM module:', error);
-            throw new Error(`Failed to load WASM module: ${error}`);
-        }
-    }
 
     private startMessageProcessing(): void {
         // Prevent multiple message processing loops

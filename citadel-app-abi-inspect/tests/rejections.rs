@@ -55,7 +55,7 @@ fn a_minimum_above_the_ceiling_is_refused_and_the_ceiling_itself_is_not() {
 
 #[test]
 fn each_required_export_is_required_and_frame_is_optional() {
-    for export in [ALLOC, FREE, INIT, EVENT] {
+    for export in [ALLOC, FREE, INIT, EVENT, CLOSE] {
         let p = Parts::valid().without_export(export);
         let name = export.split('"').nth(1).unwrap();
         assert_eq!(
@@ -84,6 +84,16 @@ fn an_export_with_the_wrong_signature_is_refused() {
         judge(&f).reasons(),
         [Rejection::WrongExportSignature {
             name: "app_frame".into()
+        }]
+    );
+    // app_close answers a CloseResult: one that answers nothing cannot say it ran.
+    let mut c = Parts::valid().without_export(CLOSE);
+    c.exports
+        .push(r#"(func (export "app_close") (param i32))"#.into());
+    assert_eq!(
+        judge(&c).reasons(),
+        [Rejection::WrongExportSignature {
+            name: "app_close".into()
         }]
     );
     let mut g = Parts::valid().without_export(EVENT);

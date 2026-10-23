@@ -16,4 +16,9 @@ theme: { [key in string]?: string }, locale: string, acting_username: string,
 /**
  * The node whose pane or zone hosts this instance.
  */
-node_id: string, };
+node_id: string, 
+/**
+ * How long `app_close` and the replies it waits on may take before the host ends the
+ * instance: the manifest's `limits.close_grace_ms`, at most `abi::MAX_CLOSE_GRACE_MS`.
+ */
+close_grace_ms: number, };

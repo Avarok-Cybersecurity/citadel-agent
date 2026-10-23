@@ -4,6 +4,7 @@
 
 // Export the WASM-based client for browser environments
 export { InternalServiceWasmClient } from './InternalServiceWasmClient.js';
+export { loadWasmModule } from './wasm-module.js';
 export type {
     WasmClientConfig,
     WasmModule,

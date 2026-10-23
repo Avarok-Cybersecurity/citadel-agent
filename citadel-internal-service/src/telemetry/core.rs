@@ -191,6 +191,7 @@ fn entry(
         target,
         message,
         peer_cid: event.peer_cid,
+        metric: None,
     }
 }
 
@@ -222,6 +223,7 @@ impl Ring {
 }
 
 mod browser;
+mod metric;
 
 #[cfg(test)]
 mod tests;

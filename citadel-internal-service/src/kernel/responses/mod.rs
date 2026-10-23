@@ -6,6 +6,7 @@ use citadel_sdk::prelude::{NetworkError, NodeResult, Ratchet};
 
 mod disconnect;
 mod object_transfer_handle;
+mod path_outcome;
 mod peer_channel_created;
 
 mod group_channel_created;
@@ -51,6 +52,8 @@ pub async fn handle_node_result<T: IOInterface + Sync, R: Ratchet>(
             )
             .await;
         }
+
+        NodeResult::PeerPathOutcome(outcome) => path_outcome::handle(this, &outcome),
 
         evt => {
             citadel_sdk::logging::warn!(target: "citadel", "Unhandled node result: {evt:?}")

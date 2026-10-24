@@ -6,7 +6,7 @@ use citadel_app_sdk_types::{Capability, Group, OPS};
 use std::collections::BTreeSet;
 
 /// Design 2.2 + R4.1, exactly. A rename or an addition must be made here deliberately.
-const DESIGN_CAPABILITIES: [&str; 32] = [
+const DESIGN_CAPABILITIES: [&str; 33] = [
     "canvas",
     "ui",
     "events",
@@ -26,6 +26,7 @@ const DESIGN_CAPABILITIES: [&str; 32] = [
     "storage.blob",
     "storage.files",
     "storage.local",
+    "storage.node.authored",
     "net.host",
     "net.host.private",
     "net.server",
@@ -154,6 +155,7 @@ fn every_granted_capability_but_the_private_network_extension_has_an_op() {
         Capability::StorageScope,
         Capability::StorageNode,
         Capability::StorageLocal,
+        Capability::StorageNodeAuthored,
     ];
     for c in Capability::ALL {
         let reached = used.contains(c) || kv.contains(c);

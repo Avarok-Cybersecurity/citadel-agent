@@ -9,6 +9,10 @@
 use citadel_ihttp_types::MAX_SCOPE_KEY_BYTES;
 use citadel_internal_service_types::{AppKvRefusal, APP_KV_MAX_KEY_BYTES};
 
+/// Every app record's key starts with this; nothing else the agent stores does, and no
+/// window's LocalDB request may name one (requests/local_db).
+pub(crate) const APP_STORAGE_PREFIX: &str = "app:";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Namespace {
     prefix: String,
@@ -25,7 +29,7 @@ impl Namespace {
         }
         Ok(Self {
             prefix: format!(
-                "app:{app_id}:{}:{}:",
+                "{APP_STORAGE_PREFIX}{app_id}:{}:{}:",
                 hex::encode(scope_key),
                 hex::encode(username)
             ),

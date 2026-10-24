@@ -1,10 +1,12 @@
 //! The agent's side of [`HostIo`].
 
 use super::HostIo;
+use crate::kernel::apps_io::IhttpDelivered;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
+use citadel_internal_service_connector::messenger::CompressionHint;
 use citadel_internal_service_types::{
-    InternalServiceRequest, InternalServiceResponse, MessageNotification,
+    InternalServiceRequest, InternalServiceResponse, MessageNotification, SecurityLevel,
 };
 use citadel_sdk::prelude::Ratchet;
 use futures::future::BoxFuture;
@@ -56,7 +58,28 @@ where
             debug_assert_eq!(notification.cid, cid);
             // Internal HTTP is the app hosts', never the conversation store's.
             match this.deliver_ihttp(notification) {
-                Ok(()) => true,
+                Ok(IhttpDelivered::Consumed) => true,
+                Ok(IhttpDelivered::Refused { peer_cid, answer }) => {
+                    // Sent from a task of its own: this runs inside ILM's delivery, and
+                    // queueing a send on the same ILM here would wait on itself.
+                    if let Some(host) = this.ilm_hosts.get(cid) {
+                        drop(tokio::spawn(async move {
+                            let sent = host
+                                .send(
+                                    peer_cid,
+                                    Uuid::new_v4(),
+                                    answer,
+                                    SecurityLevel::Standard,
+                                    Some(CompressionHint::Opaque),
+                                )
+                                .await;
+                            if let Err(why) = sent {
+                                citadel_sdk::logging::warn!(target: "citadel", "[IHTTP] {cid}: the refusal for {peer_cid} was not queued: {why}");
+                            }
+                        }));
+                    }
+                    true
+                }
                 Err(notification) => this.conversations.delivered(&this, notification).await,
             }
         })

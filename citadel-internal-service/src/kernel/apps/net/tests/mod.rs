@@ -5,6 +5,7 @@
 mod allowed;
 mod denied;
 mod limits;
+mod private_network;
 mod redirects;
 mod streaming;
 
@@ -24,6 +25,7 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 pub(super) const PAGE: &str = "acme.work.avarok.net";
+pub(super) const APP: &str = "com.acme.kanban";
 
 /// Answers per host, in order; the last answer repeats. Counts every lookup.
 #[derive(Default)]
@@ -143,7 +145,7 @@ pub(super) struct World {
     pub clock: Arc<FakeClock>,
 }
 
-pub(super) fn world_on_port(agent_port: u16) -> World {
+pub(super) fn world_with(agent_port: u16, private_network: bool) -> World {
     let resolver = Arc::new(FakeResolver::default());
     let connector = Arc::new(FakeConnector::default());
     let clock = Arc::new(FakeClock::default());
@@ -155,6 +157,7 @@ pub(super) fn world_on_port(agent_port: u16) -> World {
     let config = AppNetConfig {
         page_origin_hosts: vec![PAGE.to_string()],
         agent_port,
+        private_network,
     };
     let net = Arc::new(AppNet::new(config, ports).expect("configured"));
     World {
@@ -163,6 +166,12 @@ pub(super) fn world_on_port(agent_port: u16) -> World {
         connector,
         clock,
     }
+}
+
+/// Private network on: most tests here exercise what the policy itself refuses, which it
+/// refuses with the ceiling raised; an agent that keeps it off is private_network.rs's.
+pub(super) fn world_on_port(agent_port: u16) -> World {
+    world_with(agent_port, true)
 }
 
 pub(super) fn world() -> World {
@@ -205,9 +214,19 @@ impl World {
         grant: &AppNetGrant,
         request: &AppHttpRequest,
     ) -> Result<super::body::Fetched, citadel_internal_service_types::AppFetchRefusal> {
+        self.fetch_as(APP, grant, request).await
+    }
+
+    pub(super) async fn fetch_as(
+        &self,
+        app_id: &str,
+        grant: &AppNetGrant,
+        request: &AppHttpRequest,
+    ) -> Result<super::body::Fetched, citadel_internal_service_types::AppFetchRefusal> {
         let key = key();
         let input = FetchInput {
             key: &key,
+            app_id,
             grant,
             request,
         };

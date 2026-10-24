@@ -50,7 +50,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         InternalServiceRequest::AppFetch {
             request_id,
             cid,
-            app_id: _,
+            app_id,
             install_id,
             grant,
             request,
@@ -66,6 +66,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             let deadline = Instant::now() + Duration::from_millis(REQUEST_TIMEOUT_MS);
             let input = FetchInput {
                 key: &key,
+                app_id: &app_id,
                 grant: &grant,
                 request: &request,
             };

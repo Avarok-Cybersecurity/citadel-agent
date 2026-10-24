@@ -36,7 +36,7 @@ mod tests;
 
 pub use decide::{decide, decide_redirect, Allowed, DenyReason, EgressRequest, Verdict, METHODS};
 pub use grant::{AllowedHost, Deployment, Egress, GrantFault, NetGrant};
-pub use headers::ALLOWED_HEADERS;
+pub use headers::{response_header_ok, ALLOWED_HEADERS, DENIED_RESPONSE_HEADERS};
 pub use ranges::{canonical, classify, AddressClass, ForbiddenRange, PrivateRange};
 pub use url::{Scheme, TargetUrl, UrlFault};
 

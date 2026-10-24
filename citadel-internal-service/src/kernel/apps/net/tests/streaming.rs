@@ -60,6 +60,7 @@ async fn start(chunks: Vec<Vec<u8>>) -> Running {
     let install = key();
     let input = FetchInput {
         key: &install,
+        app_id: APP,
         grant: &only,
         request: &request,
     };

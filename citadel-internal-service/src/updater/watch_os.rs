@@ -61,8 +61,8 @@ impl WatchIo for OsWatch {
             .map_err(|e| format!("{} -> {}: {e}", from.display(), to.display()))
     }
 
-    fn mark(&self, path: &Path) {
-        if let Err(e) = std::fs::write(path, b"") {
+    fn mark(&self, path: &Path, why: &str) {
+        if let Err(e) = std::fs::write(path, why) {
             self.log(&format!("{} was not written: {e}", path.display()));
         }
     }

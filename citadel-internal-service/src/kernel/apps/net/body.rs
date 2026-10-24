@@ -3,7 +3,9 @@
 use super::fetch::Opened;
 use super::rate::InstallKey;
 use super::{AppNet, FetchInput};
-use citadel_app_net_policy::{MAX_HEADERS, MAX_HEADER_BYTES, MAX_RESPONSE_BODY_BYTES};
+use citadel_app_net_policy::{
+    response_header_ok, MAX_HEADERS, MAX_HEADER_BYTES, MAX_RESPONSE_BODY_BYTES,
+};
 use citadel_internal_service_types::{
     AppFetchLimit, AppFetchRefusal, AppFetchUnavailable, AppHttpHeader,
 };
@@ -19,12 +21,15 @@ pub(crate) struct Fetched {
     pub redirects: u8,
 }
 
-/// The response headers an app is shown: at most `MAX_HEADERS`, each within
-/// `MAX_HEADER_BYTES`; the rest are dropped rather than handed on unbounded.
+/// The response headers an app is shown: none the policy denies (cookies, authentication
+/// challenges, framing), at most `MAX_HEADERS`, each within `MAX_HEADER_BYTES`; the rest are
+/// dropped rather than handed on.
 pub(crate) fn shown_headers(headers: &[(String, String)]) -> Vec<AppHttpHeader> {
     headers
         .iter()
-        .filter(|(name, value)| name.len() + value.len() <= MAX_HEADER_BYTES)
+        .filter(|(name, value)| {
+            response_header_ok(name) && name.len() + value.len() <= MAX_HEADER_BYTES
+        })
         .take(MAX_HEADERS)
         .map(|(name, value)| AppHttpHeader {
             name: name.clone(),

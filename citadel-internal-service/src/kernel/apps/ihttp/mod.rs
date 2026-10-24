@@ -10,9 +10,11 @@
 pub(crate) mod envelope;
 
 #[cfg(test)]
+mod fuzz_tests;
+#[cfg(test)]
 mod tests;
 
-use citadel_ihttp_types::decode;
+use citadel_ihttp_types::{decode, CancelReason, IhttpFrame, IhttpFrameKind, IHTTP_VERSION};
 use citadel_internal_service_types::{ClientCapabilities, IhttpSendRefusal};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -105,6 +107,26 @@ pub(crate) fn receivers(
         .filter(|c| capabilities.get(c).is_some_and(|caps| caps.ihttp))
         .copied()
         .collect()
+}
+
+/// The answer to an arriving frame no window takes: a `RequestHead` is refused, so the
+/// caller learns at once what it would otherwise wait out its deadline to guess, and the
+/// answer is the one a window that refuses the caller gives (`Cancel{Refused}`), so it says
+/// nothing about whether the member has the app open. Any other frame belongs to a stream
+/// that was never opened here, and is dropped.
+pub(crate) fn unclaimed_answer(frame: &[u8]) -> Option<Vec<u8>> {
+    let frame = decode(frame).ok()?;
+    if !matches!(frame.kind, IhttpFrameKind::RequestHead { .. }) {
+        return None;
+    }
+    let cancel = IhttpFrame {
+        v: IHTTP_VERSION,
+        stream: frame.stream,
+        kind: IhttpFrameKind::Cancel {
+            reason: CancelReason::Refused,
+        },
+    };
+    envelope::wrap(&cancel).ok()
 }
 
 /// Whether bytes a window asked to send as an ordinary message are an internal-HTTP envelope,

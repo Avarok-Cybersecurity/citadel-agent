@@ -71,12 +71,16 @@ impl AppNet {
         deadline: Instant,
     ) -> Result<Opened, AppFetchRefusal> {
         let install = input.key.install_id.as_str();
-        if !self.rate.admit(input.key, self.ports.clock.now_ms()) {
+        if !self
+            .rate
+            .admit(input.key.cid, input.app_id, self.ports.clock.now_ms())
+        {
             return Err(AppFetchRefusal::Limit(AppFetchLimit::Rate));
         }
         let hosts: Vec<&str> = input.grant.hosts.iter().map(String::as_str).collect();
+        // The page asks; the agent's own configuration is the ceiling.
         let egress = Egress::Host {
-            private: input.grant.private,
+            private: input.grant.private && self.private_network,
         };
         let grant = NetGrant::new(egress, &hosts).map_err(|fault| {
             info!(target: "citadel", "[APP-NET] {install}: refused grant: {fault:?}");

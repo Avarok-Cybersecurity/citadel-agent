@@ -138,14 +138,19 @@ impl Staging for FsStaging {
         }
     }
 
-    fn failed(&self, version: &Version) -> bool {
-        Self::failed_marker(&self.root, &version.to_string()).exists()
+    fn failed(&self, version: &Version) -> Option<String> {
+        let marker = Self::failed_marker(&self.root, &version.to_string());
+        match std::fs::read_to_string(&marker) {
+            Ok(why) => Some(why),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => Some(format!("{} is unreadable: {e}", marker.display())),
+        }
     }
 
-    fn mark_failed(&self, version: &Version) {
+    fn mark_failed(&self, version: &Version, why: &str) {
         let marker = Self::failed_marker(&self.root, &version.to_string());
         let written =
-            std::fs::create_dir_all(&self.root).and_then(|()| std::fs::write(&marker, b""));
+            std::fs::create_dir_all(&self.root).and_then(|()| std::fs::write(&marker, why));
         if let Err(e) = written {
             warn!(target: "citadel::update", "{} was not written: {e}", marker.display());
         }

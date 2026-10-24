@@ -183,6 +183,12 @@ where
         return refusal_response(&command, uuid, "internal HTTP is sent with IhttpSend");
     }
 
+    // The apps' `local` records are the agent's, read and written only through `AppKv`.
+    if local_db::names_app_storage(&command) {
+        log::warn!(target: "citadel", "Refusing a LocalDB request for an app: key from connection {uuid}");
+        return refusal_response(&command, uuid, local_db::APP_STORAGE_REFUSED);
+    }
+
     // The agent is the only writer of a hosted account's conversations.
     if this.writes_hosted_conversation(&command) {
         log::warn!(target: "citadel", "Refusing a conversation-record write from connection {uuid}: the agent hosts that account");
@@ -304,7 +310,9 @@ where
         }
 
         InternalServiceRequest::LocalDBGetAllKV { .. } => {
-            local_db::get_all_kv::handle(this, uuid, command).await
+            local_db::get_all_kv::handle(this, uuid, command)
+                .await
+                .map(local_db::hide_app_storage)
         }
 
         InternalServiceRequest::LocalDBClearAllKV { .. } => {

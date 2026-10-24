@@ -48,6 +48,16 @@ pub struct Engine {
     busy: tokio::sync::Mutex<()>,
 }
 
+/// What the status says about a version whose install failed before.
+fn failed_before(version: &Version, why: &str) -> String {
+    let why = if why.is_empty() {
+        "no reason was recorded"
+    } else {
+        why
+    };
+    format!("Installing {version} failed before, so it is not installed automatically: {why}")
+}
+
 impl Engine {
     pub fn new(current: Version, plan: Plan, io: Io) -> Self {
         Self {
@@ -112,12 +122,19 @@ impl Engine {
             Candidate::Upgrade(version) => version,
         };
         let known = self.state.lock().offer.clone();
-        if let Some(offer) = known.filter(|o| o.version == version && o.settled) {
-            self.io.announcer.announce(&self.available(&offer));
-            return;
+        let offer = match known.filter(|o| o.version == version && o.settled) {
+            Some(offer) => offer,
+            None => {
+                let offer = self.prepare(&release, version).await;
+                self.state.lock().offer = Some(offer.clone());
+                offer
+            }
+        };
+        // After a rollback the agent checking is the one put back, and this is the only place
+        // the member can learn why the version they were offered did not stay.
+        if let Some(why) = self.io.staging.failed(&offer.version) {
+            self.state.lock().last_error = Some(failed_before(&offer.version, &why));
         }
-        let offer = self.prepare(&release, version).await;
-        self.state.lock().offer = Some(offer.clone());
         self.io.announcer.announce(&self.available(&offer));
     }
 
@@ -181,10 +198,14 @@ impl Engine {
             .and_then(|o| o.staged.clone().map(|p| (o, p)));
         let failed_before = staged
             .as_ref()
-            .is_some_and(|(o, _)| self.io.staging.failed(&o.version));
+            .is_some_and(|(o, _)| self.io.staging.failed(&o.version).is_some());
+        // Asked once: for a self-replacing install it runs the staged agent.
+        let installable = staged
+            .as_ref()
+            .map(|(_, path)| self.io.installer.can_install(path));
         let situation = Situation {
             trigger,
-            ready: staged.is_some() && self.io.installer.can_install().is_ok(),
+            ready: matches!(installable, Some(Ok(()))),
             signed_in: self.io.sessions.signed_in(),
             auto_install,
             failed_before,
@@ -199,12 +220,7 @@ impl Engine {
                 })
             }
             (Decision::Wait(why), _) if trigger == Trigger::UserAsked => {
-                let why = self
-                    .io
-                    .installer
-                    .can_install()
-                    .err()
-                    .unwrap_or(why.to_string());
+                let why = installable.and_then(Result::err).unwrap_or(why.to_string());
                 Err(format!("Nothing was installed: {why}"))
             }
             _ => Ok(()),

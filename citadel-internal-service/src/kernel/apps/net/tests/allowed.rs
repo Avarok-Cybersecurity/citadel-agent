@@ -38,6 +38,34 @@ async fn an_agent_with_no_page_origin_refuses_to_configure_host_egress() {
     let config = AppNetConfig {
         page_origin_hosts: vec![],
         agent_port: citadel_app_net_policy::AGENT_PORT,
+        private_network: false,
     };
     assert!(AppNet::new(config, ports).is_none());
+}
+
+#[tokio::test]
+async fn an_upstream_cookie_or_challenge_never_reaches_the_app() {
+    let w = world();
+    w.resolver.answer("api.acme.com", &["93.184.216.34"]);
+    let header = |n: &str, v: &str| (n.to_string(), v.to_string());
+    w.connector.reply(Reply {
+        status: 200,
+        headers: vec![
+            header("set-cookie", "session=stolen"),
+            header("content-type", "application/json"),
+            header("www-authenticate", "Basic realm=x"),
+            header("transfer-encoding", "chunked"),
+        ],
+        chunks: vec![b"{}".to_vec()],
+    });
+    let fetched = w
+        .fetch(
+            &grant(false, &["api.acme.com"]),
+            &get("https://api.acme.com/"),
+        )
+        .await
+        .expect("allowed");
+    let shown: Vec<&str> = fetched.headers.iter().map(|h| h.name.as_str()).collect();
+    // The control is the kept `content-type`: the scrub is not a blanket drop.
+    assert_eq!(shown, vec!["content-type"]);
 }

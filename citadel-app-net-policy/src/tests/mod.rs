@@ -3,6 +3,7 @@ mod grant_tests;
 mod hard_deny_tests;
 mod range_tests;
 mod redirect_tests;
+mod response_header_tests;
 mod url_tests;
 
 use crate::*;

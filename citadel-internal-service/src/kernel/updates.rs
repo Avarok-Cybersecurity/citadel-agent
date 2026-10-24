@@ -109,7 +109,7 @@ impl Announcer for Everyone {
 struct MacAppHandoff(Arc<NoticeHub>);
 
 impl Installer for MacAppHandoff {
-    fn can_install(&self) -> Result<(), String> {
+    fn can_install(&self, _staged: &Path) -> Result<(), String> {
         if self.0.has_stream() {
             Ok(())
         } else {
@@ -125,7 +125,7 @@ impl Installer for MacAppHandoff {
             request_id: None,
         });
         match self.0.send_to_stream(handoff) {
-            0 => self.can_install(),
+            0 => self.can_install(staged),
             _ => Ok(()),
         }
     }

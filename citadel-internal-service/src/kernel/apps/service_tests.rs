@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 type Svc = CitadelWorkspaceService<InMemoryInterface, StackedRatchet>;
 
-fn service() -> (tempfile::TempDir, Svc) {
+pub(super) fn service() -> (tempfile::TempDir, Svc) {
     let transfers = tempfile::tempdir().expect("temp dir");
     let (_connector, svc): (_, Svc) = CitadelWorkspaceService::new_in_memory(
         crate::SERVER_RECONNECT,

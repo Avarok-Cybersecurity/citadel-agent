@@ -11,6 +11,8 @@ pub(crate) mod net;
 
 #[cfg(test)]
 mod service_tests;
+#[cfg(test)]
+mod unclaimed_head_tests;
 
 pub use net::AppNetConfig;
 

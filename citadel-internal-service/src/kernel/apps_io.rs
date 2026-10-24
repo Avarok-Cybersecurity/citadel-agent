@@ -11,6 +11,15 @@ use citadel_sdk::logging::{info, warn};
 use citadel_sdk::prelude::Ratchet;
 use uuid::Uuid;
 
+/// What became of an arriving internal-HTTP envelope.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum IhttpDelivered {
+    /// Handed to the windows that take it, or dropped and counted.
+    Consumed,
+    /// No window took a `RequestHead`: this envelope goes back to the caller (`peer_cid`).
+    Refused { peer_cid: u64, answer: Vec<u8> },
+}
+
 impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
     /// The session `cid`'s connections, if `connection` is one of them.
     pub(crate) fn attached(&self, cid: u64, connection: Uuid) -> bool {
@@ -26,7 +35,7 @@ impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
     pub(crate) fn deliver_ihttp(
         &self,
         notification: MessageNotification,
-    ) -> Result<(), MessageNotification> {
+    ) -> Result<IhttpDelivered, MessageNotification> {
         let counters = &self.apps.ihttp;
         let (cid, peer_cid) = (notification.cid, notification.peer_cid);
         let frame = match envelope::read(&notification.message) {
@@ -35,7 +44,7 @@ impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
                 counters.add(Count::MalformedIn);
                 let dropped = counters.read().malformed_in;
                 warn!(target: "citadel", "[IHTTP] {cid}: dropped a malformed frame from {peer_cid} ({dropped} so far): {why}");
-                return Ok(());
+                return Ok(IhttpDelivered::Consumed);
             }
             envelope::Inbound::Other => return Err(notification),
         };
@@ -46,16 +55,19 @@ impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
         let response = InternalServiceResponse::IhttpFrameNotification(IhttpFrameNotification {
             cid,
             peer_cid,
-            frame,
+            frame: frame.clone(),
             request_id: None,
         });
-        if deliver(&self.tx_to_localhost_clients, &targets, response).is_empty() {
-            counters.add(Count::NoReceiver);
-            let dropped = counters.read().no_receiver;
-            info!(target: "citadel", "[IHTTP] {cid}: no window takes internal HTTP; frame from {peer_cid} dropped ({dropped} so far)");
-        } else {
+        if !deliver(&self.tx_to_localhost_clients, &targets, response).is_empty() {
             counters.add(Count::Received);
+            return Ok(IhttpDelivered::Consumed);
         }
-        Ok(())
+        counters.add(Count::NoReceiver);
+        let dropped = counters.read().no_receiver;
+        info!(target: "citadel", "[IHTTP] {cid}: no window takes internal HTTP; frame from {peer_cid} dropped ({dropped} so far)");
+        Ok(match ihttp::unclaimed_answer(&frame) {
+            Some(answer) => IhttpDelivered::Refused { peer_cid, answer },
+            None => IhttpDelivered::Consumed,
+        })
     }
 }

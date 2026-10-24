@@ -19,6 +19,7 @@ struct Fake {
     probes: Cell<u32>,
     alive_checks: Cell<u32>,
     events: RefCell<Vec<String>>,
+    marked_why: RefCell<Option<String>>,
 }
 
 struct FakeChild {
@@ -40,6 +41,7 @@ impl Fake {
             probes: Cell::new(0),
             alive_checks: Cell::new(0),
             events: RefCell::default(),
+            marked_why: RefCell::default(),
         }
     }
     fn events(&self) -> Vec<String> {
@@ -76,10 +78,11 @@ impl WatchIo for Fake {
             .push(format!("rename {} {}", from.display(), to.display()));
         Ok(())
     }
-    fn mark(&self, path: &Path) {
+    fn mark(&self, path: &Path, why: &str) {
         self.events
             .borrow_mut()
             .push(format!("mark {}", path.display()));
+        *self.marked_why.borrow_mut() = Some(why.to_string());
     }
     fn now(&self) -> Instant {
         self.clock.get()
@@ -160,6 +163,42 @@ fn an_old_agent_that_never_exits_gets_its_binary_back_and_nothing_starts() {
     });
     assert_eq!(supervise(&plan(), &io), Outcome::ParentStuck);
     assert_eq!(io.events(), ROLLBACK[1..3]);
+}
+
+#[test]
+fn the_failure_marker_says_why_for_the_agent_that_comes_back() {
+    let cases = [
+        (
+            Script {
+                child_exits: true,
+                ..Default::default()
+            },
+            "it exited".to_string(),
+        ),
+        (
+            Script {
+                spawn_fails: true,
+                ..Default::default()
+            },
+            "the new agent did not start: exec format error".to_string(),
+        ),
+        (
+            Script::default(),
+            format!("127.0.0.1:12345 did not answer within {HEALTHY_WITHIN:?}"),
+        ),
+        (
+            Script {
+                parent_alive_for: u32::MAX,
+                ..Default::default()
+            },
+            "the old agent did not exit".to_string(),
+        ),
+    ];
+    for (script, why) in cases {
+        let io = Fake::new(script);
+        supervise(&plan(), &io);
+        assert_eq!(io.marked_why.borrow().as_deref(), Some(why.as_str()));
+    }
 }
 
 #[test]

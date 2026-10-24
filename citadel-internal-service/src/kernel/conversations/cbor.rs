@@ -208,5 +208,9 @@ pub(super) fn head(out: &mut Vec<u8>, major: u8, n: u64, width: Width) {
 mod decode;
 
 #[cfg(test)]
+#[path = "cbor_fuzz_tests.rs"]
+mod fuzz_tests;
+
+#[cfg(test)]
 #[path = "cbor_tests.rs"]
 mod tests;

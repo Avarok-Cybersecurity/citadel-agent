@@ -2,7 +2,7 @@
 //! fill — every window, the menu-bar app's stream, the sessions, the preferences store — and the
 //! updater's life inside the service's.
 
-use crate::kernel::conversations::ConversationIo;
+use crate::kernel::conversations::kv::ConversationKv;
 use crate::kernel::notices::NoticeHub;
 use crate::kernel::session_route::{deliver, Clients};
 use crate::kernel::CitadelWorkspaceService;
@@ -22,6 +22,8 @@ use semver::Version;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
+/// In the agent's own bucket, under the name it shipped with; reserved from windows like every
+/// `agent:` key (requests/local_db), so only `UpdateSetSettings` changes it.
 pub const AUTO_INSTALL_KEY: &str = "agent_update_auto_install";
 
 /// The configuration the shipped binary gave, and the engine once the service has started.
@@ -109,7 +111,7 @@ impl Announcer for Everyone {
 struct MacAppHandoff(Arc<NoticeHub>);
 
 impl Installer for MacAppHandoff {
-    fn can_install(&self) -> Result<(), String> {
+    fn can_install(&self, _staged: &Path) -> Result<(), String> {
         if self.0.has_stream() {
             Ok(())
         } else {
@@ -125,7 +127,7 @@ impl Installer for MacAppHandoff {
             request_id: None,
         });
         match self.0.send_to_stream(handoff) {
-            0 => self.can_install(),
+            0 => self.can_install(staged),
             _ => Ok(()),
         }
     }
@@ -142,17 +144,17 @@ impl<R: Ratchet> Sessions for MapSessions<R> {
 }
 
 /// The setting in the agent's key-value store, beside the per-account mutes.
-struct KvSettings(Box<dyn ConversationIo>);
+struct KvSettings(Box<dyn ConversationKv>);
 
 #[async_trait]
 impl SettingsStore for KvSettings {
     async fn auto_install(&self) -> Result<Option<bool>, String> {
-        let value = self.0.kv().get(AUTO_INSTALL_KEY).await?;
+        let value = self.0.get(AUTO_INSTALL_KEY).await?;
         Ok(value.and_then(|v| v.first().map(|b| *b == 1)))
     }
 
     async fn set_auto_install(&self, on: bool) -> Result<(), String> {
-        self.0.kv().set(AUTO_INSTALL_KEY, vec![u8::from(on)]).await
+        self.0.set(AUTO_INSTALL_KEY, vec![u8::from(on)]).await
     }
 }
 

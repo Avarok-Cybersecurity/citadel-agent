@@ -47,14 +47,18 @@ fn only_the_menu_bar_app_is_handed_the_image_and_without_it_nothing_installs() {
     let handoff = MacAppHandoff(hub.clone());
     let (_, mut page) = window(&clients);
     let version = Version::new(0, 9, 0);
-    assert!(handoff.can_install().is_err());
+    assert!(handoff
+        .can_install(Path::new("/c/Citadel-Agent.dmg"))
+        .is_err());
     assert!(handoff
         .install(Path::new("/c/Citadel-Agent.dmg"), &version)
         .is_err());
 
     let (app_id, mut app) = window(&clients);
     hub.subscribe(app_id);
-    assert!(handoff.can_install().is_ok());
+    assert!(handoff
+        .can_install(Path::new("/c/Citadel-Agent.dmg"))
+        .is_ok());
     handoff
         .install(Path::new("/c/Citadel-Agent.dmg"), &version)
         .unwrap();
@@ -70,5 +74,21 @@ fn only_the_menu_bar_app_is_handed_the_image_and_without_it_nothing_installs() {
     assert!(
         page.try_recv().is_err(),
         "a page is never handed the install"
+    );
+}
+
+/// The owned request's store: `UpdateSetSettings` writes the reserved key through the agent's
+/// own bucket, which a window's `LocalDBSetKV` cannot name (requests/local_db).
+#[tokio::test]
+async fn the_owned_setting_is_written_under_the_reserved_key() {
+    let settings = KvSettings(Box::new(
+        crate::kernel::conversations::kv::MemoryKv::default(),
+    ));
+    assert_eq!(settings.auto_install().await, Ok(None));
+    settings.set_auto_install(false).await.expect("saved");
+    assert_eq!(settings.auto_install().await, Ok(Some(false)));
+    assert_eq!(
+        crate::kernel::requests::local_db::reserved_key(AUTO_INSTALL_KEY),
+        Some(crate::kernel::requests::local_db::AGENT_SETTINGS_REFUSED)
     );
 }

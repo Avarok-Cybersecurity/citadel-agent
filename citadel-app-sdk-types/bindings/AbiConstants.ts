@@ -211,8 +211,10 @@ export const MAX_TOPICS = 4 as const;
 export const MAX_TOPIC_NAME_LEN = 32 as const;
 export const TOPIC_MAX_MSG_BYTES_CEILING = 16384 as const;
 export const TOPIC_MAX_MSGS_PER_S_CEILING = 4 as const;
+export const TOPIC_ENVELOPE_OVERHEAD = 66 as const;
 export const LIMIT_TOPIC_RATE = "topic_rate" as const;
 export const LIMIT_TOPIC_BYTES = "topic_bytes" as const;
+export const TOPIC_ENVELOPE_TAG = "citadel-topic/1" as const;
 
 /** Every op. `granted_by`: holding ANY ONE of these admits the call; null = decided by the arguments (KV_BACKEND_CAPABILITY). */
 export const OPS = [

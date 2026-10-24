@@ -5,7 +5,8 @@
 //! platform.rs (install type, asset), verify.rs (the verdict, the ML-DSA signature against
 //! release_key.rs), policy.rs (when to install),
 //! attest.rs's identity check, watchdog.rs's supervision. Behind the seams in io.rs: github.rs,
-//! attest.rs, staging.rs, host.rs, swap.rs, watch_os.rs, and the agent's side in kernel/updates.rs.
+//! attest.rs, staging.rs, host.rs, swap.rs, launch_check.rs, watch_os.rs, and the agent's side in
+//! kernel/updates.rs.
 //! docs/plans/agent-auto-update.md in citadel-workspace has the design.
 
 pub mod attest;
@@ -15,6 +16,8 @@ mod fetch;
 pub mod github;
 pub mod host;
 pub mod io;
+#[cfg(unix)]
+pub mod launch_check;
 pub mod platform;
 pub mod policy;
 pub mod release;
@@ -61,7 +64,7 @@ pub struct UpdaterConfig {
 pub struct LinkOnly(pub String);
 
 impl Installer for LinkOnly {
-    fn can_install(&self) -> Result<(), String> {
+    fn can_install(&self, _staged: &Path) -> Result<(), String> {
         Err(self.0.clone())
     }
     fn install(&self, _staged: &Path, _version: &semver::Version) -> Result<(), String> {
@@ -82,13 +85,13 @@ pub fn installer_for(
     }
     #[cfg(unix)]
     let replace = |target: &Path, args: Vec<String>| -> Arc<dyn Installer> {
-        Arc::new(swap::SelfReplace {
-            target: target.to_path_buf(),
+        Arc::new(swap::SelfReplace::new(
+            target.to_path_buf(),
             args,
-            health: config.bind,
-            staging_root: config.cache_dir.clone(),
-            handed_over: || std::process::exit(0),
-        })
+            config.bind,
+            config.cache_dir.clone(),
+            || std::process::exit(0),
+        ))
     };
     match kind {
         InstallKind::MacApp { .. } => mac_app,

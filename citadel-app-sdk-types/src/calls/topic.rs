@@ -15,6 +15,13 @@ pub const MAX_TOPIC_NAME_LEN: usize = 32;
 pub const TOPIC_MAX_MSG_BYTES_CEILING: u32 = 16_384;
 /// The ceiling on a manifest's `limits.topics.max_msgs_per_s`.
 pub const TOPIC_MAX_MSGS_PER_S_CEILING: u32 = 4;
+/// The tag of the envelope a topic message travels in, `{t, name, body}` in CBOR: a group message
+/// without it is not a topic message.
+pub const TOPIC_ENVELOPE_TAG: &str = "citadel-topic/1";
+/// The most bytes the envelope adds to a body within the ceiling: the 3-entry map head (1), the
+/// keys `t`, `name`, `body` (2 + 5 + 5), the tag (1 + 15), a longest name (2 + 32) and a body's
+/// byte-string head (3 from 256 bytes up). `max_msg_bytes` counts the body; this is the rest.
+pub const TOPIC_ENVELOPE_OVERHEAD: u32 = 66;
 /// `Refused::Limit` when a publish exceeds the install's message rate.
 pub const LIMIT_TOPIC_RATE: &str = "topic_rate";
 /// `Refused::Limit` when a message exceeds the install's `max_msg_bytes`.

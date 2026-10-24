@@ -10,6 +10,7 @@ use crate::telemetry::span::session_span;
 use crate::telemetry::turn_ledger::TurnBytes;
 use crate::telemetry::{BrowserLimits, KnownValue, RedactionKind, RingConfig, TelemetryLayer};
 use citadel_sdk::logging::tracing::{self, Instrument};
+use futures::future::BoxFuture;
 use parking_lot::Mutex;
 use tracing_subscriber::layer::SubscriberExt;
 

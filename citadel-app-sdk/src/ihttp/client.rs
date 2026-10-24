@@ -1,6 +1,7 @@
 //! The calling side: send a request under the server's credit, return credit (IhttpConsumed, as
 //! a server does) as response chunks are read, and hand the response to the app as it streams.
 
+use super::cancel_reason::{refusal_of, CANCEL_CALLER};
 use super::outbox::Outbox;
 use super::Outbound;
 use crate::abi::RawAbi;
@@ -128,14 +129,8 @@ pub(crate) fn cancel(raw: &impl RawAbi, k: &Key) {
         },
     )
     .watch("ihttp cancel");
-    finish(
-        k,
-        ClientEvent::Failed(Refused::Unavailable(CANCEL_CALLER.into())),
-    );
+    finish(k, ClientEvent::Failed(refusal_of(CANCEL_CALLER)));
 }
-
-/// The reason a caller's own `Cancel` names (`CancelReason::Caller` on the wire).
-pub(crate) const CANCEL_CALLER: &str = "caller";
 
 /// End the stream with `event`: run later, since the app may be the caller.
 fn finish(k: &Key, event: ClientEvent) {
@@ -219,12 +214,9 @@ pub(crate) fn on_frame(
             start(raw, &consumed).watch("ihttp consumed");
         }
         FrameKind::End => deliver(&k, app, ClientEvent::End, true),
-        FrameKind::Cancel { reason } => deliver(
-            &k,
-            app,
-            ClientEvent::Failed(Refused::Unavailable(reason)),
-            true,
-        ),
+        FrameKind::Cancel { reason } => {
+            deliver(&k, app, ClientEvent::Failed(refusal_of(&reason)), true)
+        }
         FrameKind::Credit { n } => {
             CLIENTS.with(|c| {
                 c.borrow_mut()

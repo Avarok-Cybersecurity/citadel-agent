@@ -50,6 +50,9 @@ impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
             self.ilm_hosts.stop(cid);
             self.supervisors.stop(cid);
             self.telemetry_forget_session(cid);
+            if let Some(net) = &self.apps.net {
+                net.grants.session_ended(cid);
+            }
         }
         self.peer_paths_forget(cid, peer_cid);
         self.prune_cid_keyed_maps(cid, peer_cid)
@@ -63,6 +66,10 @@ impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
     /// it holds what it has queued until the account's peers are back. The supervisor
     /// is the one that brings them back, so it stays too.
     pub fn prune_dropped_link_state(&self, cid: u64) -> PrunedCidState {
+        // Nothing the server said about the account's installs holds while it cannot say more.
+        if let Some(net) = &self.apps.net {
+            net.grants.link_down(cid);
+        }
         self.prune_cid_keyed_maps(cid, None)
     }
 

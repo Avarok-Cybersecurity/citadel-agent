@@ -110,6 +110,9 @@ pub enum AppFetchUnavailable {
     Session,
     /// This connection already has a stream open under this request id.
     Duplicate,
+    /// The workspace server did not say what this install may reach: the session has no
+    /// link to it, the question could not be sent, or no answer came in time.
+    Authority,
 }
 
 /// A buffered `AppFetch`'s answer.

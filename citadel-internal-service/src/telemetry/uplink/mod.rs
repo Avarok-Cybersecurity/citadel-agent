@@ -20,9 +20,9 @@ use super::collector::TelemetryCollector;
 use super::entry::TelemetryEntry;
 use super::layer::now_ms;
 use super::turn_ledger::{TurnBytes, TurnLedger};
+pub use crate::kernel::server_link::SessionLink;
 use citadel_internal_service_types::BrowserConsoleEntry;
 use citadel_sdk::logging::warn;
-use futures::future::BoxFuture;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -61,11 +61,6 @@ pub trait TelemetryCodec: Send + Sync + 'static {
     /// server's per-report bound (`turn_ledger::split_report`).
     fn turn_usage_frames(&self, bytes: TurnBytes) -> Result<Vec<Vec<u8>>, String>;
     fn classify(&self, frame: &[u8]) -> ServerSignal;
-}
-
-/// Sends one frame to a session's server over its C2S link.
-pub trait SessionLink: Send + Sync {
-    fn send_to_server(&self, cid: u64, frame: Vec<u8>) -> BoxFuture<'static, Result<(), String>>;
 }
 
 pub struct TelemetryUplink {

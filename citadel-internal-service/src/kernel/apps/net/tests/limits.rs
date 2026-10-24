@@ -125,3 +125,61 @@ async fn response_headers_shown_to_the_app_are_bounded() {
     assert_eq!(fetched.headers.len(), citadel_app_net_policy::MAX_HEADERS);
     assert!(fetched.headers.iter().all(|h| h.name != "x-huge"));
 }
+
+#[tokio::test]
+async fn a_seventeenth_app_in_a_minute_is_refused_before_anything_connects() {
+    use crate::kernel::apps::net::rate::MAX_APPS_PER_ACCOUNT;
+    let w = world();
+    w.resolver.answer("api.acme.com", &["93.184.216.34"]);
+    for app in 0..MAX_APPS_PER_ACCOUNT {
+        let app_id = format!("com.acme.app{app}");
+        w.fetch_as(&app_id, &only_acme(), &get("https://api.acme.com/"))
+            .await
+            .expect("within the cap");
+    }
+    let refused = w
+        .fetch_as(
+            "com.acme.app16",
+            &only_acme(),
+            &get("https://api.acme.com/"),
+        )
+        .await;
+    assert_eq!(
+        refused.map(|_| ()),
+        Err(AppFetchRefusal::Limit(AppFetchLimit::Rate))
+    );
+    assert_eq!(w.connector.attempts().len(), MAX_APPS_PER_ACCOUNT);
+    // The control: an app already within the cap keeps its budget.
+    w.fetch_as("com.acme.app0", &only_acme(), &get("https://api.acme.com/"))
+        .await
+        .expect("a counted app still spends");
+}
+
+#[tokio::test]
+async fn rotating_the_install_id_does_not_reset_the_budget() {
+    let w = world();
+    w.resolver.answer("api.acme.com", &["93.184.216.34"]);
+    let only = only_acme();
+    for n in 0..MAX_REQUESTS_PER_MINUTE {
+        let key = InstallKey {
+            cid: 42,
+            install_id: format!("inst-{n}"),
+        };
+        let request = get("https://api.acme.com/");
+        let input = w.input(&key, APP, &only, &request);
+        w.net
+            .fetch(input, deadline())
+            .await
+            .expect("within the limit");
+    }
+    let fresh = InstallKey {
+        cid: 42,
+        install_id: "never-seen".into(),
+    };
+    let request = get("https://api.acme.com/");
+    let input = w.input(&fresh, APP, &only, &request);
+    assert_eq!(
+        w.net.fetch(input, deadline()).await.map(|_| ()),
+        Err(AppFetchRefusal::Limit(AppFetchLimit::Rate))
+    );
+}

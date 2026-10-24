@@ -29,6 +29,7 @@ mod admission;
 mod apps_ihttp;
 mod apps_kv;
 mod apps_net;
+mod apps_settings;
 mod browser_console;
 mod multi_window;
 mod notices;
@@ -54,6 +55,7 @@ pub use apps_net::{
     AppFetchStreamEnd, AppFetchStreamHead, AppFetchUnavailable, AppHttpHeader, AppHttpRequest,
     AppNetGrant, AppNetUsage,
 };
+pub use apps_settings::{AppsAgentSettings, AppsAgentSettingsFailure};
 pub use browser_console::{BrowserConsoleEntry, BrowserConsoleSource};
 pub use conversation::{
     Attachment, ConversationMessage, ConversationMetadata, ConversationPage, MessagePatch,
@@ -1271,6 +1273,8 @@ pub enum InternalServiceResponse {
     AppNetUsage(AppNetUsage),
     AppKvResponse(AppKvResponse),
     AppKvFailure(AppKvFailure),
+    AppsAgentSettings(AppsAgentSettings),
+    AppsAgentSettingsFailure(AppsAgentSettingsFailure),
     IhttpSendAccepted(IhttpSendAccepted),
     IhttpSendFailure(IhttpSendFailure),
     IhttpFrameNotification(IhttpFrameNotification),
@@ -1920,6 +1924,21 @@ pub enum InternalServiceRequest {
         request_id: Uuid,
         auto_install: bool,
     },
+    /// This account's grants to the apps it runs through this agent; answered with
+    /// `AppsAgentSettings` or `AppsAgentSettingsFailure`.
+    AppsGetAgentSettings {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+    },
+    /// "Let apps reach my private network from this computer", for this account on this
+    /// agent; answered as `AppsGetAgentSettings` is.
+    AppsSetAgentSettings {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        private_network: bool,
+    },
     /// The menu-bar app reporting how an `UpdateInstall` went: `error` is why it did not, and
     /// the agent that receives it is the one still running. Gated by the launch token.
     UpdateInstallResult {
@@ -2302,7 +2321,9 @@ impl InternalServiceRequest {
             | Self::AppFetchCancel { cid, .. }
             | Self::GetAppNetUsage { cid, .. }
             | Self::AppKv { cid, .. }
-            | Self::IhttpSend { cid, .. } => Some(*cid),
+            | Self::IhttpSend { cid, .. }
+            | Self::AppsGetAgentSettings { cid, .. }
+            | Self::AppsSetAgentSettings { cid, .. } => Some(*cid),
             // Exhaustive on purpose: no `_` arm.
             //
             // The catch-all made this gate fail OPEN by omission — a variant

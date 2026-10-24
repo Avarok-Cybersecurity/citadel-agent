@@ -499,6 +499,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 stream,
                 request_id,
                 this.telemetry.clone(),
+                this.apps.net.as_ref().map(|net| net.grants.clone()),
             );
 
             // A recovery session may not message: the server drops it, so no ILM is hosted.

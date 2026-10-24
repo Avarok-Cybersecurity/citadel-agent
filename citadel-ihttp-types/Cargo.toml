@@ -17,3 +17,7 @@ serde = { version = "1.0.104", features = ["derive"] }
 serde_bytes = "0.11"
 ciborium = { version = "0.2.2", default-features = false, features = ["std"] }
 ts-rs = { version = "11", optional = true, features = ["serde-compat"] }
+
+[dev-dependencies]
+# Never-panic and round-trip properties over the decoder (src/tests/fuzz.rs).
+proptest = "1"

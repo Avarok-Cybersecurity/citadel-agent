@@ -39,10 +39,10 @@ impl Staging for ReadsVersion {
     fn discard(&self, version: &Version) {
         self.0.discard(version)
     }
-    fn failed(&self, version: &Version) -> bool {
+    fn failed(&self, version: &Version) -> Option<String> {
         self.0.failed(version)
     }
-    fn mark_failed(&self, version: &Version) {
-        self.0.mark_failed(version)
+    fn mark_failed(&self, version: &Version, why: &str) {
+        self.0.mark_failed(version, why)
     }
 }

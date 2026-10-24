@@ -20,6 +20,15 @@ const FRAMING_HEADERS: [&str; 8] = [
     "upgrade",
 ];
 
+/// Paths the host answers itself (`GET /_citadel/version`): no app may serve a route here.
+pub const RESERVED_PATH_PREFIX: &str = "/_citadel/";
+
+/// Whether `path` (a request path or a route pattern) is the host's, not an app's.
+pub fn is_reserved_path(path: &str) -> bool {
+    path.starts_with(RESERVED_PATH_PREFIX)
+        || path == &RESERVED_PATH_PREFIX[..RESERVED_PATH_PREFIX.len() - 1]
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FrameError {
     /// More than `MAX_FRAME_BYTES` encoded.

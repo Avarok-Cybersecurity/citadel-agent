@@ -36,7 +36,7 @@ mod tests;
 
 pub use decide::{decide, decide_redirect, Allowed, DenyReason, EgressRequest, Verdict, METHODS};
 pub use grant::{AllowedHost, Deployment, Egress, GrantFault, NetGrant};
-pub use headers::ALLOWED_HEADERS;
+pub use headers::{response_header_ok, ALLOWED_HEADERS, DENIED_RESPONSE_HEADERS};
 pub use ranges::{canonical, classify, AddressClass, ForbiddenRange, PrivateRange};
 pub use url::{Scheme, TargetUrl, UrlFault};
 
@@ -57,6 +57,11 @@ pub const MAX_REQUEST_BODY_BYTES: u64 = 4 * 1024 * 1024;
 pub const MAX_RESPONSE_BODY_BYTES: u64 = 16 * 1024 * 1024;
 /// What the caller must abandon a request at, redirects included.
 pub const REQUEST_TIMEOUT_MS: u64 = 30_000;
+/// How long the caller may reuse the workspace server's answer to "what may this install
+/// reach", before asking again. An install change the server announces clears it sooner.
+pub const GRANT_TTL_MS: u64 = 60_000;
+/// How long the caller waits for that answer before refusing the request.
+pub const GRANT_ANSWER_TIMEOUT_MS: u64 = 10_000;
 /// The caller's rate limit, per install per user.
 pub const MAX_REQUESTS_PER_MINUTE: u32 = 60;
 pub const MAX_URL_BYTES: usize = 8 * 1024;

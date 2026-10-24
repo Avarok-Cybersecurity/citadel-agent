@@ -71,12 +71,17 @@ impl AppNet {
         deadline: Instant,
     ) -> Result<Opened, AppFetchRefusal> {
         let install = input.key.install_id.as_str();
-        if !self.rate.admit(input.key, self.ports.clock.now_ms()) {
+        let reach = self.authorize(input).await?;
+        // Spent from the app the server says this is, so a page cannot pick its budget.
+        if !self
+            .rate
+            .admit(input.key.cid, &reach.app_id, self.ports.clock.now_ms())
+        {
             return Err(AppFetchRefusal::Limit(AppFetchLimit::Rate));
         }
-        let hosts: Vec<&str> = input.grant.hosts.iter().map(String::as_str).collect();
+        let hosts: Vec<&str> = reach.hosts.iter().map(String::as_str).collect();
         let egress = Egress::Host {
-            private: input.grant.private,
+            private: reach.private,
         };
         let grant = NetGrant::new(egress, &hosts).map_err(|fault| {
             info!(target: "citadel", "[APP-NET] {install}: refused grant: {fault:?}");

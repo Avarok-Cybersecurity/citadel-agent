@@ -112,9 +112,13 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage
 wayland-backend = { version = "0.3", features = ["dlopen"], optional = true }
 
 [dev-dependencies]
+# Never-panic and round-trip properties over the envelope and CBOR decoders (kernel/apps/ihttp).
+proptest = "1"
 # Paused time, for the host-egress time-budget tests (kernel/apps/net/tests).
 tokio = { workspace = true, features = ["test-util"] }
 # The scoping test installs the log bridge so `log::warn!` lines are exercised too.
 tracing-log = { version = "0.2", features = ["log-tracer", "std"] }
 citadel_sdk = { workspace = true, features=["multi-threaded", "localhost-testing"] }
 citadel-internal-service-test-common = { workspace = true }
+# A Flat group's application ciphertext, measured against the topic cap (requests/group/app_topic.rs).
+citadel_treekem = { workspace = true }

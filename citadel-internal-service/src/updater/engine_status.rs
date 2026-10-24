@@ -18,7 +18,7 @@ impl Engine {
     pub fn install_failed(&self, version: &str, why: &str) {
         error!(target: LOG_TARGET, "the menu-bar app could not install {version}: {why}");
         if let Ok(version) = Version::parse(version) {
-            self.io.staging.mark_failed(&version);
+            self.io.staging.mark_failed(&version, why);
         }
         let offer = {
             let mut state = self.state.lock();
@@ -50,7 +50,10 @@ impl Engine {
             latest: offer.version.to_string(),
             notes_url: offer.notes_url.clone(),
             download_url: offer.download_url.clone(),
-            ready: offer.staged.is_some() && self.io.installer.can_install().is_ok(),
+            ready: offer
+                .staged
+                .as_deref()
+                .is_some_and(|staged| self.io.installer.can_install(staged).is_ok()),
             // Nothing is staged before its signature verified (fetch.rs).
             mldsa_verified: offer.staged.is_some(),
             request_id: None,

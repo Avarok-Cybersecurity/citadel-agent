@@ -183,12 +183,14 @@ pub fn render() -> String {
             "TOPIC_MAX_MSGS_PER_S_CEILING",
             topic::TOPIC_MAX_MSGS_PER_S_CEILING,
         ),
+        ("TOPIC_ENVELOPE_OVERHEAD", topic::TOPIC_ENVELOPE_OVERHEAD),
     ] {
         writeln!(o, "export const {name} = {value} as const;").unwrap();
     }
     for (name, value) in [
         ("LIMIT_TOPIC_RATE", topic::LIMIT_TOPIC_RATE),
         ("LIMIT_TOPIC_BYTES", topic::LIMIT_TOPIC_BYTES),
+        ("TOPIC_ENVELOPE_TAG", topic::TOPIC_ENVELOPE_TAG),
     ] {
         writeln!(o, "export const {name} = {} as const;", q(value)).unwrap();
     }

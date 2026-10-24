@@ -38,17 +38,12 @@ pub struct AppNetConfig {
     /// The port the agent's own control socket is bound to: refused on every address, as the
     /// policy refuses `AGENT_PORT`, in case the agent was bound elsewhere.
     pub agent_port: u16,
-    /// Whether apps may reach private, loopback, link-local and unique-local addresses
-    /// (`net.host.private`) through this agent at all. The member's own decision, made in the
-    /// agent's configuration: a page asking for it is refused unless this is set.
-    pub private_network: bool,
 }
 
 /// Host egress, with the ports it reaches the world through.
 pub(crate) struct AppNet {
     deployments: Vec<Deployment>,
     agent_port: u16,
-    private_network: bool,
     ports: NetPorts,
     rate: RateLimiter,
     pub(crate) meter: Meter,
@@ -71,7 +66,6 @@ impl AppNet {
         Some(Self {
             deployments,
             agent_port: config.agent_port,
-            private_network: config.private_network,
             ports,
             rate: RateLimiter::default(),
             meter: Meter::default(),
@@ -86,4 +80,6 @@ pub(crate) struct FetchInput<'a> {
     pub app_id: &'a str,
     pub grant: &'a citadel_internal_service_types::AppNetGrant,
     pub request: &'a citadel_internal_service_types::AppHttpRequest,
+    /// The member's own grants on this agent (kernel/apps/settings.rs).
+    pub member: &'a dyn crate::kernel::apps::settings::MemberGrants,
 }

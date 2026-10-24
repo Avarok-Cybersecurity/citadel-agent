@@ -3,6 +3,7 @@
 use crate::kernel::apps::net::rate::InstallKey;
 use crate::kernel::apps::net::stream::{Control, StreamIds, StreamSink};
 use crate::kernel::apps::net::{AppNet, FetchInput};
+use crate::kernel::apps::settings::AccountGrants;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::session_route::{deliver, Clients};
 use crate::kernel::CitadelWorkspaceService;
@@ -38,7 +39,7 @@ fn failure(cid: u64, request_id: Uuid, refusal: AppFetchRefusal) -> InternalServ
     })
 }
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
@@ -64,11 +65,16 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             };
             let key = InstallKey { cid, install_id };
             let deadline = Instant::now() + Duration::from_millis(REQUEST_TIMEOUT_MS);
+            let member = AccountGrants {
+                settings: &this.apps.settings,
+                io: this.host_io(),
+            };
             let input = FetchInput {
                 key: &key,
                 app_id: &app_id,
                 grant: &grant,
                 request: &request,
+                member: &member,
             };
             if stream {
                 return open_stream(this, net, uuid, request_id, key.clone(), input, deadline)
@@ -140,7 +146,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 /// Register the stream before its head is emitted, so credit sent the instant the head
 /// arrives finds it; then every event goes through the sink, in order, and the request
 /// itself answers nothing.
-async fn open_stream<T: IOInterface, R: Ratchet>(
+async fn open_stream<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     net: Arc<AppNet>,
     uuid: Uuid,

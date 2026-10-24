@@ -6,6 +6,7 @@ use citadel_ihttp_types::{INITIAL_CREDIT, MAX_BODY_CHUNK_BYTES};
 use citadel_internal_service_types::{
     AppFetchLimit, AppFetchRefusal, AppFetchUnavailable, InternalServiceResponse,
 };
+use parking_lot::Mutex;
 use uuid::Uuid;
 
 #[derive(Default)]
@@ -58,12 +59,7 @@ async fn start(chunks: Vec<Vec<u8>>) -> Running {
     let request = get("https://api.acme.com/feed");
     let only = grant(false, &["api.acme.com"]);
     let install = key();
-    let input = FetchInput {
-        key: &install,
-        app_id: APP,
-        grant: &only,
-        request: &request,
-    };
+    let input = w.input(&install, APP, &only, &request);
     let opened = w.net.open(input, deadline()).await.expect("allowed");
     let sink = Arc::new(Recorded::default());
     let (net, task_sink) = (w.net.clone(), sink.clone());

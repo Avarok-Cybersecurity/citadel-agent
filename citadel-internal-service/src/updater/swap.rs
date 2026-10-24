@@ -189,12 +189,9 @@ mod tests {
     #[test]
     fn a_staged_agent_that_would_refuse_this_agents_command_is_not_installable() {
         let dir = tempfile::tempdir().unwrap();
-        let staged = staged_agent(dir.path(), "apps.private_network is not configured", 1);
+        let staged = staged_agent(dir.path(), "no STUN servers configured", 1);
         let why = installer(dir.path()).can_install(&staged).unwrap_err();
-        assert!(
-            why.contains("apps.private_network is not configured"),
-            "{why}"
-        );
+        assert!(why.contains("no STUN servers configured"), "{why}");
         assert_eq!(runs(dir.path()), ["--check-launch --bind 127.0.0.1:12345"]);
     }
 

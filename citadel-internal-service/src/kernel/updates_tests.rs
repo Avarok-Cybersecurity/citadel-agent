@@ -76,3 +76,19 @@ fn only_the_menu_bar_app_is_handed_the_image_and_without_it_nothing_installs() {
         "a page is never handed the install"
     );
 }
+
+/// The owned request's store: `UpdateSetSettings` writes the reserved key through the agent's
+/// own bucket, which a window's `LocalDBSetKV` cannot name (requests/local_db).
+#[tokio::test]
+async fn the_owned_setting_is_written_under_the_reserved_key() {
+    let settings = KvSettings(Box::new(
+        crate::kernel::conversations::kv::MemoryKv::default(),
+    ));
+    assert_eq!(settings.auto_install().await, Ok(None));
+    settings.set_auto_install(false).await.expect("saved");
+    assert_eq!(settings.auto_install().await, Ok(Some(false)));
+    assert_eq!(
+        crate::kernel::requests::local_db::reserved_key(AUTO_INSTALL_KEY),
+        Some(crate::kernel::requests::local_db::AGENT_SETTINGS_REFUSED)
+    );
+}

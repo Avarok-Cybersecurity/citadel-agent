@@ -26,6 +26,19 @@ fn policy(install: &str, reason: &DenyReason) -> AppFetchRefusal {
     AppFetchRefusal::Policy
 }
 
+/// Whether this member has let apps reach their private network through this agent. Unset
+/// is no, and so is a grant that cannot be read.
+async fn member_allows_private(input: &FetchInput<'_>) -> bool {
+    let cid = input.key.cid;
+    match input.member.private_network(cid).await {
+        Ok(granted) => granted == Some(true),
+        Err(why) => {
+            info!(target: "citadel", "[APP-NET] {cid}: the private-network grant is unreadable: {why}");
+            false
+        }
+    }
+}
+
 /// The URL actually requested: rebuilt from the checked target, so the connector is handed
 /// exactly what the policy read.
 fn target_url(target: &TargetUrl) -> String {
@@ -78,9 +91,9 @@ impl AppNet {
             return Err(AppFetchRefusal::Limit(AppFetchLimit::Rate));
         }
         let hosts: Vec<&str> = input.grant.hosts.iter().map(String::as_str).collect();
-        // The page asks; the agent's own configuration is the ceiling.
+        // The page asks; the member's own grant on this agent is the ceiling.
         let egress = Egress::Host {
-            private: input.grant.private && self.private_network,
+            private: input.grant.private && member_allows_private(input).await,
         };
         let grant = NetGrant::new(egress, &hosts).map_err(|fault| {
             info!(target: "citadel", "[APP-NET] {install}: refused grant: {fault:?}");

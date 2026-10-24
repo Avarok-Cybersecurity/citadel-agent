@@ -76,17 +76,20 @@ fn only_an_app_key_is_refused() {
     // The control: the refusal above is the key's, not the request's. (An ordinary key goes
     // on to its handler, which needs a running node, so the decision is asserted here.)
     for request in requests("auto-reconnect") {
-        assert!(!names_app_storage(&request));
+        assert_eq!(names_reserved_key(&request), None);
     }
     for request in requests(APP_KEY) {
-        assert!(names_app_storage(&request));
+        assert_eq!(names_reserved_key(&request), Some(APP_STORAGE_REFUSED));
     }
-    assert!(!names_app_storage(&InternalServiceRequest::LocalDBGetKV {
-        request_id: Uuid::new_v4(),
-        cid: 0,
-        peer_cid: None,
-        key: "application-settings".into(),
-    }));
+    assert_eq!(
+        names_reserved_key(&InternalServiceRequest::LocalDBGetKV {
+            request_id: Uuid::new_v4(),
+            cid: 0,
+            peer_cid: None,
+            key: "application-settings".into(),
+        }),
+        None
+    );
 }
 
 #[test]
@@ -109,7 +112,8 @@ fn a_windows_get_all_omits_app_keys_and_a_clear_all_keeps_them() {
         }),
         uuid: Uuid::nil(),
     };
-    let InternalServiceResponse::LocalDBGetAllKVSuccess(shown) = hide_app_storage(handled).response
+    let InternalServiceResponse::LocalDBGetAllKVSuccess(shown) =
+        hide_reserved_keys(handled).response
     else {
         panic!("not a GetAll answer")
     };

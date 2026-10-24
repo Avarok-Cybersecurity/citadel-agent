@@ -23,6 +23,7 @@ mod agent_own;
 mod apps_ihttp;
 mod apps_kv;
 mod apps_net;
+mod apps_settings;
 mod browser_console;
 mod connect;
 pub(crate) mod connect_mode;
@@ -48,7 +49,7 @@ mod connection_management_claim;
 mod connection_management_claim_sdk;
 pub(crate) mod file;
 mod group;
-mod local_db;
+pub(crate) mod local_db;
 pub(crate) mod peer;
 
 #[async_recursion]
@@ -183,10 +184,11 @@ where
         return refusal_response(&command, uuid, "internal HTTP is sent with IhttpSend");
     }
 
-    // The apps' `local` records are the agent's, read and written only through `AppKv`.
-    if local_db::names_app_storage(&command) {
-        log::warn!(target: "citadel", "Refusing a LocalDB request for an app: key from connection {uuid}");
-        return refusal_response(&command, uuid, local_db::APP_STORAGE_REFUSED);
+    // The apps' `local` records and the agent's own settings are the agent's, read and written
+    // only through `AppKv` and the settings' owned requests.
+    if let Some(refused) = local_db::names_reserved_key(&command) {
+        log::warn!(target: "citadel", "Refusing a LocalDB request for a reserved key from connection {uuid}: {refused}");
+        return refusal_response(&command, uuid, refused);
     }
 
     // The agent is the only writer of a hosted account's conversations.
@@ -312,7 +314,7 @@ where
         InternalServiceRequest::LocalDBGetAllKV { .. } => {
             local_db::get_all_kv::handle(this, uuid, command)
                 .await
-                .map(local_db::hide_app_storage)
+                .map(local_db::hide_reserved_keys)
         }
 
         InternalServiceRequest::LocalDBClearAllKV { .. } => {
@@ -380,6 +382,10 @@ where
             apps_net::handle(this, uuid, command).await
         }
         InternalServiceRequest::AppKv { .. } => apps_kv::handle(this, uuid, command).await,
+        InternalServiceRequest::AppsGetAgentSettings { .. }
+        | InternalServiceRequest::AppsSetAgentSettings { .. } => {
+            apps_settings::handle(this, uuid, command).await
+        }
         InternalServiceRequest::IhttpSend { .. } => apps_ihttp::handle(this, uuid, command).await,
 
         InternalServiceRequest::Batched {
@@ -1040,6 +1046,14 @@ fn refusal_response(
             request_id: Some(*request_id),
             refusal: IhttpSendRefusal::Session,
         }),
+        InternalServiceRequest::AppsGetAgentSettings { request_id, cid }
+        | InternalServiceRequest::AppsSetAgentSettings {
+            request_id, cid, ..
+        } => InternalServiceResponse::AppsAgentSettingsFailure(AppsAgentSettingsFailure {
+            cid: *cid,
+            request_id: Some(*request_id),
+            message: message.to_string(),
+        }),
         InternalServiceRequest::GroupListJoined { request_id, cid } => {
             InternalServiceResponse::GroupListJoinedFailure(GroupListJoinedFailure {
                 cid: *cid,
@@ -1120,6 +1134,9 @@ pub(crate) fn requires_owned_session(command: &InternalServiceRequest) -> bool {
             | InternalServiceRequest::GetAppNetUsage { .. }
             | InternalServiceRequest::AppKv { .. }
             | InternalServiceRequest::IhttpSend { .. }
+            // A member's own grants on this agent (kernel/apps/settings.rs).
+            | InternalServiceRequest::AppsGetAgentSettings { .. }
+            | InternalServiceRequest::AppsSetAgentSettings { .. }
             | InternalServiceRequest::Deregister { .. } // The conversation store answers by CID from the agent's own store, not
                                                         // through `propose_target`, so a signed-out account would otherwise hand
                                                         // its history to any connection naming it.

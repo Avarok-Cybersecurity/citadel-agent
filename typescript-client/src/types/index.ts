@@ -31,6 +31,8 @@ export * from './AppKvResponse.js';
 export * from './AppKvResult.js';
 export * from './AppNetGrant.js';
 export * from './AppNetUsage.js';
+export * from './AppsAgentSettings.js';
+export * from './AppsAgentSettingsFailure.js';
 export * from './AttachProof.js';
 export * from './Attachment.js';
 export * from './BatchedResponseData.js';

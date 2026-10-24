@@ -8,6 +8,7 @@
 pub(crate) mod ihttp;
 pub(crate) mod kv;
 pub(crate) mod net;
+pub(crate) mod settings;
 
 #[cfg(test)]
 mod service_tests;
@@ -27,6 +28,7 @@ pub(crate) struct AppsHost {
     pub(crate) streams: net::stream::Streams,
     pub(crate) kv: kv::AppKv,
     pub(crate) ihttp: ihttp::IhttpCounters,
+    pub(crate) settings: settings::AgentAppSettings,
 }
 
 impl AppsHost {

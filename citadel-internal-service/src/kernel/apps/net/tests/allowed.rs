@@ -38,7 +38,6 @@ async fn an_agent_with_no_page_origin_refuses_to_configure_host_egress() {
     let config = AppNetConfig {
         page_origin_hosts: vec![],
         agent_port: citadel_app_net_policy::AGENT_PORT,
-        private_network: false,
     };
     assert!(AppNet::new(config, ports).is_none());
 }

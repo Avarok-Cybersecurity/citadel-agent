@@ -18,7 +18,7 @@ use semver::Version;
 use std::path::Path;
 use std::sync::Arc;
 
-const REFUSAL: &str = "apps.private_network is not configured";
+const REFUSAL: &str = "no STUN servers configured";
 
 fn tarball_plan() -> Plan {
     Plan::Apply {

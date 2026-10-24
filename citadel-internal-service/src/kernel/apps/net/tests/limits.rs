@@ -166,12 +166,7 @@ async fn rotating_the_install_id_does_not_reset_the_budget() {
             install_id: format!("inst-{n}"),
         };
         let request = get("https://api.acme.com/");
-        let input = FetchInput {
-            key: &key,
-            app_id: APP,
-            grant: &only,
-            request: &request,
-        };
+        let input = w.input(&key, APP, &only, &request);
         w.net
             .fetch(input, deadline())
             .await
@@ -182,12 +177,7 @@ async fn rotating_the_install_id_does_not_reset_the_budget() {
         install_id: "never-seen".into(),
     };
     let request = get("https://api.acme.com/");
-    let input = FetchInput {
-        key: &fresh,
-        app_id: APP,
-        grant: &only,
-        request: &request,
-    };
+    let input = w.input(&fresh, APP, &only, &request);
     assert_eq!(
         w.net.fetch(input, deadline()).await.map(|_| ()),
         Err(AppFetchRefusal::Limit(AppFetchLimit::Rate))

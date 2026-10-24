@@ -21,7 +21,7 @@ mod validate;
 mod tests;
 
 pub use codec::{decode, encode};
-pub use validate::{validate, FrameError};
+pub use validate::{is_reserved_path, validate, FrameError, RESERVED_PATH_PREFIX};
 
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "typescript")]
@@ -144,4 +144,9 @@ pub enum CancelReason {
     /// The other end's app ended while the stream was open: it was closed (its zone unmounted,
     /// its page went away), uninstalled, or its host withdrew the service.
     Closed,
+    /// A frame the stream's state does not admit: one after End, a body short of or past the
+    /// declared length, a stale or misnumbered stream id, a plane the stream was not opened on.
+    Protocol,
+    /// The other end cannot be reached or served from here.
+    Unavailable,
 }

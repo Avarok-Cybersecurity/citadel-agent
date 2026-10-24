@@ -3,15 +3,20 @@
 //! test here touches the network.
 
 mod allowed;
+mod authority;
 mod denied;
 mod fakes;
+mod lifecycle;
 mod limits;
 mod private_network;
 mod redirects;
+mod server_fakes;
 mod streaming;
 
 use fakes::*;
+use server_fakes::*;
 
+use super::authority::KernelGrant;
 use super::ports::NetPorts;
 use super::rate::InstallKey;
 use super::{AppNet, AppNetConfig, FetchInput};
@@ -30,6 +35,30 @@ pub(super) struct World {
     pub connector: Arc<FakeConnector>,
     pub clock: Arc<FakeClock>,
     pub settings: FakeSettings,
+    pub server: FakeServer,
+}
+
+/// Every host the policy tests here ask for, which the server approves for `APP` on an install
+/// it was not told otherwise about: those tests are of the policy, authority.rs's of the server.
+const APPROVED: [&str; 10] = [
+    "api.acme.com",
+    "*.acme.com",
+    "evil.example",
+    "intranet",
+    "intranet:4000",
+    "intranet:4001",
+    "intranet:12345",
+    "nas.lan:5000",
+    PAGE,
+    "local.avarok.net",
+];
+
+pub(super) fn server_grant(app_id: &str, hosts: &[&str], private: bool) -> KernelGrant {
+    KernelGrant {
+        app_id: app_id.to_string(),
+        hosts: hosts.iter().map(|h| h.to_string()).collect(),
+        private,
+    }
 }
 
 pub(super) fn world_with(agent_port: u16, settings: FakeSettings) -> World {
@@ -45,13 +74,15 @@ pub(super) fn world_with(agent_port: u16, settings: FakeSettings) -> World {
         page_origin_hosts: vec![PAGE.to_string()],
         agent_port,
     };
-    let net = Arc::new(AppNet::new(config, ports).expect("configured"));
+    let net = Arc::new(AppNet::new(config, ports, Arc::new(FakeAuthority)).expect("configured"));
+    let server = FakeServer::new(net.grants.clone(), server_grant(APP, &APPROVED, true));
     World {
         net,
         resolver,
         connector,
         clock,
         settings,
+        server,
     }
 }
 
@@ -105,13 +136,24 @@ impl World {
         self.fetch_as(APP, grant, request).await
     }
 
+    /// A fetch by an install the server says is of `app_id` (one install per app).
     pub(super) async fn fetch_as(
         &self,
         app_id: &str,
         grant: &AppNetGrant,
         request: &AppHttpRequest,
     ) -> Result<super::body::Fetched, citadel_internal_service_types::AppFetchRefusal> {
-        let key = key();
+        let key = if app_id == APP {
+            key()
+        } else {
+            let key = InstallKey {
+                cid: key().cid,
+                install_id: format!("inst-{app_id}"),
+            };
+            self.server
+                .approve(&key.install_id, Some(server_grant(app_id, &APPROVED, true)));
+            key
+        };
         let input = self.input(&key, app_id, grant, request);
         self.net.fetch(input, deadline()).await
     }
@@ -130,6 +172,7 @@ impl World {
             grant,
             request,
             member: &self.settings,
+            link: &self.server,
         }
     }
 }

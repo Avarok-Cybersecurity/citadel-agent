@@ -1,60 +1,14 @@
-//! The uplink's IO shell in the kernel: the C2S sinks it sends on, the flush timer, and the
+//! The uplink's IO shell in the kernel: the flush timer, and the
 //! session and peer events that tell the collector who exists and what names to redact.
 
-use super::{SessionLink, LOG_TARGET};
-use crate::kernel::{CitadelWorkspaceService, Connection};
+use super::LOG_TARGET;
+use crate::kernel::server_link::ServerLinks;
+use crate::kernel::CitadelWorkspaceService;
 use crate::telemetry::{KnownValue, RedactionKind, TelemetryError};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_sdk::logging::warn;
-use citadel_sdk::prelude::{P2pPathCell, Ratchet, SecurityLevel, SessionScope};
-use futures::future::BoxFuture;
-use parking_lot::RwLock;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
+use citadel_sdk::prelude::{P2pPathCell, Ratchet, SessionScope};
 use tokio::time::MissedTickBehavior;
-
-/// Telemetry is diagnostics, not content: the level every other agent-originated C2S frame
-/// uses (kernel/conversations_io.rs).
-const UPLOAD_SECURITY_LEVEL: SecurityLevel = SecurityLevel::Standard;
-/// Bounds one send, as a window's C2S message is bounded (requests/message.rs): a wedged
-/// link fails the frame rather than stalling every session's flush behind it.
-const SEND_TIMEOUT: Duration = crate::kernel::requests::message::PEER_SEND_TIMEOUT;
-
-/// Every session's C2S sink, looked up per frame so a reconnect's new sink is used.
-pub(crate) struct ServerLinks<R: Ratchet> {
-    map: Arc<RwLock<HashMap<u64, Connection<R>>>>,
-}
-
-impl<R: Ratchet> ServerLinks<R> {
-    pub(crate) fn new(map: Arc<RwLock<HashMap<u64, Connection<R>>>>) -> Self {
-        Self { map }
-    }
-}
-
-impl<R: Ratchet> SessionLink for ServerLinks<R> {
-    fn send_to_server(&self, cid: u64, frame: Vec<u8>) -> BoxFuture<'static, Result<(), String>> {
-        let sink = self
-            .map
-            .read()
-            .get(&cid)
-            .map(|conn| conn.sink_to_server.clone());
-        Box::pin(async move {
-            let sink = sink.ok_or_else(|| format!("session {cid} has no C2S link"))?;
-            let sent = tokio::time::timeout(SEND_TIMEOUT, async {
-                let mut sink = sink.lock().await;
-                sink.set_security_level(UPLOAD_SECURITY_LEVEL);
-                sink.send(frame).await
-            })
-            .await;
-            match sent {
-                Ok(Ok(())) => Ok(()),
-                Ok(Err(err)) => Err(format!("{err:?}")),
-                Err(_) => Err(format!("send timed out after {SEND_TIMEOUT:?}")),
-            }
-        })
-    }
-}
 
 /// Flushes every `flush_interval` for the life of the service; never resolves without an
 /// uplink, so the kernel's `select!` keeps running.

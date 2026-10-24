@@ -15,6 +15,7 @@ mod service_tests;
 #[cfg(test)]
 mod unclaimed_head_tests;
 
+pub use net::authority::{AuthoritySignal, HostNetAuthority, KernelGrant};
 pub use net::AppNetConfig;
 
 use std::sync::Arc;
@@ -32,9 +33,12 @@ pub(crate) struct AppsHost {
 }
 
 impl AppsHost {
-    pub(crate) fn with_net(config: AppNetConfig) -> Self {
+    pub(crate) fn with_net(
+        config: AppNetConfig,
+        authority: Arc<dyn net::authority::HostNetAuthority>,
+    ) -> Self {
         Self {
-            net: net::AppNet::new(config, net::system_ports()).map(Arc::new),
+            net: net::AppNet::new(config, net::system_ports(), authority).map(Arc::new),
             ..Self::default()
         }
     }

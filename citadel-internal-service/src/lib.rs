@@ -14,7 +14,7 @@ pub use kernel::supervisor::{Backoff, SupervisorPolicy, AGENT_SUPERVISOR};
 // Re-export the browser-transfer startup sweep so the binary entrypoint
 // can call it before the runtime spins up, without exposing the full
 // internal `requests::file` module.
-pub use kernel::apps::AppNetConfig;
+pub use kernel::apps::{AppNetConfig, AuthoritySignal, HostNetAuthority, KernelGrant};
 pub use kernel::requests::file::upload::sweep_stale_browser_transfers;
 pub use kernel::BrowserTransferRoot;
 

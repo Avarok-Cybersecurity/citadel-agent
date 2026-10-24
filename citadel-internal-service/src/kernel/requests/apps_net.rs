@@ -5,6 +5,7 @@ use crate::kernel::apps::net::stream::{Control, StreamIds, StreamSink};
 use crate::kernel::apps::net::{AppNet, FetchInput};
 use crate::kernel::apps::settings::AccountGrants;
 use crate::kernel::requests::HandledRequestResult;
+use crate::kernel::server_link::ServerLinks;
 use crate::kernel::session_route::{deliver, Clients};
 use crate::kernel::CitadelWorkspaceService;
 use citadel_app_net_policy::REQUEST_TIMEOUT_MS;
@@ -69,12 +70,14 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 settings: &this.apps.settings,
                 io: this.host_io(),
             };
+            let link = ServerLinks::new(this.server_connection_map.clone());
             let input = FetchInput {
                 key: &key,
                 app_id: &app_id,
                 grant: &grant,
                 request: &request,
                 member: &member,
+                link: &link,
             };
             if stream {
                 return open_stream(this, net, uuid, request_id, key.clone(), input, deadline)

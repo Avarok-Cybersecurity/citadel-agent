@@ -67,6 +67,7 @@ pub(crate) mod revfs_correlation;
 pub(crate) mod send_correlation;
 pub(crate) mod server_address;
 pub(crate) mod server_host;
+pub mod server_link;
 pub(crate) mod session_route;
 pub(crate) mod session_subscribers;
 pub(crate) mod session_wait;
@@ -230,11 +231,16 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
         self
     }
 
-    /// Answer apps' host egress (`AppFetch`) under `config` (kernel/apps/net). A service that
+    /// Answer apps' host egress (`AppFetch`) under `config` (kernel/apps/net), asking each
+    /// session's server what an install may reach in `authority`'s encoding. A service that
     /// never calls this, or calls it with no page origin, refuses every `AppFetch` as
     /// `NotConfigured`.
-    pub fn with_app_net(mut self, config: apps::AppNetConfig) -> Self {
-        self.apps = Arc::new(apps::AppsHost::with_net(config));
+    pub fn with_app_net(
+        mut self,
+        config: apps::AppNetConfig,
+        authority: Arc<dyn apps::HostNetAuthority>,
+    ) -> Self {
+        self.apps = Arc::new(apps::AppsHost::with_net(config, authority));
         self
     }
 

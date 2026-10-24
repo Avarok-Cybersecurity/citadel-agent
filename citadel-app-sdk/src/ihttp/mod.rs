@@ -3,6 +3,7 @@
 //! handler with a [`ResponseWriter`]; a client call sends its request under the server's credit
 //! and assembles the response. Who called is [`Caller`], stamped by the session or the kernel.
 
+mod cancel_reason;
 mod client;
 mod client_whole;
 mod fanout;

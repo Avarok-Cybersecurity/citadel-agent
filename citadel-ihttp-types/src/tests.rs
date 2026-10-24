@@ -63,6 +63,50 @@ fn every_kind_round_trips() {
 }
 
 #[test]
+fn every_cancel_reason_round_trips_under_its_own_name() {
+    use CancelReason::*;
+    let all = [
+        Caller,
+        Timeout,
+        TooLarge,
+        Busy,
+        RateLimited,
+        NoRoute,
+        Refused,
+        Failed,
+        Closed,
+        Protocol,
+        Unavailable,
+    ];
+    for reason in all {
+        let bytes = encode(&frame(IhttpFrameKind::Cancel { reason })).unwrap();
+        let name = format!("{reason:?}");
+        assert!(
+            bytes.windows(name.len()).any(|w| w == name.as_bytes()),
+            "{name}"
+        );
+        assert_eq!(
+            decode(&bytes).unwrap().kind,
+            IhttpFrameKind::Cancel { reason }
+        );
+    }
+}
+
+#[test]
+fn the_citadel_prefix_is_the_hosts_and_its_lookalikes_are_not() {
+    for path in ["/_citadel/version", "/_citadel/", "/_citadel"] {
+        assert!(is_reserved_path(path), "{path}");
+    }
+    for path in ["/_citadelx", "/a/_citadel/version", "/", "/citadel/version"] {
+        assert!(!is_reserved_path(path), "control: {path}");
+    }
+    assert!(
+        encode(&head("/_citadel/version", vec![])).is_ok(),
+        "the host still receives its own path"
+    );
+}
+
+#[test]
 fn a_body_travels_as_a_cbor_byte_string() {
     let bytes = encode(&frame(IhttpFrameKind::Body {
         bytes: vec![0xaa; 3],

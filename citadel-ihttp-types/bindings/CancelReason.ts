@@ -3,4 +3,4 @@
 /**
  * Why a stream ended early. Closed, so no free text crosses from one app to another here.
  */
-export type CancelReason = "Caller" | "Timeout" | "TooLarge" | "Busy" | "RateLimited" | "NoRoute" | "Refused" | "Failed" | "Closed";
+export type CancelReason = "Caller" | "Timeout" | "TooLarge" | "Busy" | "RateLimited" | "NoRoute" | "Refused" | "Failed" | "Closed" | "Protocol" | "Unavailable";

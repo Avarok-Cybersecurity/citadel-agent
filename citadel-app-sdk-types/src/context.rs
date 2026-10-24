@@ -20,6 +20,8 @@ abi_types! {
     pub enum Surface {
         CanvasPane,
         MdZone { zone_id: String },
+        /// A tab of the node's pane; `tab_id` names it among the node's tabs.
+        NodeTab { tab_id: String },
     }
 
     pub struct Size {

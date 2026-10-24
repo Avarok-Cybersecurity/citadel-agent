@@ -93,3 +93,7 @@ pub(crate) fn system_ports() -> NetPorts {
         clock: Box::new(MonotonicClock(Instant::now())),
     }
 }
+
+#[cfg(test)]
+#[path = "system_tests.rs"]
+mod tests;

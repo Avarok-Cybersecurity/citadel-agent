@@ -5,6 +5,11 @@
 //! `Origin`, `Sec-*`) can never be set by an app: the runtime writes framing itself, from the
 //! checked target. `Authorization` and `Cookie` are allowed because the app sets its own; the
 //! runtime never adds either.
+//!
+//! The response headers an app is shown are a deny-list instead ([`response_header_ok`]): an
+//! upstream answers with whatever it likes, and what must never reach an app is what would
+//! act on the member's behalf (cookies, authentication challenges) or describe framing the
+//! runtime has already undone.
 
 use crate::{MAX_HEADERS, MAX_HEADER_BYTES};
 
@@ -60,4 +65,30 @@ pub(crate) fn headers_allowed(headers: &[(String, String)]) -> bool {
                 && name_allowed(name)
                 && value_allowed(value)
         })
+}
+
+/// Lowercase response header names an app is never shown. `set-cookie` and `set-cookie2`
+/// would hand the app a credential the upstream meant for a browser; `www-authenticate` and
+/// `proxy-authenticate` invite credentials; the rest are hop-by-hop framing, which the
+/// runtime has already consumed, so a value here would describe bytes the app never sees.
+pub const DENIED_RESPONSE_HEADERS: [&str; 12] = [
+    "set-cookie",
+    "set-cookie2",
+    "www-authenticate",
+    "proxy-authenticate",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "upgrade",
+    "te",
+    "trailer",
+    "proxy-connection",
+];
+
+/// Whether an upstream response header may be shown to the app. `name` in any case.
+pub fn response_header_ok(name: &str) -> bool {
+    !DENIED_RESPONSE_HEADERS
+        .iter()
+        .any(|denied| denied.eq_ignore_ascii_case(name))
 }

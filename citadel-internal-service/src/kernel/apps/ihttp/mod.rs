@@ -10,6 +10,8 @@
 pub(crate) mod envelope;
 
 #[cfg(test)]
+mod fuzz_tests;
+#[cfg(test)]
 mod tests;
 
 use citadel_ihttp_types::{decode, CancelReason, IhttpFrame, IhttpFrameKind, IHTTP_VERSION};

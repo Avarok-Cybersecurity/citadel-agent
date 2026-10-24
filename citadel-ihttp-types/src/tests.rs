@@ -237,6 +237,7 @@ fn ids_status_and_credit_are_checked() {
     }
 }
 
+mod fuzz;
 mod malformed;
 
 #[cfg(feature = "typescript")]

@@ -44,6 +44,18 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     Some(HandledRequestResult { response, uuid })
 }
 
+/// Every key a window may clear, one by one: the apps' records stay (local_db/mod.rs), so
+/// this is not `remove_all`. Only a window asks this; the agent never clears a bucket.
+async fn clear_for_window<R: Ratchet>(
+    remote: &impl BackendHandler<R>,
+) -> Result<(), citadel_sdk::prelude::NetworkError> {
+    let stored = remote.get_all().await?;
+    for key in super::keys_a_window_clears(&stored) {
+        remote.remove(&key).await?;
+    }
+    Ok(())
+}
+
 // backend handler clear all
 async fn backend_handler_clear_all<R: Ratchet>(
     remote: &impl BackendHandler<R>,
@@ -51,8 +63,8 @@ async fn backend_handler_clear_all<R: Ratchet>(
     peer_cid: Option<u64>,
     request_id: Option<Uuid>,
 ) -> InternalServiceResponse {
-    match remote.remove_all().await {
-        Ok(_) => InternalServiceResponse::LocalDBClearAllKVSuccess(LocalDBClearAllKVSuccess {
+    match clear_for_window(remote).await {
+        Ok(()) => InternalServiceResponse::LocalDBClearAllKVSuccess(LocalDBClearAllKVSuccess {
             cid,
             peer_cid,
             request_id,

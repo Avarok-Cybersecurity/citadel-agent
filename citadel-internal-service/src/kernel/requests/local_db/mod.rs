@@ -1,12 +1,57 @@
+use crate::kernel::apps::kv::APP_STORAGE_PREFIX;
+use crate::kernel::requests::HandledRequestResult;
+use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
 use citadel_sdk::prelude::{
     NetworkError, NodeRemote, ProtocolRemoteExt, Ratchet, SymmetricIdentifierHandleRef,
 };
+use std::collections::HashMap;
 
 pub mod clear_all_kv;
 pub mod delete_kv;
 pub mod get_all_kv;
 pub mod get_kv;
 pub mod set_kv;
+
+#[cfg(test)]
+mod app_storage_tests;
+
+/// What a window is told when its LocalDB request names an app's record.
+pub(crate) const APP_STORAGE_REFUSED: &str = "app: keys are the agent's apps storage";
+
+/// Whether `key` is one of the apps' `local` records (kernel/apps/kv), which only the agent
+/// reads and writes, through `AppKv` and its namespace.
+pub(crate) fn is_app_storage_key(key: &str) -> bool {
+    key.starts_with(APP_STORAGE_PREFIX)
+}
+
+/// Whether a window's keyed LocalDB request names an app's record. A window that could
+/// would read, overwrite or delete another app's storage, or its index, past every check
+/// `AppKv` makes. The agent's own path (requests/agent_own.rs) is not asked this.
+pub(crate) fn names_app_storage(command: &InternalServiceRequest) -> bool {
+    match command {
+        InternalServiceRequest::LocalDBGetKV { key, .. }
+        | InternalServiceRequest::LocalDBSetKV { key, .. }
+        | InternalServiceRequest::LocalDBDeleteKV { key, .. } => is_app_storage_key(key),
+        _ => false,
+    }
+}
+
+/// A window's `LocalDBGetAllKV` answer, without the apps' records.
+pub(crate) fn hide_app_storage(mut handled: HandledRequestResult) -> HandledRequestResult {
+    if let InternalServiceResponse::LocalDBGetAllKVSuccess(success) = &mut handled.response {
+        success.map.retain(|key, _| !is_app_storage_key(key));
+    }
+    handled
+}
+
+/// The keys a window's `LocalDBClearAllKV` removes: every one but the apps' records.
+pub(crate) fn keys_a_window_clears(stored: &HashMap<String, Vec<u8>>) -> Vec<String> {
+    stored
+        .keys()
+        .filter(|key| !is_app_storage_key(key))
+        .cloned()
+        .collect()
+}
 
 /// This function misuses `propose_target` to reduce the need of a new remote type or using dyanmic
 /// dispatch. This function should only be used for local backend KV requests, and strictly uses CIDs

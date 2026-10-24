@@ -12,7 +12,7 @@ mod namespace;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use namespace::Namespace;
+pub(crate) use namespace::{Namespace, APP_STORAGE_PREFIX};
 
 use crate::kernel::conversations::kv::ConversationKv;
 use citadel_internal_service_types::{

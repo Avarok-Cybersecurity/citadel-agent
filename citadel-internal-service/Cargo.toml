@@ -118,3 +118,5 @@ tokio = { workspace = true, features = ["test-util"] }
 tracing-log = { version = "0.2", features = ["log-tracer", "std"] }
 citadel_sdk = { workspace = true, features=["multi-threaded", "localhost-testing"] }
 citadel-internal-service-test-common = { workspace = true }
+# A Flat group's application ciphertext, measured against the topic cap (requests/group/app_topic.rs).
+citadel_treekem = { workspace = true }

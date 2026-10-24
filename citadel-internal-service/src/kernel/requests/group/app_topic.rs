@@ -6,7 +6,7 @@ use super::create::create_with;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_app_sdk_types::calls::topic::{
-    TOPIC_MAX_MSGS_PER_S_CEILING, TOPIC_MAX_MSG_BYTES_CEILING,
+    TOPIC_ENVELOPE_OVERHEAD, TOPIC_MAX_MSGS_PER_S_CEILING, TOPIC_MAX_MSG_BYTES_CEILING,
 };
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -16,6 +16,18 @@ use citadel_sdk::prelude::{
     GroupHierarchyMode, GroupMessageLimits, GroupType, MessageGroupOptions, Ratchet,
 };
 use uuid::Uuid;
+
+/// What a `Flat` group's application message adds to its plaintext on the way to the server,
+/// which caps the bytes it relays: citadel_treekem's `AppCiphertext` in the SDK's fixed-int
+/// bincode (epoch u64, sender u32, generation u32, the ciphertext's u64 length) and the
+/// ChaCha20-Poly1305 tag (16).
+pub const FLAT_CIPHERTEXT_OVERHEAD: u32 = 8 + 4 + 4 + 8 + 16;
+
+/// The relayed bytes of a topic message whose body is `max_msg_bytes`: the manifest counts the
+/// body, the server the ciphertext of its envelope.
+pub fn group_message_cap(max_msg_bytes: u32) -> u32 {
+    max_msg_bytes + TOPIC_ENVELOPE_OVERHEAD + FLAT_CIPHERTEXT_OVERHEAD
+}
 
 /// The options every app-topic group is created with, and the one place they are chosen.
 ///
@@ -29,14 +41,15 @@ use uuid::Uuid;
 /// - `ephemeral`: the server relays to members online at the time and mails nobody, since a
 ///   topic's messages (heartbeats, announcements) are stale by the time an offline member reads.
 /// - `limits`: the install's manifest `limits.topics`, which the server enforces per group, so a
-///   host that does not hold to them is held to them anyway. Refused above the SDK ceilings.
+///   host that does not hold to them is held to them anyway; the byte cap is the body's
+///   ([`group_message_cap`]). Refused at zero or above the SDK ceilings.
 pub fn app_topic_group_options(
     max_msg_bytes: u32,
     max_msgs_per_s: u32,
 ) -> Result<MessageGroupOptions, String> {
-    if max_msg_bytes > TOPIC_MAX_MSG_BYTES_CEILING {
+    if max_msg_bytes == 0 || max_msg_bytes > TOPIC_MAX_MSG_BYTES_CEILING {
         return Err(format!(
-            "a topic message is at most {TOPIC_MAX_MSG_BYTES_CEILING} bytes, not {max_msg_bytes}"
+            "a topic message is 1 to {TOPIC_MAX_MSG_BYTES_CEILING} bytes, not {max_msg_bytes}"
         ));
     }
     if max_msgs_per_s > TOPIC_MAX_MSGS_PER_S_CEILING {
@@ -44,7 +57,7 @@ pub fn app_topic_group_options(
             "a topic carries at most {TOPIC_MAX_MSGS_PER_S_CEILING} messages a second, not {max_msgs_per_s}"
         ));
     }
-    let limits = GroupMessageLimits::new(max_msg_bytes, max_msgs_per_s)
+    let limits = GroupMessageLimits::new(group_message_cap(max_msg_bytes), max_msgs_per_s)
         .map_err(|e| format!("topic limits: {e}"))?;
     Ok(MessageGroupOptions {
         group_type: GroupType::Private,
@@ -100,8 +113,31 @@ mod tests {
         let options = app_topic_group_options(1024, 2).unwrap();
         assert!(options.ephemeral, "offline members are mailed nothing");
         let limits = options.limits.expect("the server enforces the caps");
-        assert_eq!(limits.max_message_bytes(), 1024);
+        assert_eq!(limits.max_message_bytes(), group_message_cap(1024));
         assert_eq!(limits.max_messages_per_second(), 2);
+    }
+
+    /// A body of exactly `max_msg_bytes`, in the longest envelope, sealed as a `Flat` group seals
+    /// it, is within the group's cap: what the host admits, the server relays. Measured on the
+    /// SDK's own group state and serialiser, so a change to the ciphertext's layout shows here.
+    #[test]
+    fn a_full_body_in_the_longest_envelope_is_within_the_groups_cap() {
+        use citadel_proto::prelude::SyncIO;
+        use citadel_treekem::{GroupState, KeyPackage};
+        let secret = [7u8; 32];
+        let founder = KeyPackage::generate(1, &secret).unwrap().leaf;
+        let mut group = GroupState::create(founder, secret);
+        for max_msg_bytes in [1, 1024, TOPIC_MAX_MSG_BYTES_CEILING] {
+            let cap = app_topic_group_options(max_msg_bytes, 2)
+                .unwrap()
+                .limits
+                .unwrap()
+                .max_message_bytes();
+            let envelope = vec![0u8; (max_msg_bytes + TOPIC_ENVELOPE_OVERHEAD) as usize];
+            let sealed = group.encrypt_message(&envelope).unwrap();
+            let relayed = sealed.serialize_to_vector().unwrap().len();
+            assert_eq!(relayed, cap as usize, "the cap is exactly a full message");
+        }
     }
 
     #[test]

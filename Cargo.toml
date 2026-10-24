@@ -62,6 +62,8 @@ citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protoco
 citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "38fd3ddb" }
 citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "38fd3ddb" }
 citadel_proto = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "38fd3ddb" }
+# Tests only: a Flat group's application ciphertext, measured against the topic cap (app_topic.rs).
+citadel_treekem = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "38fd3ddb" }
 # Tests only: the server-side post-quantum sign-in settings (tests/common/src/pq.rs).
 citadel_user = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "38fd3ddb" }
 

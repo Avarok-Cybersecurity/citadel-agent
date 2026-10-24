@@ -212,3 +212,7 @@ pub use wasm::*;
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "late_refusal_tests.rs"]
+mod late_refusal_tests;

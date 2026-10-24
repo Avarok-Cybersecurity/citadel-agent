@@ -145,15 +145,24 @@ impl<T: 'static> Pending<T> {
 
 impl Pending<()> {
     /// The SDK's own call whose only outcome of interest is failure: noted for the log.
-    pub(crate) fn watch(mut self, what: &'static str) {
+    pub(crate) fn watch(self, what: &'static str) {
+        self.watch_then(what, |_| {});
+    }
+
+    /// As `watch`, and `failed` runs with the refusal, whenever it comes.
+    pub(crate) fn watch_then(mut self, what: &'static str, failed: impl FnOnce(Refused) + 'static) {
+        let failure = move |e: Refused| {
+            note(format!("{what}: {e:?}"));
+            failed(e);
+        };
         match self.take_ready() {
-            Some(Err(e)) => note(format!("{what}: {e:?}")),
+            Some(Err(e)) => failure(e),
             Some(Ok(())) => {}
             None => {
                 let decode = self.decode.take().expect("decoded once");
                 let then: Continuation = Box::new(move |_, r| {
                     if let Err(e) = r.and_then(decode) {
-                        note(format!("{what}: {e:?}"));
+                        failure(e);
                     }
                 });
                 if let Some(State::Waiting(h)) = self.state.take() {

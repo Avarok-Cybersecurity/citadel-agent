@@ -5,22 +5,46 @@
 //! started as the watchdog (watchdog.rs) and this process exits, freeing the port.
 
 use super::io::Installer;
+use super::launch_check::check_launch;
 use super::staging::FsStaging;
 use super::watch_os::detached;
 use super::watchdog::{WatchPlan, WATCHDOG_ENV};
+use parking_lot::Mutex;
 use semver::Version;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 pub struct SelfReplace {
     /// The executable, or the AppImage.
-    pub target: PathBuf,
+    target: PathBuf,
     /// What the new version is started with.
-    pub args: Vec<String>,
-    pub health: SocketAddr,
-    pub staging_root: PathBuf,
+    args: Vec<String>,
+    health: SocketAddr,
+    staging_root: PathBuf,
     /// Called once the watchdog has the swap: the real installer exits the process.
-    pub handed_over: fn(),
+    handed_over: fn(),
+    /// The launch check's answer for the last staged file asked about. Neither the file nor
+    /// this agent's command changes while it runs, and the status asks on every read.
+    checked: Mutex<Option<(PathBuf, Result<(), String>)>>,
+}
+
+impl SelfReplace {
+    pub fn new(
+        target: PathBuf,
+        args: Vec<String>,
+        health: SocketAddr,
+        staging_root: PathBuf,
+        handed_over: fn(),
+    ) -> Self {
+        Self {
+            target,
+            args,
+            health,
+            staging_root,
+            handed_over,
+            checked: Mutex::new(None),
+        }
+    }
 }
 
 /// The paths a swap of `target` uses: the incoming copy and the backup, both beside it.
@@ -64,8 +88,14 @@ pub fn swap_in(staged: &Path, target: &Path) -> Result<PathBuf, String> {
 }
 
 impl Installer for SelfReplace {
-    fn can_install(&self) -> Result<(), String> {
-        Ok(())
+    fn can_install(&self, staged: &Path) -> Result<(), String> {
+        let mut checked = self.checked.lock();
+        if let Some((_, answer)) = checked.as_ref().filter(|(path, _)| path == staged) {
+            return answer.clone();
+        }
+        let answer = check_launch(staged, &self.args);
+        *checked = Some((staged.to_path_buf(), answer.clone()));
+        answer
     }
 
     fn install(&self, staged: &Path, version: &Version) -> Result<(), String> {
@@ -121,6 +151,70 @@ mod tests {
             b"new",
             "the backup is the last version"
         );
+    }
+
+    /// A staged "agent" that records each run's arguments, says `said` on stderr, and exits
+    /// with `code`.
+    fn staged_agent(dir: &Path, said: &str, code: u8) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let staged = dir.join("citadel-agent");
+        let runs = dir.join("runs");
+        let body = format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\necho '{said}' >&2\nexit {code}\n",
+            runs.display()
+        );
+        std::fs::write(&staged, body).unwrap();
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).unwrap();
+        staged
+    }
+
+    fn installer(dir: &Path) -> SelfReplace {
+        SelfReplace::new(
+            dir.join("installed"),
+            vec!["--bind".to_string(), "127.0.0.1:12345".to_string()],
+            "127.0.0.1:12345".parse().unwrap(),
+            dir.to_path_buf(),
+            || unreachable!("nothing is installed"),
+        )
+    }
+
+    fn runs(dir: &Path) -> Vec<String> {
+        std::fs::read_to_string(dir.join("runs"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn a_staged_agent_that_would_refuse_this_agents_command_is_not_installable() {
+        let dir = tempfile::tempdir().unwrap();
+        let staged = staged_agent(dir.path(), "apps.private_network is not configured", 1);
+        let why = installer(dir.path()).can_install(&staged).unwrap_err();
+        assert!(
+            why.contains("apps.private_network is not configured"),
+            "{why}"
+        );
+        assert_eq!(runs(dir.path()), ["--check-launch --bind 127.0.0.1:12345"]);
+    }
+
+    #[test]
+    fn a_staged_agent_that_would_start_is_installable() {
+        let dir = tempfile::tempdir().unwrap();
+        let staged = staged_agent(dir.path(), "", 0);
+        assert_eq!(installer(dir.path()).can_install(&staged), Ok(()));
+    }
+
+    #[test]
+    fn each_staged_file_is_checked_once() {
+        // The status asks on every read; each ask must not start the staged agent again.
+        let dir = tempfile::tempdir().unwrap();
+        let staged = staged_agent(dir.path(), "refused", 1);
+        let installer = installer(dir.path());
+        for _ in 0..3 {
+            assert!(installer.can_install(&staged).is_err());
+        }
+        assert_eq!(runs(dir.path()).len(), 1);
     }
 
     #[test]

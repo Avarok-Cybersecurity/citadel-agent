@@ -51,9 +51,10 @@ fn a_new_agent_that_exits_at_once_is_replaced_by_the_old_one() {
     let target = std::fs::read_to_string(&plan.target).unwrap();
     assert!(target.contains("# old"), "the old agent is back: {target}");
     assert!(!plan.backup.exists());
-    assert!(
-        plan.failed_marker.exists(),
-        "the version is not retried automatically"
+    assert_eq!(
+        std::fs::read_to_string(&plan.failed_marker).ok().as_deref(),
+        Some("it exited"),
+        "the version is not retried automatically, and the agent put back can say why"
     );
 }
 

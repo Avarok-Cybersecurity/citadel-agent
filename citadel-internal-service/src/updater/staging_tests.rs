@@ -83,12 +83,17 @@ fn a_new_version_clears_the_old_ones_and_failures_are_remembered() {
     std::fs::write(&old, b"x").unwrap();
     let new = staging.download_path(&v("0.9.1"), "a").unwrap();
     assert!(!old.exists() && new.parent().unwrap().exists());
-    assert!(!staging.failed(&v("0.9.1")));
-    staging.mark_failed(&v("0.9.1"));
-    assert!(staging.failed(&v("0.9.1")));
-    assert!(!staging.failed(&v("0.9.2")));
+    assert_eq!(staging.failed(&v("0.9.1")), None);
+    staging.mark_failed(&v("0.9.1"), "the new agent did not answer");
+    let recorded = Some("the new agent did not answer".to_string());
+    assert_eq!(staging.failed(&v("0.9.1")), recorded, "with why");
+    assert_eq!(staging.failed(&v("0.9.2")), None);
     staging.download_path(&v("0.9.2"), "a").unwrap();
-    assert!(staging.failed(&v("0.9.1")), "a marker is not a download");
+    assert_eq!(
+        staging.failed(&v("0.9.1")),
+        recorded,
+        "a marker is not a download"
+    );
     staging.discard(&v("0.9.2"));
     assert!(!dir.path().join("0.9.2").exists());
 }

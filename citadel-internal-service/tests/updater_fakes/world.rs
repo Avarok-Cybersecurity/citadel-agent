@@ -23,7 +23,7 @@ pub struct Recorder {
 }
 
 impl Installer for Recorder {
-    fn can_install(&self) -> Result<(), String> {
+    fn can_install(&self, _staged: &Path) -> Result<(), String> {
         Ok(())
     }
     fn install(&self, staged: &Path, version: &Version) -> Result<(), String> {
@@ -176,6 +176,10 @@ impl World {
     }
     pub fn staged_dir_exists(&self, version: &str) -> bool {
         self.dir.path().join("cache").join(version).exists()
+    }
+    /// Where the watchdog records that `version` was rolled back.
+    pub fn failed_marker(&self, version: &str) -> PathBuf {
+        FsStaging::failed_marker(&self.dir.path().join("cache"), version)
     }
 }
 

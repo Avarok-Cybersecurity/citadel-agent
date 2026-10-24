@@ -49,14 +49,16 @@ pub trait Staging: Send + Sync {
     async fn version_of(&self, runnable: &Path) -> Result<String, String>;
     /// Remove what was downloaded for `version`.
     fn discard(&self, version: &Version);
-    fn failed(&self, version: &Version) -> bool;
-    fn mark_failed(&self, version: &Version);
+    /// Why installing `version` failed before, when it did: what the watchdog or the menu-bar
+    /// app recorded, empty when the one that failed recorded nothing.
+    fn failed(&self, version: &Version) -> Option<String>;
+    fn mark_failed(&self, version: &Version, why: &str);
 }
 
 /// Puts a staged, verified release in place of this agent and restarts it.
 pub trait Installer: Send + Sync {
-    /// Why it could not install right now, if it could not.
-    fn can_install(&self) -> Result<(), String>;
+    /// Why it could not install `staged` right now, if it could not.
+    fn can_install(&self, staged: &Path) -> Result<(), String>;
     /// On success the agent is about to be replaced: a self-replacing installer exits the
     /// process, the menu-bar app's stops it.
     fn install(&self, staged: &Path, version: &Version) -> Result<(), String>;

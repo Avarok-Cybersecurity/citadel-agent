@@ -48,7 +48,8 @@ pub trait WatchIo {
     fn spawn(&self, program: &Path, args: &[String]) -> Result<Box<dyn Child>, String>;
     fn healthy(&self, addr: SocketAddr) -> bool;
     fn rename(&self, from: &Path, to: &Path) -> Result<(), String>;
-    fn mark(&self, path: &Path);
+    /// Record that this version failed, and `why`, for the restored agent's updater to report.
+    fn mark(&self, path: &Path, why: &str);
     fn now(&self) -> Instant;
     /// Between two probes.
     fn pause(&self);
@@ -59,8 +60,9 @@ pub fn supervise(plan: &WatchPlan, io: &dyn WatchIo) -> Outcome {
     let deadline = io.now() + PARENT_EXIT;
     while io.alive(plan.parent_pid) {
         if io.now() >= deadline {
-            io.log("the old agent did not exit; restoring it and starting nothing");
-            restore(plan, io);
+            let why = "the old agent did not exit";
+            io.log(&format!("{why}; restoring it and starting nothing"));
+            restore(plan, io, why);
             return Outcome::ParentStuck;
         }
         io.pause();
@@ -79,7 +81,7 @@ pub fn supervise(plan: &WatchPlan, io: &dyn WatchIo) -> Outcome {
         },
     };
     io.log(&format!("rolling back {}: {why}", plan.version));
-    restore(plan, io);
+    restore(plan, io, &why);
     if let Err(e) = io.spawn(&plan.target, &plan.args) {
         io.log(&format!("the restored agent did not start: {e}"));
     }
@@ -105,8 +107,8 @@ fn wait_healthy(plan: &WatchPlan, io: &dyn WatchIo, child: &mut dyn Child) -> Re
     }
 }
 
-fn restore(plan: &WatchPlan, io: &dyn WatchIo) {
-    io.mark(&plan.failed_marker);
+fn restore(plan: &WatchPlan, io: &dyn WatchIo, why: &str) {
+    io.mark(&plan.failed_marker, why);
     if let Err(e) = io.rename(&plan.backup, &plan.target) {
         io.log(&format!("the previous agent could not be put back: {e}"));
     }

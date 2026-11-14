@@ -16,6 +16,10 @@
 //! The record also holds the file's identity at completion
 //! (requests/file/file_identity.rs): the folder is shared, the file is not.
 //!
+//! A chat file the session accepted is recorded too, by the path the agent
+//! reported for it (kernel/received_reads.rs), and for the life of the session:
+//! it is the session's own file, and clicking it an hour later must still open it.
+//!
 //! Pure: the disk read, and confining the saved path to the agent's transfer
 //! root, are requests/file/read_pulled.rs.
 
@@ -41,10 +45,20 @@ pub struct PulledKey {
     pub virtual_directory: PathBuf,
 }
 
+/// How long a record may be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Retention {
+    /// A RE-VFS pull: the picked-file window, `PICKED_FILE_TTL`.
+    PullWindow,
+    /// A chat file this session accepted: as long as the session.
+    Session,
+}
+
 #[derive(Debug)]
 struct PulledRead {
     saved: PathBuf,
     identity: FileIdentity,
+    retention: Retention,
     recorded_at: Instant,
     generation: u64,
     /// Where the previous chunk ended; `None` before the first read.
@@ -68,17 +82,24 @@ pub struct PulledReads {
 }
 
 impl PulledReads {
-    /// Records the file a completed pull saved, sweeping expired records and
-    /// evicting the oldest past the cap.
-    pub fn record(&mut self, key: PulledKey, saved: PathBuf, identity: FileIdentity, now: Instant) {
-        self.entries
-            .retain(|_, read| now.duration_since(read.recorded_at) < PICKED_FILE_TTL);
+    /// Records the file a completed pull or reception saved, sweeping expired
+    /// records and evicting the oldest past the cap.
+    pub fn record(
+        &mut self,
+        key: PulledKey,
+        saved: PathBuf,
+        identity: FileIdentity,
+        retention: Retention,
+        now: Instant,
+    ) {
+        self.entries.retain(|_, read| !read.expired(now));
         self.next_generation = self.next_generation.wrapping_add(1);
         self.entries.insert(
             key,
             PulledRead {
                 saved,
                 identity,
+                retention,
                 recorded_at: now,
                 generation: self.next_generation,
                 next_offset: None,
@@ -120,7 +141,7 @@ impl PulledReads {
                 key.virtual_directory.display()
             )
         })?;
-        if now.duration_since(read.recorded_at) >= PICKED_FILE_TTL {
+        if read.expired(now) {
             return Err(format!(
                 "the pull of {} has expired; pull it again (DownloadFile)",
                 key.virtual_directory.display()
@@ -163,6 +184,15 @@ impl PulledReads {
         read.in_flight_since = None;
         if let Some((offset, len)) = landed {
             read.next_offset = offset.checked_add(len as u64);
+        }
+    }
+}
+
+impl PulledRead {
+    fn expired(&self, now: Instant) -> bool {
+        match self.retention {
+            Retention::PullWindow => now.duration_since(self.recorded_at) >= PICKED_FILE_TTL,
+            Retention::Session => false,
         }
     }
 }

@@ -52,6 +52,7 @@ pub(crate) mod pending_group_invites;
 pub(crate) mod picked_files;
 pub(crate) mod pulled_files;
 pub(crate) mod pulled_reads;
+pub(crate) mod received_reads;
 pub(crate) mod reconnect;
 pub mod supervisor;
 

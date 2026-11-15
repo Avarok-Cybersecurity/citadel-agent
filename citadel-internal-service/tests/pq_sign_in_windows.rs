@@ -24,7 +24,7 @@ async fn a_management_challenge_reaches_every_window_and_another_window_may_answ
     let mut first = Window::open(agent).await?;
     let user = citadel_internal_service_test_common::pq::username("win");
     first.register(server, &user, PASSWORD).await??;
-    let cid = first.sign_in(&user, &password_offer()).await??;
+    let cid = first.sign_in(server, &user, &password_offer()).await??;
 
     let mut second = Window::open(agent).await?;
     let attach_id = Uuid::new_v4();

@@ -49,6 +49,11 @@ pub enum FailureReason {
     AdmissionRequired,
     /// The server refused the admission token that was sent (reset the widget and retry).
     AdmissionFailed,
+    /// A Connect named a server, and this agent's account with that username is registered
+    /// to a different one. Nothing was dialled: signing in would have reached that other server.
+    AccountOnAnotherServer,
+    /// A Connect named a username this agent holds no account for.
+    NoSuchAccount,
 }
 
 /// The factors a window offers to prove the account again before a change to its sign-in

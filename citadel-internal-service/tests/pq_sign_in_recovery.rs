@@ -35,7 +35,9 @@ async fn a_recovery_session_is_restricted_and_its_code_signs_in_once() -> Result
     .await?;
     let code = user.codes.0[3].clone();
 
-    let cid = window.sign_in(&user.username, &recovery(&code)).await??;
+    let cid = window
+        .sign_in(server, &user.username, &recovery(&code))
+        .await??;
 
     // A normal request: refused at once, saying why.
     let request_id = Uuid::new_v4();
@@ -70,13 +72,15 @@ async fn a_recovery_session_is_restricted_and_its_code_signs_in_once() -> Result
     assert_eq!(set, SignInManagementOutcome::PolicySet);
     window.disconnect(cid).await?;
 
-    let again = window.sign_in(&user.username, &recovery(&code)).await?;
+    let again = window
+        .sign_in(server, &user.username, &recovery(&code))
+        .await?;
     assert!(again.is_err(), "a recovery code signed in twice");
     let with_key = Offer {
         key: Some(key),
         ..Default::default()
     };
-    let signed_in = window.sign_in(&user.username, &with_key).await?;
+    let signed_in = window.sign_in(server, &user.username, &with_key).await?;
     assert!(
         signed_in.is_ok(),
         "the recovered key did not sign in: {signed_in:?}"
@@ -98,7 +102,7 @@ async fn a_malformed_recovery_code_is_refused_without_reaching_the_server(
     )
     .await?;
     let refused = window
-        .sign_in(&user.username, &recovery("not a code"))
+        .sign_in(server, &user.username, &recovery("not a code"))
         .await?;
     assert_eq!(refused, Err("That is not a recovery code".to_string()));
     Ok(())

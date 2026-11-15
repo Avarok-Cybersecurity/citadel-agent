@@ -58,6 +58,7 @@ pub(crate) mod reconnect;
 pub mod supervisor;
 
 use reconnect::policy::ReconnectPolicy;
+pub(crate) mod account_server;
 pub(crate) mod attach_tokens;
 pub(crate) mod membership;
 mod membership_hosting;

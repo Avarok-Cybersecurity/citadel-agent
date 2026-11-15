@@ -109,6 +109,7 @@ async fn the_host_survives_an_agent_restart() -> Result<(), Box<dyn Error>> {
             InternalServiceRequest::Connect {
                 request_id: Uuid::new_v4(),
                 username: name.clone(),
+                server_address: typed.clone(),
                 password: Some(PASSWORD.as_bytes().to_vec().into()),
                 security_key: false,
                 recovery_code: None,

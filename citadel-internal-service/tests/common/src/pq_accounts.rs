@@ -38,7 +38,9 @@ pub async fn account(
 ) -> Result<Account, Box<dyn Error>> {
     let username = username("acct");
     let (_, codes) = window.register(server, &username, PASSWORD).await??;
-    let cid = window.sign_in(&username, &password_offer()).await??;
+    let cid = window
+        .sign_in(server, &username, &password_offer())
+        .await??;
     if policy != SignInPolicy::Password {
         let added = window
             .manage(cid, add_key(), Some(PASSWORD), Some(key))

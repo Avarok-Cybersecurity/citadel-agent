@@ -18,7 +18,10 @@ use citadel_internal_service_test_common as common;
 
 #[cfg(test)]
 mod tests {
-    use crate::common::{two_sessions_on_one_service, PeerHandle};
+    use crate::common::{
+        server_info_skip_cert_verification, two_sessions_on_one_service,
+        two_sessions_on_one_service_reaching, PeerHandle,
+    };
     use citadel_internal_service_types::{
         ConfigCommand, InternalServiceRequest, InternalServiceResponse,
     };
@@ -257,7 +260,10 @@ mod tests {
     async fn a_disconnected_orphan_can_be_reconnected() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         let tag = "takeover.orphan_reconnect";
-        let (mut owner, mut other) = two_sessions_on_one_service(tag).await?;
+        let (server, server_addr) = server_info_skip_cert_verification::<StackedRatchet>();
+        tokio::task::spawn(server);
+        let (_, mut owner, mut other) =
+            two_sessions_on_one_service_reaching(tag, [server_addr; 2]).await?;
         let cid = owner.2;
 
         // Orphan it from the connection that holds it, which is allowed.
@@ -285,6 +291,7 @@ mod tests {
         // Connect is refused with SessionManagerSessionAlreadyExists.
         other.0.send(InternalServiceRequest::Connect {
             username: format!("{tag}.0"),
+            server_address: server_addr.to_string(),
             password: Some(b"secret_0".to_vec().into()),
             security_key: false,
             recovery_code: None,

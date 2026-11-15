@@ -24,9 +24,14 @@ async function runTests() {
     const serverUrl = process.env.WEBSOCKET_URL || 'ws://127.0.0.1:8081';
     console.log(`   Server URL: ${serverUrl}\n`);
 
+    // The server the account is registered to; the agent refuses a Connect naming another.
+    const serverAddress = process.env.CITADEL_SERVER_ADDRESS;
+    if (!serverAddress) throw new Error('Set CITADEL_SERVER_ADDRESS to the server typescript_user is registered to');
+
     const client = new CitadelClient({
         url: serverUrl,
         username: 'typescript_user',
+        serverAddress,
         password: 'typescript_password',
         timeout: 10000
     });

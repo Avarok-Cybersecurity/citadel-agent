@@ -24,8 +24,8 @@ use citadel_internal_service_test_common as common;
 #[cfg(test)]
 mod tests {
     use crate::common::group::{
-        group_message_arrives, joined_group_on_one_service, joined_group_on_one_service_reaching,
-        recv_until, send_group_message, OneServiceGroup,
+        group_message_arrives, joined_group_on_one_service_reaching, recv_until,
+        send_group_message, OneServiceGroup,
     };
     use crate::common::group_rejoin::{rejoined, send_until_received, sign_in_again, sign_out};
     use crate::reconnect::Proxy;
@@ -76,12 +76,15 @@ mod tests {
     #[tokio::test]
     async fn an_owner_who_signs_out_and_in_keeps_its_group() -> Result<(), Box<dyn Error>> {
         let tag = "groupownersignin";
+        let (server, server_addr) =
+            crate::common::server_info_skip_cert_verification::<StackedRatchet>();
+        drop(tokio::spawn(server));
         let OneServiceGroup {
             service_addr,
             owner: (owner_tx, mut owner_rx, owner_cid),
             member: (member_tx, mut member_rx, member_cid),
             group_key,
-        } = joined_group_on_one_service(tag).await?;
+        } = joined_group_on_one_service_reaching(tag, [server_addr; 2]).await?;
 
         send_group_message(&owner_tx, owner_cid, group_key, b"before");
         group_message_arrives(&mut member_rx, b"before")
@@ -89,8 +92,14 @@ mod tests {
             .ok_or("control: no delivery before the owner signed out")?;
 
         sign_out(&owner_tx, &mut owner_rx, owner_cid).await?;
-        let (new_tx, mut new_rx) =
-            sign_in_again(service_addr, &format!("{tag}.0"), b"secret_0", owner_cid).await?;
+        let (new_tx, mut new_rx) = sign_in_again(
+            service_addr,
+            server_addr,
+            &format!("{tag}.0"),
+            b"secret_0",
+            owner_cid,
+        )
+        .await?;
         let _ = recv_until(&mut new_rx, "the owner's re-founded channel", |r| {
             rejoined(r, owner_cid, group_key)
         })

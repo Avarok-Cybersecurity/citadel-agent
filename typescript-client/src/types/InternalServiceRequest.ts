@@ -18,6 +18,13 @@ import type { StepUp } from "./StepUp";
 
 export type InternalServiceRequest = { "Connect": { request_id: string, username: string, 
 /**
+ * The server the account is on, as the user typed it or as the agent reported it
+ * (`host[:port]` or a `ws(s)://` URL). Required: the agent signs in only the account
+ * with this username on THIS server, and refuses (`AccountOnAnotherServer`) rather
+ * than dial whichever server a same-named account happens to be registered to.
+ */
+server_address: string, 
+/**
  * Absent for a `KeyOnly` account and for a recovery-code sign-in.
  */
 password: number[] | null, 

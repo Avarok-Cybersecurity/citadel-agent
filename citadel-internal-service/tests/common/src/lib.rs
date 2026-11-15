@@ -197,6 +197,7 @@ pub async fn register_and_connect_to_server<
             // now, connect to the server
             let command = InternalServiceRequest::Connect {
                 username,
+                server_address: item.server_addr.to_string(),
                 password: Some(password),
                 security_key: false,
                 recovery_code: None,
@@ -256,6 +257,21 @@ pub async fn services_connected_to_one_server_on<R: Ratchet, I: BindableInterfac
         server_info_skip_cert_verification::<R>()
     };
     tokio::task::spawn(server);
+    services_connected_to_server_at::<R, I>(
+        int_svc_addrs,
+        server_bind_address,
+        server_session_password,
+    )
+    .await
+}
+
+/// As [`services_connected_to_one_server_on`], against a server the caller runs at
+/// `server_bind_address`, so the caller knows where every account is registered.
+pub async fn services_connected_to_server_at<R: Ratchet, I: BindableInterface>(
+    int_svc_addrs: Vec<SocketAddr>,
+    server_bind_address: SocketAddr,
+    server_session_password: Option<PreSharedKey>,
+) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
     let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
 
     // Spawn Internal Services with given addresses
@@ -350,7 +366,7 @@ pub async fn register_and_connect_to_server_then_peers_as_browser<R: Ratchet>(
     connect_every_pair(services, None, Default::default()).await
 }
 
-async fn connect_every_pair(
+pub async fn connect_every_pair(
     mut returned_service_info: Vec<PeerReturnHandle>,
     peer_session_password: Option<PreSharedKey>,
     udp_mode: citadel_sdk::prelude::UdpMode,

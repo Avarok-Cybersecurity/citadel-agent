@@ -165,6 +165,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
             let connect_command = InternalServiceRequest::Connect {
                 username,
+                // The host just recorded for the account: the Connect signs in exactly it.
+                server_address: server_host,
                 password: Some(proposed_password),
                 security_key: false,
                 recovery_code: None,

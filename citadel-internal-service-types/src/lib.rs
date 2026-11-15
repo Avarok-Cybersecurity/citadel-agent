@@ -1289,6 +1289,11 @@ pub enum InternalServiceRequest {
     Connect {
         request_id: Uuid,
         username: String,
+        /// The server the account is on, as the user typed it or as the agent reported it
+        /// (`host[:port]` or a `ws(s)://` URL). Required: the agent signs in only the account
+        /// with this username on THIS server, and refuses (`AccountOnAnotherServer`) rather
+        /// than dial whichever server a same-named account happens to be registered to.
+        server_address: String,
         /// Absent for a `KeyOnly` account and for a recovery-code sign-in.
         #[cfg_attr(feature = "typescript", ts(type = "number[] | null"))]
         password: Option<SecBuffer>,
@@ -2206,7 +2211,9 @@ pub struct AccountInformation {
     /// The `host[:port]` the account registered to, as the user typed it (a hosted
     /// tenant as `acme.work.avarok.net`, an IP as the IP). The resolved address
     /// (`SessionInformation::server_address`) is, behind an edge, shared by many
-    /// workspaces. `None` for an account registered before the agent recorded it.
+    /// workspaces. For an account registered before the agent recorded the host, the
+    /// host of the WebSocket endpoint it kept, else the address it dials. This is the
+    /// server a `Connect` for the account must name. `None` when it could not be read.
     #[serde(default)]
     pub server_host: Option<String>,
     /// The highest session security level this account can sign in at: the level it
@@ -2427,6 +2434,7 @@ mod tests {
         let request = InternalServiceRequest::Connect {
             request_id,
             username: "test".to_string(),
+            server_address: "bench.work.avarok.net".to_string(),
             password: Some(SecBuffer::from(vec![])),
             security_key: false,
             recovery_code: None,

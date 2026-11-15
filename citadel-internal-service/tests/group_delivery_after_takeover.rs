@@ -19,18 +19,20 @@ use citadel_internal_service_test_common as common;
 #[cfg(test)]
 mod tests {
     use crate::common::group::{
-        group_message_arrives, joined_group, joined_group_on_one_service, recv_until,
-        send_group_message, JoinedGroup, OneServiceGroup,
+        group_message_arrives, joined_group_on_one_service_reaching, joined_group_reaching,
+        recv_until, send_group_message, JoinedGroup, OneServiceGroup,
     };
-    use crate::common::open_localhost_connection;
+    use crate::common::{open_localhost_connection, server_info_skip_cert_verification};
     use citadel_internal_service_types::{
         ConfigCommand, InternalServiceRequest, InternalServiceResponse,
     };
+    use citadel_sdk::prelude::StackedRatchet;
     use std::error::Error;
+    use std::net::SocketAddr;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
     use uuid::Uuid;
 
-    /// B's credentials as `services_connected_to_one_server` registers them.
+    /// B's credentials as `services_connected_to_server_at` registers them.
     const MEMBER_USERNAME: &str = "peer.1";
     const MEMBER_PASSWORD: &[u8] = b"secret_1";
 
@@ -39,11 +41,13 @@ mod tests {
 
     fn connect_request(
         request_id: Uuid,
+        server: SocketAddr,
         username: &str,
         password: &[u8],
     ) -> InternalServiceRequest {
         InternalServiceRequest::Connect {
             username: username.to_string(),
+            server_address: server.to_string(),
             password: Some(password.to_vec().into()),
             security_key: false,
             recovery_code: None,
@@ -85,13 +89,20 @@ mod tests {
     }
 
     /// The UI's takeover, request for request.
-    async fn take_over(tx: &Tx, rx: &mut Rx, cid: u64) {
-        take_over_as(tx, rx, cid, MEMBER_USERNAME, MEMBER_PASSWORD).await
+    async fn take_over(tx: &Tx, rx: &mut Rx, cid: u64, server: SocketAddr) {
+        take_over_as(tx, rx, cid, server, MEMBER_USERNAME, MEMBER_PASSWORD).await
     }
 
-    async fn take_over_as(tx: &Tx, rx: &mut Rx, cid: u64, username: &str, password: &[u8]) {
+    async fn take_over_as(
+        tx: &Tx,
+        rx: &mut Rx,
+        cid: u64,
+        server: SocketAddr,
+        username: &str,
+        password: &[u8],
+    ) {
         let request_id = Uuid::new_v4();
-        tx.send(connect_request(request_id, username, password))
+        tx.send(connect_request(request_id, server, username, password))
             .expect("channel open");
         let answer = recv_until(rx, "takeover Connect answer", |r| match r {
             InternalServiceResponse::SessionAlreadyActive(a) => a.request_id == Some(request_id),
@@ -125,6 +136,8 @@ mod tests {
     #[tokio::test]
     async fn a_member_keeps_receiving_the_group_after_its_session_moves(
     ) -> Result<(), Box<dyn Error>> {
+        let (server, server_addr) = server_info_skip_cert_verification::<StackedRatchet>();
+        tokio::task::spawn(server);
         let JoinedGroup {
             to_service_a,
             from_service_a: _from_service_a,
@@ -134,7 +147,7 @@ mod tests {
             cid_b,
             group_key,
             service_b_addr,
-        } = joined_group().await?;
+        } = joined_group_reaching(server_addr).await?;
 
         // Control: delivery works before the move, so a silence afterwards is
         // the move's doing and not a group that never delivered.
@@ -146,7 +159,7 @@ mod tests {
 
         // A second browser window, and "Use it here". The first window stays open.
         let (new_tx, mut new_connection) = open_localhost_connection(service_b_addr).await?;
-        take_over(&new_tx, &mut new_connection, cid_b).await;
+        take_over(&new_tx, &mut new_connection, cid_b, server_addr).await;
 
         send_group_message(&to_service_a, cid_a, group_key, b"after the move");
         let after = group_message_arrives(&mut new_connection, b"after the move")
@@ -169,12 +182,14 @@ mod tests {
     async fn same_agent_member_keeps_receiving_after_its_session_moves(
     ) -> Result<(), Box<dyn Error>> {
         let tag = "grouptakeover";
+        let (server, server_addr) = server_info_skip_cert_verification::<StackedRatchet>();
+        tokio::task::spawn(server);
         let OneServiceGroup {
             service_addr,
             owner: (owner_tx, mut owner_rx, owner_cid),
             member: (_member_tx, mut member_rx, member_cid),
             group_key,
-        } = joined_group_on_one_service(tag).await?;
+        } = joined_group_on_one_service_reaching(tag, [server_addr; 2]).await?;
 
         send_group_message(&owner_tx, owner_cid, group_key, b"before the move");
         group_message_arrives(&mut member_rx, b"before the move")
@@ -186,6 +201,7 @@ mod tests {
             &new_tx,
             &mut new_connection,
             member_cid,
+            server_addr,
             &format!("{tag}.1"),
             b"secret_1",
         )

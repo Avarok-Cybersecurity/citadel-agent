@@ -52,10 +52,19 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         keep_alive_timeout,
         session_security_settings,
         server_password,
+        server_address,
     } = request
     else {
         unreachable!("Should never happen if programmed properly")
     };
+    // Only the account with this username on THIS server (account_server.rs), before anything is dialled.
+    if let Err(refusal) =
+        crate::kernel::account_server::check(this.remote(), &username, &server_address).await
+    {
+        citadel_sdk::logging::warn!(target: "citadel", "[Connect] REFUSED {} for {}: {:?}", username, server_address, refusal);
+        let response = refusal.into_response(&username, &server_address, request_id);
+        return Some(HandledRequestResult { response, uuid });
+    }
     let connect_mode = crate::kernel::requests::connect_mode::server_connect_mode(
         connect_mode,
         crate::kernel::requests::connect_mode::LoginOrigin::UserSignIn,

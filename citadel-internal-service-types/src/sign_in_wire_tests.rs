@@ -4,10 +4,12 @@ use super::*;
 
 /// A `Connect` as a client from before post-quantum sign-in sends it: a password, and neither
 /// `security_key` nor `recovery_code` (nor `server_password`, which the UI never sends).
+/// `server_address` stays: a client that omits it is refused at deserialization.
 fn legacy_connect_json() -> String {
     let current = InternalServiceRequest::Connect {
         request_id: Uuid::new_v4(),
         username: "alice".to_string(),
+        server_address: "bench.work.avarok.net".to_string(),
         password: Some(SecBuffer::from("hunter2")),
         security_key: true,
         recovery_code: None,
@@ -108,6 +110,7 @@ fn an_admission_token_never_reaches_a_debug_string() {
     let connect = InternalServiceRequest::Connect {
         request_id: Uuid::nil(),
         username: "alice".to_string(),
+        server_address: "bench.work.avarok.net".to_string(),
         password: None,
         security_key: false,
         recovery_code: None,

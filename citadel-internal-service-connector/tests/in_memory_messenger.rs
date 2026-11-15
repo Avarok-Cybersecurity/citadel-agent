@@ -46,6 +46,7 @@ mod tests {
         let request_id = Uuid::new_v4();
         let connect_request = InternalServiceRequest::Connect {
             username: "test_user".to_string(),
+            server_address: "bench.work.avarok.net".to_string(),
             password: Some(vec![].into()),
             security_key: false,
             recovery_code: None,
@@ -93,6 +94,7 @@ mod tests {
         let request_id = Uuid::new_v4();
         let connect_req = InternalServiceRequest::Connect {
             username: "test".to_string(),
+            server_address: "bench.work.avarok.net".to_string(),
             password: Some(vec![].into()),
             security_key: false,
             recovery_code: None,

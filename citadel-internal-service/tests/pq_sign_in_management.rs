@@ -33,7 +33,7 @@ async fn each_management_change_works_and_the_last_factor_cannot_be_removed(
     let mut w = Window::open(spawn_agent().await?).await?;
     let user = citadel_internal_service_test_common::pq::username("mgmt");
     w.register(server, &user, PASSWORD).await??;
-    let cid = w.sign_in(&user, &password_offer()).await??;
+    let cid = w.sign_in(server, &user, &password_offer()).await??;
     let pw = Some(PASSWORD);
     let key = FakeKey::new(4);
 

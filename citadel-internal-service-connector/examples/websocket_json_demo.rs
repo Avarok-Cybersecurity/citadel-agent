@@ -11,6 +11,7 @@ fn main() {
     let request = InternalServicePayload::Request(InternalServiceRequest::Connect {
         request_id: Uuid::new_v4(),
         username: "frontend_user".to_string(),
+        server_address: "bench.work.avarok.net".to_string(),
         password: Some(SecBuffer::from(b"my_password".to_vec())),
         security_key: false,
         recovery_code: None,

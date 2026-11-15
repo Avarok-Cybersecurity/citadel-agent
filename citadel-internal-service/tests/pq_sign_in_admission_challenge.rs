@@ -76,14 +76,17 @@ async fn the_published_check_reaches_a_refused_registration_and_sign_in(
         .await?
         .map_err(|(message, _)| message)?;
 
-    let refused = window.connect(&user, &password(None)).await?.response;
+    let refused = window
+        .connect(server, &user, &password(None))
+        .await?
+        .response;
     let InternalServiceResponse::ConnectFailure(failure) = refused else {
         panic!("a sign-in was admitted without a token: {refused:?}");
     };
     assert_eq!(failure.reason_code, Some(FailureReason::AdmissionRequired));
     assert_eq!(failure.admission_challenge, published(), "sign-in lost it");
     let refused = window
-        .connect(&user, &password(Some("forged")))
+        .connect(server, &user, &password(Some("forged")))
         .await?
         .response;
     let InternalServiceResponse::ConnectFailure(failure) = refused else {

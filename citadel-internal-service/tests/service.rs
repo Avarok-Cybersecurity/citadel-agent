@@ -262,6 +262,7 @@ mod tests {
         let connect_command = InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "Username".into(),
+            server_address: server_bind_address.to_string(),
             password: Some("Password".into()),
             security_key: false,
             recovery_code: None,
@@ -289,6 +290,7 @@ mod tests {
         let connect_command = InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "Username".into(),
+            server_address: server_bind_address.to_string(),
             password: Some("Password".into()),
             security_key: false,
             recovery_code: None,
@@ -316,6 +318,7 @@ mod tests {
         let connect_command = InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "Username".into(),
+            server_address: server_bind_address.to_string(),
             password: Some("Password".into()),
             security_key: false,
             recovery_code: None,

@@ -1,10 +1,12 @@
 //! A two-member group, shared by the tests that need one.
 
 use crate::{
-    connect_p2p, get_free_port, register_and_connect_to_server_then_peers, register_p2p,
+    connect_every_pair, connect_p2p, get_free_port, register_p2p,
+    server_info_skip_cert_verification, services_connected_to_server_at,
     two_sessions_on_one_service_at, two_sessions_on_one_service_reaching, PeerHandle,
     PeerServiceHandles,
 };
+use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
 use citadel_internal_service_types::{
     GroupCreateSuccess, GroupInviteNotification, GroupMessageNotification,
     GroupRespondRequestSuccess, InternalServiceRequest, InternalServiceResponse,
@@ -58,21 +60,30 @@ pub struct JoinedGroup {
 }
 
 pub async fn joined_group() -> Result<JoinedGroup, Box<dyn Error>> {
+    let (server, server_addr) = server_info_skip_cert_verification::<StackedRatchet>();
+    tokio::task::spawn(server);
+    joined_group_reaching(server_addr).await
+}
+
+/// As [`joined_group`], against a server the caller runs at `server_addr`; both accounts
+/// (`peer.0` / `secret_0` on A, `peer.1` / `secret_1` on B) are registered to it.
+pub async fn joined_group_reaching(server_addr: SocketAddr) -> Result<JoinedGroup, Box<dyn Error>> {
     crate::setup_log();
     let bind_address_internal_service_a: SocketAddr =
         format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
     let bind_address_internal_service_b: SocketAddr =
         format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
-    let mut peer_return_handle_vec = register_and_connect_to_server_then_peers::<StackedRatchet>(
+    let services = services_connected_to_server_at::<StackedRatchet, TcpIOInterface>(
         vec![
             bind_address_internal_service_a,
             bind_address_internal_service_b,
         ],
-        None,
+        server_addr,
         None,
     )
     .await?;
+    let mut peer_return_handle_vec = connect_every_pair(services, None, Default::default()).await?;
 
     let (to_service_a, mut from_service_a, cid_a) =
         peer_return_handle_vec.take_next_service_handle();

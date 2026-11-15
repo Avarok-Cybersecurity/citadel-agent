@@ -66,7 +66,7 @@ async fn a_sign_out_with_a_dead_path_ends_the_session_here_and_says_so(
     );
     // The SDK holds none either: a fresh sign-in is not refused as already existing.
     proxy.release();
-    let login = connect(&mut sink, &mut stream, &name).await?;
+    let login = connect(&mut sink, &mut stream, &proxy.addr.to_string(), &name).await?;
     assert!(
         matches!(login, InternalServiceResponse::ConnectSuccess(ref s) if s.cid == cid),
         "{login:?}"

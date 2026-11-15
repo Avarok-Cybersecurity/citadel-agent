@@ -2,6 +2,7 @@
 //! with the session's last TURN config, and with the answer sent to the windows as the
 //! request's answer would have been.
 
+use crate::kernel::conversations::engine::preferences;
 use crate::kernel::requests::peer::answer::window_relay;
 use crate::kernel::requests::peer::dial::{dial, Dial, ALREADY_CONNECTED};
 use crate::kernel::session_route::SessionRoute;
@@ -9,9 +10,9 @@ use crate::kernel::supervisor::ports::PeerDialer;
 use crate::kernel::supervisor::types::{Cid, DialOutcome};
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
-use citadel_internal_service_types::InternalServiceResponse;
-use citadel_sdk::logging::{debug, info};
-use citadel_sdk::prelude::{Ratchet, UdpMode};
+use citadel_internal_service_types::{InternalServiceResponse, SessionSecuritySettings};
+use citadel_sdk::logging::{debug, info, warn};
+use citadel_sdk::prelude::{Ratchet, SecurityLevel, UdpMode};
 use futures::future::BoxFuture;
 use futures::FutureExt;
 
@@ -29,17 +30,27 @@ impl<T: IOInterface + Sync, R: Ratchet> PeerDialer for KernelDialer<T, R> {
     fn dial(&self, peer: Cid) -> BoxFuture<'static, DialOutcome> {
         let (this, cid) = (self.this.clone(), self.cid);
         async move {
-            // The security settings the session was opened with: no window is asking, so
-            // none is the source of these.
+            // The security settings the session was opened with, at the chat's level: no window
+            // is asking, so none is the source of these.
             let opened = this.server_connection_map.read().get(&cid).map(|conn| {
                 (
                     conn.reconnect.session_security_settings,
                     conn.subscribers.clone(),
                 )
             });
-            let Some((session_security_settings, subscribers)) = opened else {
+            let Some((opened, subscribers)) = opened else {
                 return DialOutcome::Failed;
             };
+            // The chat's level, which the window would have dialled at. Unreadable is no dial:
+            // guessing Standard is quietly lowering the chat, the one wrong answer.
+            let minimum = match preferences(&this, cid).await {
+                Ok(prefs) => prefs.security_minimum_for(peer).sdk(),
+                Err(err) => {
+                    warn!(target: "citadel::supervisor", "{cid}: not dialling {peer}: preferences unreadable ({err})");
+                    return DialOutcome::Failed;
+                }
+            };
+            let session_security_settings = chat_dial_settings(opened, minimum);
             info!(target: "citadel::supervisor", "{cid}: dialling {peer}");
             let response = dial(
                 &this,
@@ -65,6 +76,24 @@ impl<T: IOInterface + Sync, R: Ratchet> PeerDialer for KernelDialer<T, R> {
             outcome
         }
         .boxed()
+    }
+}
+
+/// What a supervised dial opens the channel with: the session's settings, at the chat's
+/// minimum when that is higher. The session's level alone reopened a chat the user had just
+/// raised at Standard, while this agent declined the peer's own Standard offers for being
+/// below it (owner report 2026-11-15). Never lower than the session's.
+pub(super) fn chat_dial_settings(
+    opened: SessionSecuritySettings,
+    minimum: SecurityLevel,
+) -> SessionSecuritySettings {
+    if minimum.value() > opened.security_level.value() {
+        SessionSecuritySettings {
+            security_level: minimum,
+            ..opened
+        }
+    } else {
+        opened
     }
 }
 

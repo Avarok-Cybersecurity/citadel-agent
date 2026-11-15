@@ -298,6 +298,11 @@ pub struct RegisterFailure {
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub admission_challenge: Option<AdmissionChallengeWire>,
+    /// With `UsernameHeldForAnotherServer`: the server this agent's account of that username
+    /// is on, as a Connect names it. Absent for every other failure, and from an older agent.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub held_for_server: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1293,6 +1298,12 @@ pub enum InternalServiceRequest {
         /// (`host[:port]` or a `ws(s)://` URL). Required: the agent signs in only the account
         /// with this username on THIS server, and refuses (`AccountOnAnotherServer`) rather
         /// than dial whichever server a same-named account happens to be registered to.
+        ///
+        /// `serde(default)` only so that a client from before this field (a page still
+        /// running an older build) is ANSWERED rather than dropped as unparseable: an empty
+        /// address is refused at once, telling that page to reload (connect.rs). It is never
+        /// used as an address.
+        #[serde(default)]
         server_address: String,
         /// Absent for a `KeyOnly` account and for a recovery-code sign-in.
         #[cfg_attr(feature = "typescript", ts(type = "number[] | null"))]

@@ -26,11 +26,12 @@ pub(crate) enum AccountServer {
     Addr(SocketAddr),
 }
 
-/// Why a Connect is refused before it is dialled.
+/// Why a Connect is refused before it is dialled (and a Register, for `OnAnotherServer`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Refusal {
     NoSuchAccount,
-    OnAnotherServer,
+    /// The account with that username is on this server, as a Connect would name it.
+    OnAnotherServer(String),
     InvalidServer(String),
 }
 
@@ -120,7 +121,7 @@ pub(crate) async fn check<R: Ratchet>(
     if decide(&account, &requested, &resolved) {
         Ok(())
     } else {
-        Err(Refusal::OnAnotherServer)
+        Err(Refusal::OnAnotherServer(account.as_requested()))
     }
 }
 
@@ -132,10 +133,13 @@ impl Refusal {
         request_id: Uuid,
     ) -> InternalServiceResponse {
         let (reason_code, message) = match self {
-            Refusal::NoSuchAccount => (Some(FailureReason::NoSuchAccount), format!("This computer has no account named {username}")),
-            Refusal::OnAnotherServer => (
+            Refusal::NoSuchAccount => (
+                Some(FailureReason::NoSuchAccount),
+                format!("This computer has no account named {username}"),
+            ),
+            Refusal::OnAnotherServer(held) => (
                 Some(FailureReason::AccountOnAnotherServer),
-                format!("{username} is registered to a different server than {server}; nothing was dialled"),
+                format!("{username} is registered to {held}, not {server}; nothing was dialled"),
             ),
             Refusal::InvalidServer(err) => (None, format!("Cannot sign in to {server}: {err}")),
         };

@@ -3,4 +3,4 @@
 /**
  * A failure the UI can act on, beside the message it shows.
  */
-export type FailureReason = "admission_required" | "admission_failed" | "account_on_another_server" | "no_such_account";
+export type FailureReason = "admission_required" | "admission_failed" | "account_on_another_server" | "no_such_account" | "username_held_for_another_server";

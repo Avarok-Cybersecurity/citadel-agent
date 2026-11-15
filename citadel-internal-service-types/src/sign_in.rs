@@ -54,6 +54,10 @@ pub enum FailureReason {
     AccountOnAnotherServer,
     /// A Connect named a username this agent holds no account for.
     NoSuchAccount,
+    /// A Register named a username this agent already holds an account for on a different
+    /// server (`RegisterFailure::held_for_server`). One agent holds one account per username
+    /// (the SDK stores accounts by `username_to_cid`), so registering would overwrite it.
+    UsernameHeldForAnotherServer,
 }
 
 /// The factors a window offers to prove the account again before a change to its sign-in

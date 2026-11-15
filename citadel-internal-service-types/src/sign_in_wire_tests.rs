@@ -4,7 +4,7 @@ use super::*;
 
 /// A `Connect` as a client from before post-quantum sign-in sends it: a password, and neither
 /// `security_key` nor `recovery_code` (nor `server_password`, which the UI never sends).
-/// `server_address` stays: a client that omits it is refused at deserialization.
+/// Nor `server_address`: it parses, empty, so the agent can answer that page (connect.rs).
 fn legacy_connect_json() -> String {
     let current = InternalServiceRequest::Connect {
         request_id: Uuid::new_v4(),
@@ -27,6 +27,7 @@ fn legacy_connect_json() -> String {
         "recovery_code",
         "server_password",
         "admission_token",
+        "server_address",
     ] {
         assert!(fields.remove(added).is_some(), "{added} is not a field");
     }
@@ -40,11 +41,14 @@ fn an_older_clients_connect_still_parses_as_a_password_sign_in() {
         password,
         security_key,
         recovery_code,
+        server_address,
         ..
     } = request
     else {
         panic!("not a Connect: {request:?}");
     };
+    // Parsed rather than dropped, so the agent answers it: an empty server is refused at once.
+    assert_eq!(server_address, "");
     assert_eq!(password.expect("the password").as_ref(), b"hunter2");
     assert!(
         !security_key,

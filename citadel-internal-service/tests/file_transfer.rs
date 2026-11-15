@@ -127,7 +127,7 @@ mod tests {
         .await?;
         let internal_service = NodeBuilder::default()
             .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
-            .with_backend(BackendType::Filesystem("filesystem".into()))
+            .with_backend(crate::common::test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
             .build(internal_service_kernel)?;
@@ -292,7 +292,7 @@ mod tests {
 
         let internal_service = NodeBuilder::default()
             .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
-            .with_backend(BackendType::Filesystem("filesystem".into()))
+            .with_backend(crate::common::test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
             .build(internal_service_kernel)?;
@@ -1131,7 +1131,7 @@ mod tests {
         .await?;
         let internal_service = NodeBuilder::default()
             .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
-            .with_backend(BackendType::Filesystem("filesystem".into()))
+            .with_backend(crate::common::test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
             .build(internal_service_kernel)?;
@@ -1203,7 +1203,7 @@ mod tests {
         .await?;
         let internal_service = NodeBuilder::default()
             .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
-            .with_backend(BackendType::Filesystem("filesystem".into()))
+            .with_backend(crate::common::test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
             .build(internal_service_kernel)?;

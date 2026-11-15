@@ -58,6 +58,12 @@ pub enum FailureReason {
     /// server (`RegisterFailure::held_for_server`). One agent holds one account per username
     /// (the SDK stores accounts by `username_to_cid`), so registering would overwrite it.
     UsernameHeldForAnotherServer,
+    /// A reason this build does not know: a newer agent's. Decoded rather than refused, so
+    /// the failure it rides on still reaches the page (as "update the page"); an unknown
+    /// variant otherwise failed the whole response, and the page waited out a timeout.
+    /// Never sent by the agent.
+    #[serde(other)]
+    Unknown,
 }
 
 /// The factors a window offers to prove the account again before a change to its sign-in

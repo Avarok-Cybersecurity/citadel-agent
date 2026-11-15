@@ -165,3 +165,15 @@ fn a_key_challenge_and_its_answer_never_print_their_bytes() {
         assert!(!printed.contains("90, 90"), "{printed}");
     }
 }
+
+#[test]
+fn a_reason_from_a_newer_agent_decodes_as_unknown_and_keeps_its_failure() {
+    let reason: FailureReason = serde_json::from_str("\"some_reason_from_the_future\"").unwrap();
+    assert_eq!(reason, FailureReason::Unknown);
+    let failure: RegisterFailure = serde_json::from_str(
+        r#"{"cid":0,"message":"refused","request_id":null,"reason_code":"some_reason_from_the_future"}"#,
+    )
+    .unwrap();
+    assert_eq!(failure.reason_code, Some(FailureReason::Unknown));
+    assert_eq!(failure.message, "refused");
+}

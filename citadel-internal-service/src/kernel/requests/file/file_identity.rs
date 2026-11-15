@@ -19,7 +19,7 @@ use std::fs::File;
 use std::path::Path;
 use std::time::SystemTime;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FileIdentity {
     volume: u64,
     index: u64,

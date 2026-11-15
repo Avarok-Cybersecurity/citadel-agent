@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::picked_files::MAX_PICKED_FILES;
 use crate::kernel::requests::file::file_identity::identify;
 
 fn key(peer_cid: Option<u64>, path: &str) -> PulledKey {
@@ -19,7 +20,7 @@ fn identity() -> (tempfile::TempDir, FileIdentity) {
 
 fn recorded(now: Instant) -> (PulledReads, tempfile::TempDir) {
     let (dir, identity) = identity();
-    let mut reads = PulledReads::default();
+    let mut reads = PulledReads::new(MAX_PICKED_FILES);
     reads.record(
         key(Some(9), "/shared/a.docx"),
         PathBuf::from("/data/transfers/9/a.docx"),
@@ -165,7 +166,7 @@ fn a_read_from_before_a_re_pull_settles_nothing() {
 fn the_table_is_bounded() {
     let now = Instant::now();
     let (_dir, identity) = identity();
-    let mut reads = PulledReads::default();
+    let mut reads = PulledReads::new(MAX_PICKED_FILES);
     for i in 0..(MAX_PICKED_FILES + 5) {
         let at = now + Duration::from_millis(i as u64);
         reads.record(
@@ -212,7 +213,7 @@ fn a_file_over_the_limit_is_refused_before_any_bytes() {
 fn an_accepted_chat_file_outlives_the_pull_window() {
     let now = Instant::now();
     let (_dir, identity) = identity();
-    let mut reads = PulledReads::default();
+    let mut reads = PulledReads::new(MAX_PICKED_FILES);
     let received = key(Some(9), "/data/transfers/9/photo.png");
     reads.record(
         received.clone(),

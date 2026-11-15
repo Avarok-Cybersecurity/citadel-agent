@@ -151,5 +151,21 @@ async fn an_accepted_chat_file_is_read_by_the_path_it_was_saved_to() -> Result<(
     assert!(sender.is_err(), "{sender:?}");
     let unnamed = read_chunk(to_b, from_b, cid_b, None, &saved, 0).await;
     assert!(unnamed.is_err(), "{unnamed:?}");
+
+    // Replaced on disk after it arrived: refused, and said so.
+    std::fs::write(&saved, b"something else entirely")?;
+    let replaced = read_chunk(to_b, from_b, cid_b, Some(cid_a), &saved, 0).await;
+    assert!(
+        matches!(&replaced, Err(m) if m.contains("changed or replaced")),
+        "{replaced:?}"
+    );
+
+    // Deleted after it arrived: said plainly.
+    std::fs::remove_file(&saved)?;
+    let gone = read_chunk(to_b, from_b, cid_b, Some(cid_a), &saved, 0).await;
+    assert!(
+        matches!(&gone, Err(m) if m.contains("no longer on this computer")),
+        "{gone:?}"
+    );
     Ok(())
 }

@@ -16,14 +16,15 @@
 //! The record also holds the file's identity at completion
 //! (requests/file/file_identity.rs): the folder is shared, the file is not.
 //!
-//! A chat file the session accepted is recorded too, by the path the agent
-//! reported for it (kernel/received_reads.rs), and for the life of the session:
-//! it is the session's own file, and clicking it an hour later must still open it.
+//! A chat file the session accepted is held in a table of its own
+//! (`Connection::received_reads`, Retention::Session), loaded from the account's
+//! store (kernel/received_files.rs) when the agent has restarted since: RE-VFS
+//! pulls never evict it, and it does not expire.
 //!
 //! Pure: the disk read, and confining the saved path to the agent's transfer
 //! root, are requests/file/read_pulled.rs.
 
-use crate::kernel::picked_files::{MAX_PICKED_FILES, PICKED_FILE_TTL};
+use crate::kernel::picked_files::PICKED_FILE_TTL;
 use crate::kernel::requests::file::file_identity::FileIdentity;
 use crate::kernel::requests::file::upload::MAX_BROWSER_TRANSFER_TOTAL_BYTES;
 use std::collections::HashMap;
@@ -75,13 +76,28 @@ pub struct ReadTicket {
     pub generation: u64,
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct PulledReads {
     entries: HashMap<PulledKey, PulledRead>,
     next_generation: u64,
+    capacity: usize,
 }
 
 impl PulledReads {
+    /// A table holding at most `capacity` records, the oldest evicted first.
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            next_generation: 0,
+            capacity,
+        }
+    }
+
+    /// Whether `key` is recorded here.
+    pub fn holds(&self, key: &PulledKey) -> bool {
+        self.entries.contains_key(key)
+    }
+
     /// Records the file a completed pull or reception saved, sweeping expired
     /// records and evicting the oldest past the cap.
     pub fn record(
@@ -106,7 +122,7 @@ impl PulledReads {
                 in_flight_since: None,
             },
         );
-        while self.entries.len() > MAX_PICKED_FILES {
+        while self.entries.len() > self.capacity {
             let oldest = self
                 .entries
                 .iter()

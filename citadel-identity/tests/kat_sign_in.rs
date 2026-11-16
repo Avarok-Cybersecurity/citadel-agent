@@ -147,3 +147,41 @@ fn the_must_fail_cases_the_crate_decides() {
     let got = verify_assertion(&blob, &wrong, &claim.aud, &claim.nonce, now);
     assert!(matches!(got, Err(AssertionError::Signature(_))));
 }
+
+/// `open_assertion`: the node's entry point, with no challenge to compare.
+///
+/// Control: skip the signature check in `signed` (the one parse/verify path both entry points
+/// share) → the flipped byte opens and verifies, and this test goes red on both entry points.
+#[test]
+fn open_assertion_checks_the_signature_and_expiry_but_not_the_nonce() {
+    let k = kat();
+    let a = &k["assertion"];
+    let claim = assertion(a);
+    let issuer = MlDsa65Pk::from_base64url(text(&k["issuer"]["key"], "pk_b64url")).unwrap();
+    let blob = base64url_decode(text(a, "blob_b64url")).unwrap();
+    let now = claim.exp_s - 1;
+    assert_eq!(open_assertion(&blob, &issuer, now), Ok(claim.clone()));
+
+    // A flipped byte in the signed body (the audience) is refused by both entry points.
+    let mut flipped = blob.clone();
+    flipped[3] ^= 1;
+    assert!(matches!(
+        open_assertion(&flipped, &issuer, now),
+        Err(AssertionError::Signature(_))
+    ));
+    assert!(matches!(
+        verify_assertion(&flipped, &issuer, &claim.aud, &claim.nonce, now),
+        Err(AssertionError::Signature(_))
+    ));
+    // Expired at exp_s exactly.
+    assert!(matches!(
+        open_assertion(&blob, &issuer, claim.exp_s),
+        Err(AssertionError::Expired { .. })
+    ));
+    // Another issuer's key is refused.
+    let wrong = identity_a().public_key().clone();
+    assert!(matches!(
+        open_assertion(&blob, &wrong, now),
+        Err(AssertionError::Signature(_))
+    ));
+}

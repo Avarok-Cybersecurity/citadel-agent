@@ -35,8 +35,8 @@ pub const MAX_HANDLE_BYTES: usize = 64;
 pub const MAX_DOMAIN_BYTES: usize = 190;
 
 pub use assertion::{
-    assertion_message, verify_assertion, AssertionError, SignInAssertion, ASSERTION_DOMAIN,
-    ASSERTION_VERSION, MAX_ASSERTION_FIELD_BYTES,
+    assertion_message, open_assertion, verify_assertion, AssertionError, SignInAssertion,
+    ASSERTION_DOMAIN, ASSERTION_VERSION, MAX_ASSERTION_FIELD_BYTES,
 };
 pub use binding::{
     binding_from_base64url, binding_message, verify_binding, BindingBlob, BindingError, Verified,

@@ -103,7 +103,8 @@ impl ServerKey {
 }
 
 /// Accepts `blob` only as `issuer`'s assertion for `expect_aud`, answering `expect_nonce`,
-/// unexpired at `now_s` (the caller's clock).
+/// unexpired at `now_s` (the caller's clock). For the sign-in completer, which holds the
+/// challenge. Checks in the contract's order: parse, version, signature, audience, nonce, expiry.
 pub fn verify_assertion(
     blob: &[u8],
     issuer: &MlDsa65Pk,
@@ -111,6 +112,43 @@ pub fn verify_assertion(
     expect_nonce: &[u8; NONCE_LEN],
     now_s: u64,
 ) -> Result<SignInAssertion, AssertionError> {
+    let assertion = signed(blob, issuer)?;
+    if assertion.aud != expect_aud {
+        return Err(AssertionError::WrongAudience {
+            expected: expect_aud.to_string(),
+            found: assertion.aud,
+        });
+    }
+    if assertion.nonce != *expect_nonce {
+        return Err(AssertionError::WrongNonce);
+    }
+    unexpired(assertion, now_s)
+}
+
+/// Accepts `blob` only as `issuer`'s assertion, unexpired at `now_s`, and returns its fields,
+/// the nonce included, without comparing it. For a verifier that never saw the sign-in's
+/// challenge (the synchronized.work node checking ENROL by assertion); it must check `aud`
+/// itself.
+pub fn open_assertion(
+    blob: &[u8],
+    issuer: &MlDsa65Pk,
+    now_s: u64,
+) -> Result<SignInAssertion, AssertionError> {
+    unexpired(signed(blob, issuer)?, now_s)
+}
+
+fn unexpired(assertion: SignInAssertion, now_s: u64) -> Result<SignInAssertion, AssertionError> {
+    if now_s >= assertion.exp_s {
+        return Err(AssertionError::Expired {
+            exp_s: assertion.exp_s,
+            now_s,
+        });
+    }
+    Ok(assertion)
+}
+
+/// The one parse and signature check both entry points share.
+fn signed(blob: &[u8], issuer: &MlDsa65Pk) -> Result<SignInAssertion, AssertionError> {
     let mut reader = Reader::new(blob);
     let version = reader.u8("version").map_err(AssertionError::Malformed)?;
     if version != ASSERTION_VERSION {
@@ -138,17 +176,5 @@ pub fn verify_assertion(
         nonce,
     };
     verify(issuer, &assertion_message(&assertion)?, sig).map_err(AssertionError::Signature)?;
-    if assertion.aud != expect_aud {
-        return Err(AssertionError::WrongAudience {
-            expected: expect_aud.to_string(),
-            found: assertion.aud,
-        });
-    }
-    if assertion.nonce != *expect_nonce {
-        return Err(AssertionError::WrongNonce);
-    }
-    if now_s >= exp_s {
-        return Err(AssertionError::Expired { exp_s, now_s });
-    }
     Ok(assertion)
 }

@@ -11,6 +11,7 @@ members = [
     "citadel-release-signature",
     "citadel-app-id",
     "citadel-app-signature",
+    "citadel-identity",
     "citadel-app-net-policy",
     "citadel-ihttp-types",
     "citadel-app-sdk-types",
@@ -52,6 +53,7 @@ citadel-internal-service-wasm-client = { path = "citadel-internal-service-wasm-c
 citadel-release-signature = { path = "citadel-release-signature", version = "0.1.0" }
 citadel-app-id = { path = "citadel-app-id", version = "0.1.0" }
 citadel-app-signature = { path = "citadel-app-signature", version = "0.1.0" }
+citadel-identity = { path = "citadel-identity", version = "0.1.0" }
 citadel-app-net-policy = { path = "citadel-app-net-policy", version = "0.1.0" }
 citadel-ihttp-types = { path = "citadel-ihttp-types", version = "0.1.0" }
 

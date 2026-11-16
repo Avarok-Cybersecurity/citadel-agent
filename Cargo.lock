@@ -815,6 +815,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "citadel-identity"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "citadel-app-signature",
+ "hmac",
+ "ml-dsa",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sha3",
+ "zeroize",
+]
+
+[[package]]
 name = "citadel-ihttp-types"
 version = "0.1.0"
 dependencies = [

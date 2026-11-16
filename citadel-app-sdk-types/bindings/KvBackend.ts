@@ -3,4 +3,4 @@
 /**
  * Which KV a `Kv*` op addresses; it decides the capability the op needs.
  */
-export type KvBackend = "user" | "scope" | { "node": { node_id: string, } } | "local";
+export type KvBackend = "user" | "scope" | { "node": { node_id: string, } } | "local" | { "node_authored": { node_id: string, author: string | null, } };

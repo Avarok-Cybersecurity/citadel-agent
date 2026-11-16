@@ -110,6 +110,23 @@ fn a_kv_op_needs_the_capability_of_its_backend() {
         get(KvBackend::Local).granted_by(),
         &[Capability::StorageLocal]
     );
+    let authored = KvBackend::NodeAuthored {
+        node_id: "n".into(),
+        author: Some("ana".into()),
+    };
+    assert_eq!(
+        get(authored).granted_by(),
+        &[Capability::StorageNodeAuthored]
+    );
+    let across = KvListAuthored {
+        node_id: "n".into(),
+        prefix: "cal/".into(),
+        cursor: None,
+    };
+    assert_eq!(
+        HostCall::Storage(StorageOps::KvListAuthored(across)).granted_by(),
+        &[Capability::StorageNodeAuthored]
+    );
     let call = HostCall::Storage(StorageOps::KvGet(get(KvBackend::Local)));
     assert_eq!(call.granted_by(), &[Capability::StorageLocal]);
     assert_eq!(

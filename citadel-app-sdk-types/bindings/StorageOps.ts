@@ -5,10 +5,11 @@ import type { BlobPut } from "./BlobPut";
 import type { KvDelete } from "./KvDelete";
 import type { KvGet } from "./KvGet";
 import type { KvList } from "./KvList";
+import type { KvListAuthored } from "./KvListAuthored";
 import type { KvSet } from "./KvSet";
 import type { KvSetMany } from "./KvSetMany";
 import type { StoreFileList } from "./StoreFileList";
 import type { StoreFileRead } from "./StoreFileRead";
 import type { StoreFileWrite } from "./StoreFileWrite";
 
-export type StorageOps = { "KvGet": KvGet } | { "KvSet": KvSet } | { "KvSetMany": KvSetMany } | { "KvDelete": KvDelete } | { "KvList": KvList } | { "BlobPut": BlobPut } | { "BlobGet": BlobGet } | { "BlobDelete": BlobDelete } | { "StoreFileWrite": StoreFileWrite } | { "StoreFileRead": StoreFileRead } | { "StoreFileList": StoreFileList };
+export type StorageOps = { "KvGet": KvGet } | { "KvSet": KvSet } | { "KvSetMany": KvSetMany } | { "KvDelete": KvDelete } | { "KvList": KvList } | { "BlobPut": BlobPut } | { "BlobGet": BlobGet } | { "BlobDelete": BlobDelete } | { "StoreFileWrite": StoreFileWrite } | { "StoreFileRead": StoreFileRead } | { "StoreFileList": StoreFileList } | { "KvListAuthored": KvListAuthored };

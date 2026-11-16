@@ -15,6 +15,8 @@ use std::fmt;
 use zeroize::Zeroizing;
 
 pub const PHRASE_WORDS: usize = 24;
+/// Domain of the "Sign in with Citadel" match-phrase hash (sign-in-with-citadel.md §3).
+pub const MATCH_PHRASE_DOMAIN: &[u8] = b"citadel-sign-in-match-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PhraseError {
@@ -67,6 +69,15 @@ pub fn phrase_decode(words: &[&str]) -> Result<[u8; 32], PhraseError> {
         return Err(PhraseError::Checksum);
     }
     Ok(seed)
+}
+
+/// The three words a sign-in link's `challenge` shows on both ends (sign-in-with-citadel.md §3):
+/// the first 33 bits of `SHA3-256("citadel-sign-in-match-v1" ‖ 0x00 ‖ challenge)`, as three
+/// 11-bit indices into the recovery-phrase list. A page forwarding another challenge shows
+/// other words.
+pub fn match_phrase(challenge: &[u8; 32]) -> [&'static str; 3] {
+    let h = sha3_256(&[MATCH_PHRASE_DOMAIN, &[0], challenge]);
+    [0, 1, 2].map(|i| WORDS[read_11(&h, i * 11)])
 }
 
 fn read_11(bits: &[u8], at: usize) -> usize {

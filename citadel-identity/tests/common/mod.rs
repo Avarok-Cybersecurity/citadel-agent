@@ -23,3 +23,5 @@ pub fn main_domain() -> CanonicalDomain {
 pub fn former_domain() -> CanonicalDomain {
     domain("main-old.work.avarok.net")
 }
+
+pub mod kat;

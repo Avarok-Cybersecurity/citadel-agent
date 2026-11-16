@@ -13,12 +13,17 @@ use crate::codec::{base64url_decode, base64url_encode, domain_separated};
 use crate::domain::{canonical_domain, CanonicalDomain};
 use crate::keys::{fingerprint, verify, MlDsa65Pk, SignatureError};
 use crate::server::ServerKey;
+pub use crate::well_known_error::WellKnownError;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 pub const WELL_KNOWN_DOMAIN: &[u8] = b"citadel-well-known-v1";
 pub const WELL_KNOWN_VERSION: u8 = 1;
 pub const SERVER_KEY_ALG: &str = "ML-DSA-65";
+/// `well-known-citadel.schema.json` bounds: `issued_at`, `former_domains` and `citadel.wss`.
+pub const MIN_ISSUED_AT_S: u64 = 1_700_000_000;
+pub const MAX_ISSUED_AT_S: u64 = 4_102_444_800;
+pub const MAX_FORMER_DOMAINS: usize = 16;
+pub const MAX_WSS_LEN: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WellKnownCitadel {
@@ -29,57 +34,6 @@ pub struct WellKnownCitadel {
     pub former_domains: Vec<CanonicalDomain>,
     pub issued_at_s: u64,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WellKnownError {
-    Json(String),
-    Version(u8),
-    Alg(String),
-    Domain(String),
-    /// `citadel.wss` is not a `wss://` URL on a canonical host.
-    Endpoint(String),
-    /// Fetched from a host that is neither the canonical domain nor a former one.
-    NotThisServer {
-        fetched_from: String,
-    },
-    Signature(SignatureError),
-    /// Older than the document already pinned.
-    Stale {
-        pinned_issued_at_s: u64,
-        issued_at_s: u64,
-    },
-    /// A different key than the pinned one: a warning with both fingerprints, never a re-pin.
-    KeyChanged {
-        pinned_fp: String,
-        offered_fp: String,
-    },
-}
-
-impl fmt::Display for WellKnownError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Json(why) => write!(f, "/.well-known/citadel is not valid: {why}"),
-            Self::Version(v) => write!(f, "/.well-known/citadel version {v} is not {WELL_KNOWN_VERSION}"),
-            Self::Alg(alg) => write!(f, "server key algorithm {alg:?} is not {SERVER_KEY_ALG}"),
-            Self::Domain(why) => write!(f, "/.well-known/citadel names a bad domain: {why}"),
-            Self::Endpoint(url) => write!(f, "{url:?} is not a wss:// endpoint"),
-            Self::NotThisServer { fetched_from } => {
-                write!(f, "the document fetched from {fetched_from} does not claim that name")
-            }
-            Self::Signature(why) => write!(f, "/.well-known/citadel's signature: {why}"),
-            Self::Stale { pinned_issued_at_s, issued_at_s } => write!(
-                f,
-                "the document was issued at {issued_at_s}, before the pinned one ({pinned_issued_at_s})"
-            ),
-            Self::KeyChanged { pinned_fp, offered_fp } => write!(
-                f,
-                "the server key changed: pinned {pinned_fp}, offered {offered_fp}"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for WellKnownError {}
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -147,6 +101,29 @@ fn canonical(text: &str) -> Result<CanonicalDomain, WellKnownError> {
     Ok(domain)
 }
 
+/// The schema's bounds on the raw values, checked before anything is interpreted.
+fn check_shape(issued_at: u64, former: usize, wss: &str) -> Result<(), WellKnownError> {
+    if !(MIN_ISSUED_AT_S..=MAX_ISSUED_AT_S).contains(&issued_at) {
+        return Err(WellKnownError::Json(format!(
+            "issued_at {issued_at} is outside [{MIN_ISSUED_AT_S}, {MAX_ISSUED_AT_S}]"
+        )));
+    }
+    if former > MAX_FORMER_DOMAINS {
+        return Err(WellKnownError::Json(format!(
+            "{former} former domains, over the {MAX_FORMER_DOMAINS} allowed"
+        )));
+    }
+    let charset = wss
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b".:/_~-".contains(&b));
+    if wss.len() > MAX_WSS_LEN || !charset {
+        return Err(WellKnownError::Json(format!(
+            "citadel.wss must be at most {MAX_WSS_LEN} characters of [a-z0-9.:/_~-]"
+        )));
+    }
+    Ok(())
+}
+
 fn check_fields(doc: &WellKnownCitadel) -> Result<(), WellKnownError> {
     if doc.v != WELL_KNOWN_VERSION {
         return Err(WellKnownError::Version(doc.v));
@@ -173,6 +150,7 @@ pub fn parse_well_known(
     fetched_from: &CanonicalDomain,
 ) -> Result<WellKnownCitadel, WellKnownError> {
     let raw: Doc = serde_json::from_slice(json).map_err(|e| WellKnownError::Json(e.to_string()))?;
+    check_shape(raw.issued_at, raw.former_domains.len(), &raw.citadel.wss)?;
     if raw.server_key.alg != SERVER_KEY_ALG {
         return Err(WellKnownError::Alg(raw.server_key.alg));
     }
@@ -210,6 +188,7 @@ impl ServerKey {
                 offered_fp: fingerprint(&doc.server_key),
             });
         }
+        check_shape(doc.issued_at_s, doc.former_domains.len(), &doc.citadel_wss)?;
         check_fields(doc)?;
         let sig = self.signer.sign(&well_known_message(doc)?);
         let raw = Doc {

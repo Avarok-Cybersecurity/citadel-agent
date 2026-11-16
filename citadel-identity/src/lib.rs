@@ -24,6 +24,7 @@ mod phrase;
 mod pin;
 mod server;
 mod well_known;
+mod well_known_error;
 mod wordlist;
 
 /// The kernel's username cap (u8 maximum). SSOT here; the kernel's test mirrors it.
@@ -55,7 +56,9 @@ pub use keys::{
 pub use names::{
     display_handle, make_username, parse_username, validate_handle, NameError, Username,
 };
-pub use phrase::{phrase_decode, phrase_encode, PhraseError, PHRASE_WORDS};
+pub use phrase::{
+    match_phrase, phrase_decode, phrase_encode, PhraseError, MATCH_PHRASE_DOMAIN, PHRASE_WORDS,
+};
 pub use pin::check_against_pin;
 pub use server::{
     challenge_message, verify_server_challenge, ChallengeError, ServerKey, CHALLENGE_DOMAIN,

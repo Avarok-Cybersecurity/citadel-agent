@@ -32,6 +32,7 @@ mod deregister;
 mod disconnect;
 mod get_account_information;
 mod get_sessions;
+mod identity;
 mod media;
 pub(crate) mod message;
 mod notices;
@@ -206,6 +207,24 @@ where
         }
         InternalServiceRequest::Connect { .. } => connect::handle(this, uuid, command).await,
         InternalServiceRequest::Register { .. } => register::handle(this, uuid, command).await,
+        InternalServiceRequest::IdentityStatus { .. }
+        | InternalServiceRequest::IdentityCreate { .. }
+        | InternalServiceRequest::IdentityUnlock { .. }
+        | InternalServiceRequest::IdentityLock { .. }
+        | InternalServiceRequest::IdentityExport { .. }
+        | InternalServiceRequest::IdentityImport { .. }
+        | InternalServiceRequest::IdentityBinding { .. } => {
+            identity::lifecycle(this, uuid, command).await
+        }
+        InternalServiceRequest::ServerDiscovery { .. } => {
+            identity::discover(this, uuid, command).await
+        }
+        InternalServiceRequest::RegisterIdentity { .. } => {
+            identity::register::handle(this, uuid, command).await
+        }
+        InternalServiceRequest::ConnectIdentity { .. } => {
+            identity::connect::handle(this, uuid, command).await
+        }
         InternalServiceRequest::Message { .. } => message::handle(this, uuid, command).await,
         InternalServiceRequest::NoticeSubscribe { .. }
         | InternalServiceRequest::NoticeSetMuted { .. } => {
@@ -821,6 +840,16 @@ fn refusal_response(
                 message: message.to_string(),
                 request_id: Some(*request_id),
             })
+        }
+        InternalServiceRequest::IdentityBinding { request_id, cid } => {
+            InternalServiceResponse::IdentityFailure(
+                citadel_internal_service_types::IdentityFailure {
+                    cid: *cid,
+                    request_id: Some(*request_id),
+                    reason: citadel_internal_service_types::IdentityRefusal::NotAnIdentityAccount,
+                    message: message.to_string(),
+                },
+            )
         }
         InternalServiceRequest::DeleteVirtualFile {
             request_id, cid, ..

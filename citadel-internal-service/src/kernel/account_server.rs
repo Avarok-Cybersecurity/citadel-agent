@@ -83,13 +83,12 @@ pub(crate) async fn account_server<R: Ratchet>(
     Ok(cnac.map(|cnac| AccountServer::Addr(cnac.get_connect_info().addr)))
 }
 
-/// Ok when this agent's account `username` is registered to `requested`.
-pub(crate) async fn check<R: Ratchet>(
+/// The server of this agent's account `username`, on whichever server it is; `None` when the
+/// agent holds no account of that name.
+pub(crate) async fn held<R: Ratchet>(
     remote: &NodeRemote<R>,
     username: &str,
-    requested: &str,
-) -> Result<(), Refusal> {
-    let requested = canonical(requested).map_err(Refusal::InvalidServer)?;
+) -> Result<Option<AccountServer>, String> {
     let cid = remote
         .account_manager()
         .get_persistence_handler()
@@ -98,11 +97,21 @@ pub(crate) async fn check<R: Ratchet>(
         .account_manager()
         .get_username_by_cid(cid)
         .await
-        .map_err(|err| Refusal::InvalidServer(err.into_string()))?;
+        .map_err(|err| err.into_string())?;
     if registered.as_deref() != Some(username) {
-        return Err(Refusal::NoSuchAccount);
+        return Ok(None);
     }
-    let Some(account) = account_server(remote, cid)
+    account_server(remote, cid).await
+}
+
+/// Ok when this agent's account `username` is registered to `requested`.
+pub(crate) async fn check<R: Ratchet>(
+    remote: &NodeRemote<R>,
+    username: &str,
+    requested: &str,
+) -> Result<(), Refusal> {
+    let requested = canonical(requested).map_err(Refusal::InvalidServer)?;
+    let Some(account) = held(remote, username)
         .await
         .map_err(Refusal::InvalidServer)?
     else {

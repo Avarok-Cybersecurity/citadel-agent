@@ -128,6 +128,7 @@ mod tests {
                 let response = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
                     cid: 1234,
                     request_id: Some(request_id),
+                    identity: None,
                 });
                 tx_response.send(response).unwrap();
             }

@@ -58,6 +58,18 @@ pub enum FailureReason {
     /// server (`RegisterFailure::held_for_server`). One agent holds one account per username
     /// (the SDK stores accounts by `username_to_cid`), so registering would overwrite it.
     UsernameHeldForAnotherServer,
+    /// A `RegisterIdentity` named a username this agent already holds, on any server (a
+    /// re-created server included): registering would overwrite the account here. The UI
+    /// offers to forget the old account instead.
+    UsernameHeld,
+    /// `RegisterIdentity` / `ConnectIdentity` need the identity unlocked.
+    IdentityLocked,
+    /// `ConnectIdentity` named an account with no identity pin, or one another identity holds.
+    NotAnIdentityAccount,
+    /// The server did not prove the key pinned for the account; the session was disconnected.
+    ServerIdentityMismatch,
+    /// `/.well-known/citadel` could not be fetched or did not verify.
+    ServerDiscoveryFailed,
     /// A reason this build does not know: a newer agent's. Decoded rather than refused, so
     /// the failure it rides on still reaches the page (as "update the page"); an unknown
     /// variant otherwise failed the whole response, and the page waited out a timeout.

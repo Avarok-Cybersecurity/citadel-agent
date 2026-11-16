@@ -578,6 +578,7 @@ mod tests {
                                 citadel_internal_service_types::ConnectSuccess {
                                     cid: 12345,
                                     request_id: Some(request_id),
+                                    identity: None,
                                 },
                             ),
                         ),
@@ -588,6 +589,7 @@ mod tests {
                                     citadel_internal_service_types::ConnectSuccess {
                                         cid: 12345,
                                         request_id: None,
+                                        identity: None,
                                     },
                                 ),
                             )
@@ -665,6 +667,7 @@ mod tests {
                             citadel_internal_service_types::ConnectSuccess {
                                 cid: 99999,
                                 request_id: None,
+                                identity: None,
                             },
                         ));
 
@@ -753,6 +756,7 @@ mod tests {
                             citadel_internal_service_types::ConnectSuccess {
                                 cid: message_count,
                                 request_id: None,
+                                identity: None,
                             },
                         ));
 

@@ -129,8 +129,24 @@ async fn add_account_to_map<R: Ratchet>(
             peers,
             server_host,
             registered_security_level: registered_security_level(remote, account.cid).await,
+            identity: pinned_identity(remote, account.cid).await,
         },
     );
+}
+
+/// best-effort, for the reason the peer list above is: an unreadable pin is reported as none
+/// and logged, and `ConnectIdentity` refuses that account with the reason.
+async fn pinned_identity<R: Ratchet>(
+    remote: &NodeRemote<R>,
+    cid: u64,
+) -> Option<citadel_internal_service_types::AccountIdentity> {
+    match crate::kernel::identity::pin::load(remote, cid).await {
+        Ok(pin) => pin.map(|pin| pin.wire()),
+        Err(err) => {
+            citadel_sdk::logging::warn!(target: "citadel", "[GetAccountInformation] {err}; reporting no identity");
+            None
+        }
+    }
 }
 
 /// best-effort, for the reason the peer list above is: `None` leaves the login form

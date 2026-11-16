@@ -177,6 +177,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     cid: res.cid,
                     request_id: Some(request_id),
                     recovery_codes: RecoveryCodes(res.recovery_codes),
+                    identity: None,
                 },
             );
             if !connect_after_register {

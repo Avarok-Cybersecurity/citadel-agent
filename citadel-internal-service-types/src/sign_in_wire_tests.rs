@@ -76,6 +76,7 @@ fn a_registers_recovery_codes_never_reach_a_debug_string() {
         cid: 7,
         request_id: None,
         recovery_codes: RecoveryCodes(vec!["7H3Q-K2M9-PX4D-W8RT".to_string()]),
+        identity: None,
     });
     assert!(!format!("{success:?}").contains("7H3Q"));
 }

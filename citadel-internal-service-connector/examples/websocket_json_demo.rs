@@ -32,6 +32,7 @@ fn main() {
         citadel_internal_service_types::ConnectSuccess {
             cid: 12345,
             request_id: Some(Uuid::new_v4()),
+            identity: None,
         },
     ));
 

@@ -276,10 +276,7 @@ mod tests {
         sink.send(connect_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::ConnectSuccess(
-            citadel_internal_service_types::ConnectSuccess {
-                cid: _,
-                request_id: _,
-            },
+            citadel_internal_service_types::ConnectSuccess { .. },
         ) = response_packet
         {
             panic!("Received Unexpected ConnectSuccess");
@@ -304,10 +301,7 @@ mod tests {
         sink.send(connect_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::ConnectSuccess(
-            citadel_internal_service_types::ConnectSuccess {
-                cid: _,
-                request_id: _,
-            },
+            citadel_internal_service_types::ConnectSuccess { .. },
         ) = response_packet
         {
             panic!("Received Unexpected ConnectSuccess");
@@ -332,10 +326,7 @@ mod tests {
         sink.send(connect_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::ConnectSuccess(
-            citadel_internal_service_types::ConnectSuccess {
-                cid: _,
-                request_id: _,
-            },
+            citadel_internal_service_types::ConnectSuccess { .. },
         ) = response_packet
         {
             info!(target: "citadel", "Successfully Connected to Server using Pre-Shared Key");
@@ -532,10 +523,7 @@ mod tests {
         let response_packet = stream.next().await.unwrap();
 
         if let InternalServiceResponse::ConnectSuccess(
-            citadel_internal_service_types::ConnectSuccess {
-                cid: _,
-                request_id: _,
-            },
+            citadel_internal_service_types::ConnectSuccess { .. },
         ) = response_packet
         {
             Ok(())

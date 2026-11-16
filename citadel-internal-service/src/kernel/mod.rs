@@ -43,6 +43,7 @@ mod conversations_io;
 pub(crate) mod credential_fingerprint;
 pub(crate) mod ext;
 pub(crate) mod group_channels;
+pub mod identity;
 pub(crate) mod ilm;
 mod inbound_connect;
 pub(crate) mod media;
@@ -147,6 +148,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) telemetry: Option<Arc<crate::telemetry::TelemetryUplink>>,
     /// Citadel apps: host egress, `local` storage, the internal-HTTP relay (kernel/apps).
     pub(crate) apps: Arc<apps::AppsHost>,
+    /// The portable identity, when the binary configured its ports (kernel/identity).
+    pub(crate) identity: Option<Arc<identity::IdentityHost>>,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -176,6 +179,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             browser_transfers: self.browser_transfers.clone(),
             telemetry: self.telemetry.clone(),
             apps: self.apps.clone(),
+            identity: self.identity.clone(),
             io: self.io.clone(),
         }
     }
@@ -215,6 +219,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             browser_transfers,
             telemetry: None,
             apps: Default::default(),
+            identity: None,
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -244,6 +249,14 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
         authority: Arc<dyn apps::HostNetAuthority>,
     ) -> Self {
         self.apps = Arc::new(apps::AppsHost::with_net(config, authority));
+        self
+    }
+
+    /// Hold a portable identity with `config`'s store, `/.well-known/citadel` fetch and
+    /// challenge codec (kernel/identity). A service that never calls this refuses every
+    /// identity request as `NotConfigured`.
+    pub fn with_identity(mut self, config: identity::IdentityConfig) -> Self {
+        self.identity = Some(Arc::new(identity::IdentityHost::new(config)));
         self
     }
 

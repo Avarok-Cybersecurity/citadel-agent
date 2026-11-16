@@ -26,6 +26,8 @@ mod group_responses_more;
 pub use group_responses::*;
 pub use group_responses_more::*;
 mod admission;
+mod identity;
+pub use identity::*;
 mod apps_ihttp;
 mod apps_kv;
 mod apps_net;
@@ -229,6 +231,11 @@ pub struct ConnectSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
     pub request_id: Option<Uuid>,
+    /// The identity an account registered with (`ConnectIdentity`); absent for a typed
+    /// password's account and from an older agent.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub identity: Option<AccountIdentity>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -277,6 +284,10 @@ pub struct RegisterSuccess {
     /// post-quantum sign-in. With `connect_after_register` this response is sent before the
     /// connect's own.
     pub recovery_codes: RecoveryCodes,
+    /// The identity and the server pinned by a `RegisterIdentity`; absent for `Register`.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub identity: Option<AccountIdentity>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1283,6 +1294,12 @@ pub enum InternalServiceResponse {
     IhttpSendAccepted(IhttpSendAccepted),
     IhttpSendFailure(IhttpSendFailure),
     IhttpFrameNotification(IhttpFrameNotification),
+    IdentitySuccess(IdentitySuccess),
+    IdentityFailure(IdentityFailure),
+    ServerDiscoverySuccess(ServerDiscoverySuccess),
+    ServerDiscoveryFailure(ServerDiscoveryFailure),
+    /// A session's server failed the post-connect identity challenge; it was disconnected.
+    ServerIdentityMismatchNotification(ServerIdentityMismatch),
     /// Results from a batched request, in the same order as input commands
     BatchedResponse(BatchedResponseData),
 }
@@ -1384,6 +1401,80 @@ pub enum InternalServiceRequest {
         #[debug(with = secret_debug_fmt)]
         #[cfg_attr(feature = "typescript", ts(optional = nullable))]
         admission_token: Option<String>,
+    },
+    /// Whether this agent holds an identity, and whether it is unlocked.
+    IdentityStatus {
+        request_id: Uuid,
+    },
+    /// Draw a new identity seed, seal it under `unlock_password`, and hold it unlocked.
+    IdentityCreate {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        unlock_password: SecBuffer,
+    },
+    IdentityUnlock {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        unlock_password: SecBuffer,
+    },
+    /// Forget the unsealed identity now (it is also forgotten after the configured idle time).
+    IdentityLock {
+        request_id: Uuid,
+    },
+    /// The recovery phrase, for a request that proves the unlock password again.
+    IdentityExport {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        unlock_password: SecBuffer,
+    },
+    /// Recreate an identity from its 24-word phrase (space separated) and seal it under
+    /// `unlock_password`. Refused while this agent holds an identity.
+    IdentityImport {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        phrase: SecBuffer,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        unlock_password: SecBuffer,
+    },
+    /// The identity's signed binding to account `cid`'s username on its pinned domain.
+    IdentityBinding {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+    },
+    /// Fetch and verify `https://<server_addr>/.well-known/citadel`, changing nothing.
+    ServerDiscovery {
+        request_id: Uuid,
+        server_addr: String,
+    },
+    /// Register `handle@<canonical domain>` with the unlocked identity's derived password,
+    /// pin the server, then connect and challenge it (`server-identity-challenge.md` §3).
+    RegisterIdentity {
+        request_id: Uuid,
+        /// What the person typed: a domain, `host:port`, or a URL.
+        server_addr: String,
+        handle: String,
+        full_name: String,
+        discovery: IdentityDiscovery,
+        #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
+        session_security_settings: SessionSecuritySettings,
+        #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
+        server_password: Option<PreSharedKey>,
+        #[serde(default)]
+        #[debug(with = secret_debug_fmt)]
+        #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+        admission_token: Option<String>,
+    },
+    /// Sign account `cid` in by its pinned username and domain (never recomputed) with the
+    /// derived password, then challenge the server; a mismatch disconnects it.
+    ConnectIdentity {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
+        session_security_settings: SessionSecuritySettings,
+        #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
+        server_password: Option<PreSharedKey>,
     },
     Message {
         request_id: Uuid,
@@ -2192,6 +2283,10 @@ pub struct SessionInformation {
     /// workspaces. `None` for an account registered before the agent recorded it.
     #[serde(default)]
     pub server_host: Option<String>,
+    /// The identity the session's account registered with, and its pinned server.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub identity: Option<AccountIdentity>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -2234,6 +2329,11 @@ pub struct AccountInformation {
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(type = "SecurityLevel | null"))]
     pub registered_security_level: Option<SecurityLevel>,
+    /// The identity the account registered with, and its pinned server: what the UI lists
+    /// for a `ConnectIdentity`. `None` for a typed password's account.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub identity: Option<AccountIdentity>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -2333,6 +2433,7 @@ impl InternalServiceRequest {
             | Self::SetAccountPreferences { cid, .. }
             | Self::GetAccountPreferences { cid, .. } => Some(*cid),
             Self::SignInManagement { cid, .. } => Some(*cid),
+            Self::IdentityBinding { cid, .. } => Some(*cid),
             Self::BrowserConsole { cid, .. } => Some(*cid),
             Self::AppFetch { cid, .. }
             | Self::AppFetchCredit { cid, .. }
@@ -2368,8 +2469,21 @@ impl InternalServiceRequest {
             //   SecurityKeyDecline     — a sign-in's challenge has no session yet;
             //                            gated by the connections the challenge was
             //                            sent to (kernel/sign_in/key_relay.rs).
+            //   Identity* / ServerDiscovery /
+            //   RegisterIdentity /
+            //   ConnectIdentity        — the agent's identity, and accounts with no
+            //                            session yet (kernel/identity).
             Self::Connect { .. }
             | Self::Register { .. }
+            | Self::IdentityStatus { .. }
+            | Self::IdentityCreate { .. }
+            | Self::IdentityUnlock { .. }
+            | Self::IdentityLock { .. }
+            | Self::IdentityExport { .. }
+            | Self::IdentityImport { .. }
+            | Self::ServerDiscovery { .. }
+            | Self::RegisterIdentity { .. }
+            | Self::ConnectIdentity { .. }
             | Self::Batched { .. }
             | Self::ConnectionManagement { .. }
             | Self::GetSessions { .. }
@@ -2410,6 +2524,7 @@ mod tests {
         let success_response = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
             cid: 0,
             request_id: None,
+            identity: None,
         });
         let error_response = InternalServiceResponse::ConnectFailure(ConnectFailure {
             cid: 0,
@@ -2427,6 +2542,7 @@ mod tests {
         let success_response = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
             cid: 0,
             request_id: None,
+            identity: None,
         });
         let notification_response =
             InternalServiceResponse::PeerRegisterNotification(PeerRegisterNotification {
@@ -2465,6 +2581,7 @@ mod tests {
         let request = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
             cid,
             request_id: None,
+            identity: None,
         });
 
         assert_eq!(request.cid(), cid);

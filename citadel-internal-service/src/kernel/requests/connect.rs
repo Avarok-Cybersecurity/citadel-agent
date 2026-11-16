@@ -517,6 +517,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 citadel_internal_service_types::ConnectSuccess {
                     cid,
                     request_id: Some(request_id),
+                    identity: None,
                 },
             );
 
@@ -527,6 +528,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 request_id,
                 this.telemetry.clone(),
                 this.apps.net.as_ref().map(|net| net.grants.clone()),
+                this.identity.as_ref().map(|id| id.waiters.clone()),
             );
 
             // A recovery session may not message: the server drops it, so no ILM is hosted.

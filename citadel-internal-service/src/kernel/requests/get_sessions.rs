@@ -78,6 +78,10 @@ fn build_response_from_internal_state<T: IOInterface, R: Ratchet>(
             server_address: connection.server_address.clone(),
             server_host: connection.server_host.clone(),
             peer_connections: HashMap::new(),
+            identity: this
+                .identity
+                .as_ref()
+                .and_then(|host| host.session_identity(*cid)),
         };
 
         for (peer_cid, conn) in connection.peers.iter() {

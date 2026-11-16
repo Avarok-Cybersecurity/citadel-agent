@@ -92,9 +92,13 @@ impl Core {
         entry.since = Some(now);
         entry.dial.in_flight = false;
         entry.failed_dials = 0;
-        entry.dialing_reported = false;
-        entry.degraded_reported = false;
-        let restored = entry.lost_at.take().is_some();
+        // A window told the peer was being dialled, or had degraded, reads that until it is
+        // told the peer is back. Answered only for a peer lost while connected, a released
+        // peer wanted again (a chat's level change) or a first dial read "Reconnecting…" for
+        // good.
+        let told = std::mem::replace(&mut entry.dialing_reported, false)
+            | std::mem::replace(&mut entry.degraded_reported, false);
+        let restored = entry.lost_at.take().is_some() | told;
         self.path_changed(peer, path, now);
         if restored {
             vec![Command::Report(SupervisorEvent::PeerRestored {

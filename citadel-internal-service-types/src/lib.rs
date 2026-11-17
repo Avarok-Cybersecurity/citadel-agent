@@ -1440,9 +1440,11 @@ pub enum InternalServiceRequest {
         /// The client the person is consenting to (`sw-mcp`).
         aud: String,
         /// The issuer's attempt nonce.
+        #[debug(with = bytes_debug_fmt)]
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
         nonce: Vec<u8>,
         /// `SHA3-256(verifier)` from the sign-in link.
+        #[debug(with = bytes_debug_fmt)]
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
         challenge: Vec<u8>,
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]

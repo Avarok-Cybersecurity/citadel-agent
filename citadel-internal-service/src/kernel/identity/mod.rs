@@ -7,6 +7,7 @@
 //! without `with_identity` refuses every identity request as `NotConfigured`.
 
 pub(crate) mod challenge;
+mod clock;
 pub(crate) mod discovery;
 mod lifecycle;
 pub(crate) mod pin;
@@ -21,6 +22,7 @@ pub(crate) mod test_ports;
 mod unlocked;
 
 pub use challenge::{ServerIdentityAnswer, ServerIdentityCodec};
+pub use clock::{IdentityClock, MonotonicClock};
 pub use discovery::{HttpsWellKnownFetch, WellKnownFetch, MAX_WELL_KNOWN_BYTES};
 pub(crate) use sign_challenge::SignRequest;
 pub use sign_gate::SignLimits;
@@ -46,6 +48,8 @@ pub struct IdentityConfig {
     pub unlock_idle: Duration,
     /// How often `IdentitySignChallenge` may run: `SignLimits::PROTOCOL` in the agent.
     pub sign_limits: SignLimits,
+    /// The time the sign rate is measured on: `MonotonicClock` in the agent.
+    pub clock: Arc<dyn IdentityClock>,
 }
 
 pub(crate) struct IdentityHost {
@@ -55,6 +59,7 @@ pub(crate) struct IdentityHost {
     pub(crate) challenge_timeout: Duration,
     pub(crate) unlocked: Unlocked,
     sign_gate: Mutex<SignGate>,
+    clock: Arc<dyn IdentityClock>,
     /// What each connected identity session pinned, for `GetSessions` (polled, so not read
     /// from the account store each time). Filled by a verified connect.
     sessions: RwLock<HashMap<u64, AccountIdentity>>,
@@ -69,6 +74,7 @@ impl IdentityHost {
             challenge_timeout: Duration::from_secs(citadel_identity::SERVER_CHALLENGE_TIMEOUT_S),
             unlocked: Unlocked::new(config.unlock_idle),
             sign_gate: Mutex::new(SignGate::new(config.sign_limits)),
+            clock: config.clock,
             sessions: RwLock::default(),
         }
     }

@@ -10,7 +10,6 @@ use super::sign_gate::Refusal;
 use super::IdentityHost;
 use citadel_identity::{base64url_encode, Identity, MAX_PROOF_FIELD_BYTES, NONCE_LEN};
 use citadel_internal_service_types::{IdentityOutcome, IdentityRefusal};
-use tokio::time::Instant;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -76,11 +75,11 @@ impl IdentityHost {
         ))?;
         self.sign_gate
             .lock()
-            .admit(conn, Instant::now())
+            .admit(conn, self.clock.now())
             .map_err(rate_limited)?;
         let seed = match self.open(password).await {
             Err((IdentityRefusal::WrongPassword, message)) => {
-                self.sign_gate.lock().wrong_password(Instant::now());
+                self.sign_gate.lock().wrong_password(self.clock.now());
                 return Err((IdentityRefusal::WrongPassword, message));
             }
             opened => opened?,

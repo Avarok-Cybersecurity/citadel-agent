@@ -7,7 +7,9 @@
 //! `a_page_supplied_origin_is_ignored` goes red: the foreign connection gets a proof the
 //! issuer accepts.
 
-use crate::kernel::identity::test_ports::{config, NoFetch, ServeDocument, SHIPPED_SIGN_LIMITS};
+use crate::kernel::identity::test_ports::{
+    config, ManualClock, NoFetch, ServeDocument, SHIPPED_SIGN_LIMITS,
+};
 use crate::kernel::identity::WellKnownFetch;
 use crate::kernel::requests::handle_request;
 use crate::kernel::CitadelWorkspaceService;
@@ -38,7 +40,7 @@ fn service(fetch: Arc<dyn WellKnownFetch>) -> (tempfile::TempDir, Svc) {
     );
     (
         transfers,
-        svc.with_identity(config(SHIPPED_SIGN_LIMITS, fetch)),
+        svc.with_identity(config(SHIPPED_SIGN_LIMITS, fetch, ManualClock::new())),
     )
 }
 

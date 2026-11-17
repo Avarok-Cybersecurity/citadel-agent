@@ -4,9 +4,12 @@
 //!
 //! Control: drop the `wrong_password` call in `sign_challenge` → the request after a wrong
 //! password is admitted and `a_wrong_password_signs_nothing_and_starts_the_limit` goes red.
+//! Control: admit at `Instant::now()` instead of `self.clock.now()` → the request past the
+//! interval on the host's clock is refused and
+//! `a_second_request_inside_the_interval_is_rate_limited` goes red.
 
 use super::*;
-use crate::kernel::identity::test_ports::{host, host_with, SHIPPED_SIGN_LIMITS};
+use crate::kernel::identity::test_ports::{host, host_and_clock, host_with, SHIPPED_SIGN_LIMITS};
 use crate::kernel::identity::SignLimits;
 use citadel_identity::{base64url_decode, verify_proof};
 use citadel_internal_service_types::IdentityState;
@@ -86,18 +89,22 @@ async fn a_wrong_password_signs_nothing_and_starts_the_limit() {
 
 #[tokio::test]
 async fn a_second_request_inside_the_interval_is_rate_limited() {
-    let host = host_with(SHIPPED_SIGN_LIMITS);
+    // The interval is measured on the host's clock, not on how long Argon2id took: the test
+    // states the time between requests, so a loaded box cannot move it past the interval.
+    let (host, clock) = host_and_clock(SHIPPED_SIGN_LIMITS);
     host.create(secret("pw")).await.unwrap();
     let conn = Uuid::new_v4();
-    let origin = || Some(ORIGIN.to_string());
-    assert!(host
-        .sign_challenge(conn, origin(), request(), secret("pw"))
-        .await
-        .is_ok());
-    let again = host
-        .sign_challenge(conn, origin(), request(), secret("pw"))
-        .await;
-    assert_eq!(reason(again), IdentityRefusal::RateLimited);
+    let sign = || host.sign_challenge(conn, Some(ORIGIN.into()), request(), secret("pw"));
+    assert!(sign().await.is_ok());
+    let inside = SHIPPED_SIGN_LIMITS.min_interval - Duration::from_millis(1);
+    clock.advance(inside);
+    assert_eq!(reason(sign().await), IdentityRefusal::RateLimited);
+    // Past the interval on the host's clock, however little wall time has passed.
+    clock.advance(SHIPPED_SIGN_LIMITS.min_interval);
+    assert!(
+        sign().await.is_ok(),
+        "admitted once the interval has passed"
+    );
 }
 
 #[tokio::test]

@@ -1,6 +1,7 @@
 //! The updater's seams (SBIO): everything that touches the network, the disk, other processes
 //! or the agent's windows. The engine decides; these do.
 
+use super::launch_settings::LaunchSettings;
 use super::platform::Method;
 use super::verify::Provenance;
 use async_trait::async_trait;
@@ -55,13 +56,24 @@ pub trait Staging: Send + Sync {
     fn mark_failed(&self, version: &Version, why: &str);
 }
 
+/// A verified release, ready to install.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Staged {
+    /// The runnable form of the download (Staging::stage).
+    pub path: PathBuf,
+    /// The settings the release says it must be started with, verified: for a tarball's agent,
+    /// whose command its operator wrote. `None` where a launcher that ships with the release
+    /// supplies them (the menu-bar app, the AppImage's wrapper).
+    pub launch: Option<LaunchSettings>,
+}
+
 /// Puts a staged, verified release in place of this agent and restarts it.
 pub trait Installer: Send + Sync {
     /// Why it could not install `staged` right now, if it could not.
-    fn can_install(&self, staged: &Path) -> Result<(), String>;
+    fn can_install(&self, staged: &Staged) -> Result<(), String>;
     /// On success the agent is about to be replaced: a self-replacing installer exits the
     /// process, the menu-bar app's stops it.
-    fn install(&self, staged: &Path, version: &Version) -> Result<(), String>;
+    fn install(&self, staged: &Staged, version: &Version) -> Result<(), String>;
 }
 
 /// Tells the windows and the menu-bar app.

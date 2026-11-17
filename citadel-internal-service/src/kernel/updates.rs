@@ -9,7 +9,7 @@ use crate::kernel::CitadelWorkspaceService;
 use crate::updater::attest::SigstoreVerifier;
 use crate::updater::engine::{Engine, LOG_TARGET};
 use crate::updater::github::GitHub;
-use crate::updater::io::{Announcer, Installer, Io, Sessions, SettingsStore};
+use crate::updater::io::{Announcer, Installer, Io, Sessions, SettingsStore, Staged};
 use crate::updater::platform::{install_kind, plan};
 use crate::updater::staging::FsStaging;
 use crate::updater::{host, installer_for, release_key, version, UpdaterConfig};
@@ -19,7 +19,6 @@ use citadel_internal_service_types::{InternalServiceResponse, UpdateAvailable, U
 use citadel_sdk::logging::{error, info};
 use citadel_sdk::prelude::Ratchet;
 use semver::Version;
-use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 /// In the agent's own bucket, under the name it shipped with; reserved from windows like every
@@ -111,7 +110,7 @@ impl Announcer for Everyone {
 struct MacAppHandoff(Arc<NoticeHub>);
 
 impl Installer for MacAppHandoff {
-    fn can_install(&self, _staged: &Path) -> Result<(), String> {
+    fn can_install(&self, _staged: &Staged) -> Result<(), String> {
         if self.0.has_stream() {
             Ok(())
         } else {
@@ -119,11 +118,11 @@ impl Installer for MacAppHandoff {
         }
     }
 
-    fn install(&self, staged: &Path, version: &Version) -> Result<(), String> {
+    fn install(&self, staged: &Staged, version: &Version) -> Result<(), String> {
         let handoff = InternalServiceResponse::UpdateInstall(UpdateInstall {
             cid: 0,
             version: version.to_string(),
-            path: staged.to_string_lossy().into_owned(),
+            path: staged.path.to_string_lossy().into_owned(),
             request_id: None,
         });
         match self.0.send_to_stream(handoff) {

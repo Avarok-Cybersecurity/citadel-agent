@@ -13,11 +13,13 @@ pub mod attest;
 pub mod engine;
 mod engine_status;
 mod fetch;
+mod fetch_launch;
 pub mod github;
 pub mod host;
 pub mod io;
 #[cfg(unix)]
 pub mod launch_check;
+pub mod launch_settings;
 pub mod platform;
 pub mod policy;
 pub mod release;
@@ -32,7 +34,7 @@ pub mod watch_os;
 pub mod watchdog;
 
 use engine::{Engine, LOG_TARGET};
-use io::Installer;
+use io::{Installer, Staged};
 use platform::{InstallKind, Plan};
 use policy::Trigger;
 use std::net::SocketAddr;
@@ -64,10 +66,10 @@ pub struct UpdaterConfig {
 pub struct LinkOnly(pub String);
 
 impl Installer for LinkOnly {
-    fn can_install(&self, _staged: &Path) -> Result<(), String> {
+    fn can_install(&self, _staged: &Staged) -> Result<(), String> {
         Err(self.0.clone())
     }
-    fn install(&self, _staged: &Path, _version: &semver::Version) -> Result<(), String> {
+    fn install(&self, _staged: &Staged, _version: &semver::Version) -> Result<(), String> {
         Err(self.0.clone())
     }
 }

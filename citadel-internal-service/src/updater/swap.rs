@@ -4,7 +4,7 @@
 //! kept as a hard link; one rename puts the new one in place, atomically. The old binary is then
 //! started as the watchdog (watchdog.rs) and this process exits, freeing the port.
 
-use super::io::Installer;
+use super::io::{Installer, Staged};
 use super::launch_check::check_launch;
 use super::staging::FsStaging;
 use super::watch_os::detached;
@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 pub struct SelfReplace {
     /// The executable, or the AppImage.
     target: PathBuf,
-    /// What the new version is started with.
+    /// What this agent was started with: the new version is started with these and whatever
+    /// the release's launch settings add (Staged::launch), and the old one again with exactly
+    /// these if it is put back.
     args: Vec<String>,
     health: SocketAddr,
     staging_root: PathBuf,
@@ -87,26 +89,37 @@ pub fn swap_in(staged: &Path, target: &Path) -> Result<PathBuf, String> {
     Ok(backup)
 }
 
+impl SelfReplace {
+    /// What the new version is started with.
+    fn args_for(&self, staged: &Staged) -> Vec<String> {
+        match &staged.launch {
+            Some(launch) => launch.merged(&self.args),
+            None => self.args.clone(),
+        }
+    }
+}
+
 impl Installer for SelfReplace {
-    fn can_install(&self, staged: &Path) -> Result<(), String> {
+    fn can_install(&self, staged: &Staged) -> Result<(), String> {
         let mut checked = self.checked.lock();
-        if let Some((_, answer)) = checked.as_ref().filter(|(path, _)| path == staged) {
+        if let Some((_, answer)) = checked.as_ref().filter(|(path, _)| *path == staged.path) {
             return answer.clone();
         }
-        let answer = check_launch(staged, &self.args);
-        *checked = Some((staged.to_path_buf(), answer.clone()));
+        let answer = check_launch(&staged.path, &self.args_for(staged));
+        *checked = Some((staged.path.clone(), answer.clone()));
         answer
     }
 
-    fn install(&self, staged: &Path, version: &Version) -> Result<(), String> {
-        let backup = swap_in(staged, &self.target)?;
+    fn install(&self, staged: &Staged, version: &Version) -> Result<(), String> {
+        let backup = swap_in(&staged.path, &self.target)?;
         let plan = WatchPlan {
             parent_pid: std::process::id(),
             target: self.target.clone(),
             backup: backup.clone(),
             health: self.health,
             version: version.to_string(),
-            args: self.args.clone(),
+            args: self.args_for(staged),
+            restore_args: self.args.clone(),
             failed_marker: FsStaging::failed_marker(&self.staging_root, &version.to_string()),
         };
         let encoded = serde_json::to_string(&plan).map_err(|e| e.to_string())?;
@@ -155,7 +168,7 @@ mod tests {
 
     /// A staged "agent" that records each run's arguments, says `said` on stderr, and exits
     /// with `code`.
-    fn staged_agent(dir: &Path, said: &str, code: u8) -> PathBuf {
+    fn staged_agent(dir: &Path, said: &str, code: u8) -> Staged {
         use std::os::unix::fs::PermissionsExt;
         let staged = dir.join("citadel-agent");
         let runs = dir.join("runs");
@@ -165,7 +178,10 @@ mod tests {
         );
         std::fs::write(&staged, body).unwrap();
         std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).unwrap();
-        staged
+        Staged {
+            path: staged,
+            launch: None,
+        }
     }
 
     fn installer(dir: &Path) -> SelfReplace {

@@ -1,5 +1,6 @@
 use super::*;
 use crate::kernel::notices::NoticeToken;
+use std::path::PathBuf;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use uuid::Uuid;
 
@@ -47,21 +48,17 @@ fn only_the_menu_bar_app_is_handed_the_image_and_without_it_nothing_installs() {
     let handoff = MacAppHandoff(hub.clone());
     let (_, mut page) = window(&clients);
     let version = Version::new(0, 9, 0);
-    assert!(handoff
-        .can_install(Path::new("/c/Citadel-Agent.dmg"))
-        .is_err());
-    assert!(handoff
-        .install(Path::new("/c/Citadel-Agent.dmg"), &version)
-        .is_err());
+    let dmg = Staged {
+        path: PathBuf::from("/c/Citadel-Agent.dmg"),
+        launch: None,
+    };
+    assert!(handoff.can_install(&dmg).is_err());
+    assert!(handoff.install(&dmg, &version).is_err());
 
     let (app_id, mut app) = window(&clients);
     hub.subscribe(app_id);
-    assert!(handoff
-        .can_install(Path::new("/c/Citadel-Agent.dmg"))
-        .is_ok());
-    handoff
-        .install(Path::new("/c/Citadel-Agent.dmg"), &version)
-        .unwrap();
+    assert!(handoff.can_install(&dmg).is_ok());
+    handoff.install(&dmg, &version).unwrap();
     match app.try_recv() {
         Ok(InternalServiceResponse::UpdateInstall(i)) => {
             assert_eq!(

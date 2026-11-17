@@ -2,6 +2,7 @@
 //! signature, its checksum and its attestation have all passed.
 
 use super::engine::{Engine, LOG_TARGET};
+use super::io::Staged;
 use super::platform::Method;
 use super::release::{self, Release};
 use super::verify::{check_signature, expected_sha256, judge_download, judge_staged};
@@ -9,13 +10,12 @@ use super::verify::{Provenance, ReleaseSignature, Verdict, MISSING_SIGNATURE};
 use citadel_release_signature::{SIGNATURE_LEN, SIGNATURE_SUFFIX};
 use citadel_sdk::logging::info;
 use semver::Version;
-use std::path::PathBuf;
 
 /// The largest asset the updater downloads. The disk image is ~25 MB today.
 pub const MAX_ASSET_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_CHECKSUM_BYTES: u64 = 4096;
 /// The signature's hex, its newline, and room for a CRLF.
-const MAX_SIGNATURE_BYTES: u64 = (SIGNATURE_LEN as u64) * 2 + 2;
+pub(super) const MAX_SIGNATURE_BYTES: u64 = (SIGNATURE_LEN as u64) * 2 + 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
@@ -34,9 +34,14 @@ impl Engine {
         version: &Version,
         name: &str,
         method: Method,
-    ) -> Result<PathBuf, Refusal> {
+    ) -> Result<Staged, Refusal> {
         let refused = Refusal::Refused;
         let asset = release::asset(release, name).map_err(refused)?;
+        // First, and before the download: without them the staged agent could not be started.
+        let launch = match method {
+            Method::Tarball => Some(self.launch_settings(release).await?),
+            Method::MacApp | Method::AppImage => None,
+        };
         // Refused before anything is downloaded: nothing could make the file acceptable.
         let signature_name = format!("{name}{SIGNATURE_SUFFIX}");
         if !release.assets.iter().any(|a| a.name == signature_name) {
@@ -125,7 +130,10 @@ impl Engine {
             ),
         };
         settle(judge_staged(version, printed.as_deref(), method))?;
-        Ok(runnable)
+        Ok(Staged {
+            path: runnable,
+            launch,
+        })
     }
 }
 

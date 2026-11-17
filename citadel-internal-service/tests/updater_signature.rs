@@ -106,6 +106,11 @@ async fn another_keys_signature_is_refused_and_verifies_under_that_key() {
     let mut world = signed_world(TARBALL, Method::Tarball);
     let forged = signature(&other, TAG, TARBALL, &world.source.bytes(TARBALL));
     world.source.set_signature(TARBALL, &forged);
+    // The release's launch settings are that key's too, as every asset of a release is.
+    let launch = citadel_internal_service::updater::launch_settings::ASSET_NAME;
+    world
+        .source
+        .publish_signed(&other, launch, LAUNCH.as_bytes());
     world.release_key = ReleaseSigningKey::from_seed(&other).public_key_hex();
     world.engine = world.rebuild();
     world.engine.check().await;

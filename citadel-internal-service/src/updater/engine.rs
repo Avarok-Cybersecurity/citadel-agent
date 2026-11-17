@@ -2,14 +2,13 @@
 //! sequences them over the seams in io.rs.
 
 use super::fetch::Refusal;
-use super::io::{Fetched, Io};
+use super::io::{Fetched, Io, Staged};
 use super::platform::Plan;
 use super::policy::{decide, Decision, Situation, Trigger};
 use super::release::{self, Candidate, Release};
 use citadel_sdk::logging::{error, info, warn};
 use parking_lot::Mutex;
 use semver::Version;
-use std::path::PathBuf;
 
 pub const LOG_TARGET: &str = "citadel::update";
 /// "Automatically install updates when no account is signed in" before anyone sets it: on, as
@@ -23,7 +22,7 @@ pub(super) struct Offer {
     pub notes_url: String,
     pub download_url: String,
     /// Downloaded, verified and staged.
-    pub staged: Option<PathBuf>,
+    pub staged: Option<Staged>,
     /// Nothing more to do for this version until a newer one: staged, refused, or link-only.
     /// False after a transient failure, so the next check tries again.
     pub settled: bool,

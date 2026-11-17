@@ -37,6 +37,7 @@ fn plan(dir: &Path, port: u16) -> WatchPlan {
         health: format!("127.0.0.1:{port}").parse().unwrap(),
         version: "0.9.0".to_string(),
         args: Vec::new(),
+        restore_args: Vec::new(),
         failed_marker: dir.join("failed-0.9.0"),
     }
 }

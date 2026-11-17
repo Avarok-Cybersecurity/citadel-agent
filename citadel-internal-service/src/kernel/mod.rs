@@ -153,6 +153,9 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) apps: Arc<apps::AppsHost>,
     /// The portable identity, when the binary configured its ports (kernel/identity).
     pub(crate) identity: Option<Arc<identity::IdentityHost>>,
+    /// How apps' `citadel.session` servers are discovered, when the binary configured it
+    /// (kernel/apps/session); `None` refuses every open as `not_configured`.
+    pub(crate) app_sessions: Option<Arc<apps::AppSessionConfig>>,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -184,6 +187,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             telemetry: self.telemetry.clone(),
             apps: self.apps.clone(),
             identity: self.identity.clone(),
+            app_sessions: self.app_sessions.clone(),
             io: self.io.clone(),
         }
     }
@@ -225,6 +229,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             telemetry: None,
             apps: Default::default(),
             identity: None,
+            app_sessions: None,
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -262,6 +267,13 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
     /// identity request as `NotConfigured`.
     pub fn with_identity(mut self, config: identity::IdentityConfig) -> Self {
         self.identity = Some(Arc::new(identity::IdentityHost::new(config)));
+        self
+    }
+
+    /// Hold apps' `citadel.session`s (kernel/apps/session), discovering their servers by
+    /// `config`. It also needs `with_identity` and `with_app_net` (the server's grants).
+    pub fn with_app_sessions(mut self, config: apps::AppSessionConfig) -> Self {
+        self.app_sessions = Some(Arc::new(config));
         self
     }
 

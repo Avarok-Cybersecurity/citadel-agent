@@ -20,6 +20,7 @@ pub(crate) struct HandledRequestResult {
 }
 
 mod agent_own;
+mod app_session;
 mod apps_ihttp;
 mod apps_kv;
 mod apps_net;
@@ -407,6 +408,11 @@ where
             apps_settings::handle(this, uuid, command).await
         }
         InternalServiceRequest::IhttpSend { .. } => apps_ihttp::handle(this, uuid, command).await,
+        InternalServiceRequest::AppSessionOpen { .. }
+        | InternalServiceRequest::AppSessionSend { .. }
+        | InternalServiceRequest::AppSessionClose { .. } => {
+            app_session::handle(this, uuid, command).await
+        }
 
         InternalServiceRequest::Batched {
             request_id,
@@ -1076,6 +1082,29 @@ fn refusal_response(
             request_id: Some(*request_id),
             refusal: IhttpSendRefusal::Session,
         }),
+        InternalServiceRequest::AppSessionOpen {
+            request_id,
+            cid,
+            install_id,
+            ..
+        }
+        | InternalServiceRequest::AppSessionSend {
+            request_id,
+            cid,
+            install_id,
+            ..
+        }
+        | InternalServiceRequest::AppSessionClose {
+            request_id,
+            cid,
+            install_id,
+            ..
+        } => app_session::failure(
+            *cid,
+            *request_id,
+            install_id.clone(),
+            &crate::kernel::apps::session::rules::Refusal::Session,
+        ),
         InternalServiceRequest::AppsGetAgentSettings { request_id, cid }
         | InternalServiceRequest::AppsSetAgentSettings {
             request_id, cid, ..
@@ -1164,6 +1193,9 @@ pub(crate) fn requires_owned_session(command: &InternalServiceRequest) -> bool {
             | InternalServiceRequest::GetAppNetUsage { .. }
             | InternalServiceRequest::AppKv { .. }
             | InternalServiceRequest::IhttpSend { .. }
+            | InternalServiceRequest::AppSessionOpen { .. }
+            | InternalServiceRequest::AppSessionSend { .. }
+            | InternalServiceRequest::AppSessionClose { .. }
             // A member's own grants on this agent (kernel/apps/settings.rs).
             | InternalServiceRequest::AppsGetAgentSettings { .. }
             | InternalServiceRequest::AppsSetAgentSettings { .. }

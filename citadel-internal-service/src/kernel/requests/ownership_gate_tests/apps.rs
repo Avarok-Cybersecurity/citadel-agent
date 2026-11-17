@@ -56,6 +56,27 @@ fn apps_requests(cid: u64) -> Vec<InternalServiceRequest> {
             peer_cid: 2,
             frame: vec![],
         },
+        InternalServiceRequest::AppSessionOpen {
+            request_id,
+            cid,
+            app_id: "work.synchronized.app".into(),
+            install_id: "i".into(),
+            acting_username: "alice@a.example".into(),
+            server: "synchronized.work".into(),
+        },
+        InternalServiceRequest::AppSessionSend {
+            request_id,
+            cid,
+            install_id: "i".into(),
+            session: 1,
+            body: vec![],
+        },
+        InternalServiceRequest::AppSessionClose {
+            request_id,
+            cid,
+            install_id: "i".into(),
+            session: 1,
+        },
     ]
 }
 

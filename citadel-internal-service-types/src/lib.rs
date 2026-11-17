@@ -26,6 +26,8 @@ mod group_responses_more;
 pub use group_responses::*;
 pub use group_responses_more::*;
 mod admission;
+mod app_session;
+pub use app_session::*;
 mod identity;
 pub use identity::*;
 mod apps_ihttp;
@@ -1294,6 +1296,9 @@ pub enum InternalServiceResponse {
     IhttpSendAccepted(IhttpSendAccepted),
     IhttpSendFailure(IhttpSendFailure),
     IhttpFrameNotification(IhttpFrameNotification),
+    AppSessionState(AppSessionState),
+    AppSessionMessage(AppSessionMessage),
+    AppSessionFailure(AppSessionFailure),
     IdentitySuccess(IdentitySuccess),
     IdentityFailure(IdentityFailure),
     ServerDiscoverySuccess(ServerDiscoverySuccess),
@@ -2187,6 +2192,38 @@ pub enum InternalServiceRequest {
         #[debug(with = plaintext_debug_fmt)]
         frame: Vec<u8>,
     },
+    /// Open, or find, this install's `citadel.session` to `server` for `acting_username`; see
+    /// `app_session.rs`. Answered with `AppSessionState` or `AppSessionFailure`.
+    AppSessionOpen {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        app_id: String,
+        install_id: String,
+        acting_username: String,
+        server: String,
+    },
+    /// Send `body` to the server over the install's open `session`. Answered with nothing on
+    /// success; `AppSessionFailure` otherwise.
+    AppSessionSend {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        install_id: String,
+        session: u32,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[debug(with = plaintext_debug_fmt)]
+        body: Vec<u8>,
+    },
+    /// Close the install's `session`. Answered with `AppSessionState` (`closed`) or
+    /// `AppSessionFailure`.
+    AppSessionClose {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        install_id: String,
+        session: u32,
+    },
     /// Execute multiple requests in parallel, returning results in the same order as input.
     /// This enables single-roundtrip batch operations for efficiency.
     Batched {
@@ -2464,6 +2501,9 @@ impl InternalServiceRequest {
             | Self::GetAppNetUsage { cid, .. }
             | Self::AppKv { cid, .. }
             | Self::IhttpSend { cid, .. }
+            | Self::AppSessionOpen { cid, .. }
+            | Self::AppSessionSend { cid, .. }
+            | Self::AppSessionClose { cid, .. }
             | Self::AppsGetAgentSettings { cid, .. }
             | Self::AppsSetAgentSettings { cid, .. } => Some(*cid),
             // Exhaustive on purpose: no `_` arm.

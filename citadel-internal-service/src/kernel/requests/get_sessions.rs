@@ -66,6 +66,10 @@ fn build_response_from_internal_state<T: IOInterface, R: Ratchet>(
     info!(target: "citadel", "GetSessions: Found {} total sessions in server_connection_map", lock.len());
 
     for (cid, connection) in lock.iter() {
+        // An app's session to an external server is the agent's, not a member's.
+        if this.apps.sessions.holds_server_cid(*cid) {
+            continue;
+        }
         let conn_id = connection.subscribers.members();
         // debug!, not info!: this is one line per session per poll, and the
         // messenger polls at 1Hz, so it is O(sessions^2) lines/sec on a fully

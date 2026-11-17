@@ -1,6 +1,7 @@
 //! What the agent does for Citadel apps (citadel-workspace `docs/plans/
 //! citadel-apps-and-coupons-design-r2.md`, R4): host egress (`AppFetch`, net/), `local`
-//! storage (`AppKv`, kv/) and the internal-HTTP relay (`IhttpSend`, ihttp/).
+//! storage (`AppKv`, kv/), the internal-HTTP relay (`IhttpSend`, ihttp/) and sessions to
+//! external Citadel servers (`AppSession*`, session/).
 //!
 //! None of it listens. Host egress is outbound only and refuses the agent's own port as a
 //! target; internal HTTP rides the account's existing, authenticated P2P sessions.
@@ -8,6 +9,7 @@
 pub(crate) mod ihttp;
 pub(crate) mod kv;
 pub(crate) mod net;
+pub(crate) mod session;
 pub(crate) mod settings;
 
 #[cfg(test)]
@@ -15,8 +17,9 @@ mod service_tests;
 #[cfg(test)]
 mod unclaimed_head_tests;
 
-pub use net::authority::{AuthoritySignal, HostNetAuthority, KernelGrant};
+pub use net::authority::{AuthoritySignal, HostNetAuthority, KernelGrant, SessionLimits};
 pub use net::AppNetConfig;
+pub use session::AppSessionConfig;
 
 use std::sync::Arc;
 
@@ -30,6 +33,8 @@ pub(crate) struct AppsHost {
     pub(crate) kv: kv::AppKv,
     pub(crate) ihttp: ihttp::IhttpCounters,
     pub(crate) settings: settings::AgentAppSettings,
+    /// Apps' `citadel.session`s to external servers (session/).
+    pub(crate) sessions: session::AppSessions,
 }
 
 impl AppsHost {

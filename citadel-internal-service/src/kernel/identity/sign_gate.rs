@@ -11,15 +11,24 @@ use std::time::Duration;
 use tokio::time::Instant;
 use uuid::Uuid;
 
-/// The agent's `[identity]` settings for signing. No field has a default (PCND).
+/// How often signing may run. The agent runs at `PROTOCOL`; a test may state another rate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SignLimits {
-    /// The least time between two requests on one connection (shipped: 2 s).
+    /// The least time between two requests on one connection.
     pub min_interval: Duration,
-    /// Wrong passwords in a row that start the lockout (shipped: 5).
+    /// Wrong passwords in a row that start the lockout.
     pub wrong_password_limit: u32,
-    /// How long the lockout refuses every request (shipped: 60 s).
+    /// How long the lockout refuses every request.
     pub lockout: Duration,
+}
+
+impl SignLimits {
+    /// The protocol's rate (`citadel_identity::SIGN_*`, contract identity-api.md §1).
+    pub const PROTOCOL: Self = Self {
+        min_interval: Duration::from_secs(citadel_identity::SIGN_MIN_INTERVAL_S),
+        wrong_password_limit: citadel_identity::SIGN_WRONG_PASSWORD_LIMIT,
+        lockout: Duration::from_secs(citadel_identity::SIGN_LOCKOUT_S),
+    };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

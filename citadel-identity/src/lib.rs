@@ -39,6 +39,13 @@ pub const MAX_DOMAIN_BYTES: usize = 190;
 pub const SERVER_CHALLENGE_TIMEOUT_S: u64 = 10;
 /// Seconds the whole `/.well-known/citadel` exchange may take. A protocol value, likewise.
 pub const WELL_KNOWN_FETCH_TIMEOUT_S: u64 = 10;
+/// The agent's `IdentitySignChallenge` rate (`sign-in-with-citadel.md` §8), protocol values like
+/// the two above: at most one request per this many seconds on one connection;
+pub const SIGN_MIN_INTERVAL_S: u64 = 2;
+/// this many wrong passwords in a row start a lockout;
+pub const SIGN_WRONG_PASSWORD_LIMIT: u32 = 5;
+/// which refuses every request for this many seconds.
+pub const SIGN_LOCKOUT_S: u64 = 60;
 
 pub use assertion::{
     assertion_message, open_assertion, verify_assertion, AssertionError, SignInAssertion,

@@ -44,7 +44,7 @@ pub struct IdentityConfig {
     /// How long the unsealed identity is kept after its last use. The connect's wait for the
     /// server's challenge answer is the protocol's (`citadel_identity::SERVER_CHALLENGE_TIMEOUT_S`).
     pub unlock_idle: Duration,
-    /// How often `IdentitySignChallenge` may run (`[identity]` in the agent's config).
+    /// How often `IdentitySignChallenge` may run: `SignLimits::PROTOCOL` in the agent.
     pub sign_limits: SignLimits,
 }
 

@@ -17,7 +17,7 @@ fn kat() -> Value {
 #[test]
 fn every_constant_matches_the_contract() {
     let c = &kat()["constants"];
-    let ours: [(&str, u64); 20] = [
+    let ours: [(&str, u64); 23] = [
         ("ASSERTION_VERSION", ASSERTION_VERSION.into()),
         ("BINDING_FIXED_LEN", BINDING_FIXED_LEN as u64),
         ("BINDING_VERSION", BINDING_VERSION.into()),
@@ -39,6 +39,12 @@ fn every_constant_matches_the_contract() {
         ("SEED_LEN", SEED_LEN as u64),
         ("SERVER_CHALLENGE_TIMEOUT_S", SERVER_CHALLENGE_TIMEOUT_S),
         ("SIGNATURE_LEN", SIGNATURE_LEN as u64),
+        ("SIGN_LOCKOUT_S", SIGN_LOCKOUT_S),
+        ("SIGN_MIN_INTERVAL_S", SIGN_MIN_INTERVAL_S),
+        (
+            "SIGN_WRONG_PASSWORD_LIMIT",
+            SIGN_WRONG_PASSWORD_LIMIT.into(),
+        ),
         ("WELL_KNOWN_FETCH_TIMEOUT_S", WELL_KNOWN_FETCH_TIMEOUT_S),
         ("WELL_KNOWN_VERSION", WELL_KNOWN_VERSION.into()),
     ];

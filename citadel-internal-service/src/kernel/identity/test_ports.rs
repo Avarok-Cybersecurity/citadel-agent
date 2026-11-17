@@ -46,13 +46,8 @@ pub(crate) fn host() -> IdentityHost {
     host_with(SHIPPED_SIGN_LIMITS)
 }
 
-/// The shipped `[identity]` values (`sign-in-with-citadel.md` §8), so a test sees the agent's
-/// own rate limits unless it states others.
-pub(crate) const SHIPPED_SIGN_LIMITS: super::SignLimits = super::SignLimits {
-    min_interval: Duration::from_secs(2),
-    wrong_password_limit: 5,
-    lockout: Duration::from_secs(60),
-};
+/// The protocol's rate, so a test sees the agent's own rate limits unless it states others.
+pub(crate) const SHIPPED_SIGN_LIMITS: super::SignLimits = super::SignLimits::PROTOCOL;
 
 /// A host with `limits`, for a test that needs another rate than the shipped one.
 pub(crate) fn host_with(limits: super::SignLimits) -> IdentityHost {

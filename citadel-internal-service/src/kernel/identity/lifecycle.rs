@@ -109,7 +109,7 @@ impl IdentityHost {
     }
 
     /// The seed, opened with `password`.
-    async fn open(
+    pub(super) async fn open(
         &self,
         password: Zeroizing<Vec<u8>>,
     ) -> Result<Zeroizing<[u8; SEED_LEN]>, Refused> {

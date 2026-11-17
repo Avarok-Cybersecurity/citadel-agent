@@ -70,6 +70,9 @@ pub enum FailureReason {
     ServerIdentityMismatch,
     /// `/.well-known/citadel` could not be fetched or did not verify.
     ServerDiscoveryFailed,
+    /// The server's verified `/.well-known/citadel` has no `citadel` member: an issuer-only
+    /// server (work.avarok.net) that runs no node, so there is nothing to register on.
+    NoCitadelEndpoint,
     /// A reason this build does not know: a newer agent's. Decoded rather than refused, so
     /// the failure it rides on still reaches the page (as "update the page"); an unknown
     /// variant otherwise failed the whole response, and the page waited out a timeout.

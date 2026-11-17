@@ -1427,6 +1427,27 @@ pub enum InternalServiceRequest {
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
         unlock_password: SecBuffer,
     },
+    /// Sign a "Sign in with Citadel" attempt with the identity key (contracts
+    /// `sign-in-with-citadel.md` §1a, §8; `identity-api.md` §7a). The signed `origin` is the
+    /// `Origin` this connection's handshake carried, never a value of this request; a
+    /// connection without one is refused `NoBrowserOrigin`. `unlock_password` is re-proven
+    /// for every signature, and the lock state is left as it was. `issuer` and `aud` are 1 to
+    /// 255 bytes, `nonce` and `challenge` exactly 32, else `BadField`.
+    IdentitySignChallenge {
+        request_id: Uuid,
+        /// The issuer's canonical domain (`work.avarok.net`).
+        issuer: String,
+        /// The client the person is consenting to (`sw-mcp`).
+        aud: String,
+        /// The issuer's attempt nonce.
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        nonce: Vec<u8>,
+        /// `SHA3-256(verifier)` from the sign-in link.
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        challenge: Vec<u8>,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        unlock_password: SecBuffer,
+    },
     /// Recreate an identity from its 24-word phrase (space separated) and seal it under
     /// `unlock_password`. Refused while this agent holds an identity.
     IdentityImport {
@@ -2480,6 +2501,7 @@ impl InternalServiceRequest {
             | Self::IdentityUnlock { .. }
             | Self::IdentityLock { .. }
             | Self::IdentityExport { .. }
+            | Self::IdentitySignChallenge { .. }
             | Self::IdentityImport { .. }
             | Self::ServerDiscovery { .. }
             | Self::RegisterIdentity { .. }

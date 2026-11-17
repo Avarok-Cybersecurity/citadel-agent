@@ -38,6 +38,7 @@ use uuid::Uuid;
 pub mod apps;
 mod apps_io;
 pub(crate) mod c2s_reader;
+pub(crate) mod control_origin;
 pub(crate) mod conversations;
 mod conversations_io;
 pub(crate) mod credential_fingerprint;
@@ -136,6 +137,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) conversations: Arc<conversations::Engine>,
     /// What each localhost connection's client declared it can do.
     pub(crate) client_capabilities: Arc<RwLock<HashMap<Uuid, ClientCapabilities>>>,
+    /// The browser `Origin` each localhost connection's handshake carried (kernel/control_origin).
+    pub(crate) control_origins: Arc<control_origin::ControlOrigins>,
     /// Native notices and the menu-bar app's account rows (kernel/notices).
     pub(crate) notices: Arc<notices::NoticeHub>,
     /// The agent's updater, when the shipped binary configured one (kernel/updates).
@@ -173,6 +176,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             peer_paths: self.peer_paths.clone(),
             conversations: self.conversations.clone(),
             client_capabilities: self.client_capabilities.clone(),
+            control_origins: self.control_origins.clone(),
             notices: self.notices.clone(),
             updates: self.updates.clone(),
             key_challenges: self.key_challenges.clone(),
@@ -214,6 +218,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             peer_paths: Default::default(),
             conversations: Default::default(),
             client_capabilities: Default::default(),
+            control_origins: Default::default(),
             updates: Default::default(),
             key_challenges: Default::default(),
             browser_transfers,
@@ -723,6 +728,7 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
                 // needing a null case everywhere else.
                 let (media_tx, media_rx) = media_lane(MEDIA_LANE_CAPACITY);
                 let id = Uuid::new_v4();
+                let origin = self.control_origins.admit(id, T::handshake_origin(&sink));
                 tcp_connection_map.write().insert(id, tx1);
                 media_lanes.write().insert(id, media_tx);
                 io.spawn_connection_handler(
@@ -732,6 +738,7 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
                     rx1,
                     media_rx,
                     id,
+                    origin,
                     tcp_connection_map.clone(),
                     media_lanes.clone(),
                     server_connection_map.clone(),

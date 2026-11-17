@@ -5,7 +5,49 @@
 use super::pin::normalise_fingerprint;
 use citadel_identity::{
     canonical_domain, fingerprint, make_username, parse_well_known, CanonicalDomain, MlDsa65Pk,
+    WellKnownCitadel,
 };
+use std::fmt;
+
+/// Why a fetched document gives nothing to register on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PlanError {
+    /// A verified issuer-only document (no `citadel` member): the server runs no node.
+    NoCitadelEndpoint(CanonicalDomain),
+    /// Unverified, another server's, or a name the handle cannot take.
+    Invalid(String),
+}
+
+impl fmt::Display for PlanError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoCitadelEndpoint(domain) => write!(
+                f,
+                "{domain} runs no Citadel node: it only signs sign-in assertions"
+            ),
+            Self::Invalid(why) => f.write_str(why),
+        }
+    }
+}
+
+/// The node a verified document names. The one place an issuer-only document is refused, for
+/// `RegisterIdentity` and `ServerDiscovery` alike; never a guessed `wss://<domain>/citadel`.
+pub(crate) fn citadel_endpoint(doc: &WellKnownCitadel) -> Result<String, PlanError> {
+    doc.citadel_wss
+        .clone()
+        .ok_or_else(|| PlanError::NoCitadelEndpoint(doc.canonical_domain.clone()))
+}
+
+/// `document`, verified as fetched from `dialled`, with the node it names.
+pub(crate) fn verified(
+    dialled: &CanonicalDomain,
+    document: &[u8],
+) -> Result<(WellKnownCitadel, String), PlanError> {
+    let doc =
+        parse_well_known(document, dialled).map_err(|err| PlanError::Invalid(err.to_string()))?;
+    let wss = citadel_endpoint(&doc)?;
+    Ok((doc, wss))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Plan {
@@ -30,16 +72,17 @@ pub(crate) fn from_well_known(
     handle: &str,
     dialled: &CanonicalDomain,
     document: &[u8],
-) -> Result<Plan, String> {
-    let doc = parse_well_known(document, dialled).map_err(|err| err.to_string())?;
-    let username = make_username(handle, &doc.canonical_domain).map_err(|err| err.to_string())?;
+) -> Result<Plan, PlanError> {
+    let (doc, dial) = verified(dialled, document)?;
+    let username = make_username(handle, &doc.canonical_domain)
+        .map_err(|err| PlanError::Invalid(err.to_string()))?;
     Ok(Plan {
         handle: handle.to_string(),
         username,
         server_fp: fingerprint(&doc.server_key),
         server_pk: Some(doc.server_key),
         issued_at_s: Some(doc.issued_at_s),
-        dial: doc.citadel_wss,
+        dial,
         domain: doc.canonical_domain,
     })
 }
@@ -76,6 +119,21 @@ mod tests {
     const HOSTED: &[u8] = include_bytes!(
         "../../../../citadel-identity/tests/contracts/batch-1116/fixtures/well-known-citadel/valid-hosted-tenant.json"
     );
+    const ISSUER_ONLY: &[u8] = include_bytes!(
+        "../../../../citadel-identity/tests/contracts/batch-1116/fixtures/well-known-citadel/valid-issuer-only.json"
+    );
+
+    /// P14. Control: answer `None` with `wss://<domain>/citadel` in `citadel_endpoint` → the
+    /// plan dials the control host and this test goes red.
+    #[test]
+    fn an_issuer_only_server_is_refused_no_citadel_endpoint() {
+        let issuer = dialled("work.avarok.net").unwrap();
+        let refused = from_well_known("alice", &issuer, ISSUER_ONLY).unwrap_err();
+        assert_eq!(refused, PlanError::NoCitadelEndpoint(issuer.clone()));
+        assert_eq!(verified(&issuer, ISSUER_ONLY).unwrap_err(), refused);
+        // The document itself is valid: the refusal is not a verification failure.
+        assert!(parse_well_known(ISSUER_ONLY, &issuer).is_ok());
+    }
 
     #[test]
     fn a_dialled_alias_registers_under_the_canonical_domain() {

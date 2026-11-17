@@ -173,6 +173,11 @@ impl IOInterface for WasmWebSocketIO {
     /// than the agent, but answering it any other way would be false.
     const CALLER_CAN_ALREADY_READ_LOCAL_FILES: bool = false;
 
+    /// The client side of the socket: it accepts no handshakes, so it saw no `Origin`.
+    fn handshake_origin(_sink: &Self::Sink) -> Option<&str> {
+        None
+    }
+
     async fn next_connection(&mut self) -> Option<(Self::Sink, Self::Stream)> {
         if let (Some(sink_tx), Some(stream_rx)) = (self.sink_tx.take(), self.stream_rx.take()) {
             let sink = WasmWebSocketSink { tx: sink_tx };

@@ -13,19 +13,24 @@ pub(crate) mod pin;
 pub(crate) mod plan;
 pub(crate) mod record;
 pub(crate) mod seal;
+mod sign_challenge;
+mod sign_gate;
 pub(crate) mod store;
 #[cfg(test)]
-mod test_ports;
+pub(crate) mod test_ports;
 mod unlocked;
 
 pub use challenge::{ServerIdentityAnswer, ServerIdentityCodec};
 pub use discovery::{HttpsWellKnownFetch, WellKnownFetch, MAX_WELL_KNOWN_BYTES};
+pub(crate) use sign_challenge::SignRequest;
+pub use sign_gate::SignLimits;
 pub use store::{FsIdentityStore, IdentityStore, MemoryIdentityStore};
 
 use challenge::ChallengeWaiters;
 use citadel_internal_service_types::AccountIdentity;
 pub(crate) use lifecycle::Refused;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
+use sign_gate::SignGate;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,6 +45,8 @@ pub struct IdentityConfig {
     pub unlock_idle: Duration,
     /// How long a connect waits for the server's challenge answer before refusing it.
     pub challenge_timeout: Duration,
+    /// How often `IdentitySignChallenge` may run (`[identity]` in the agent's config).
+    pub sign_limits: SignLimits,
 }
 
 pub(crate) struct IdentityHost {
@@ -48,6 +55,7 @@ pub(crate) struct IdentityHost {
     pub(crate) waiters: Arc<ChallengeWaiters>,
     pub(crate) challenge_timeout: Duration,
     pub(crate) unlocked: Unlocked,
+    sign_gate: Mutex<SignGate>,
     /// What each connected identity session pinned, for `GetSessions` (polled, so not read
     /// from the account store each time). Filled by a verified connect.
     sessions: RwLock<HashMap<u64, AccountIdentity>>,
@@ -61,6 +69,7 @@ impl IdentityHost {
             waiters: Arc::new(ChallengeWaiters::new(config.codec)),
             challenge_timeout: config.challenge_timeout,
             unlocked: Unlocked::new(config.unlock_idle),
+            sign_gate: Mutex::new(SignGate::new(config.sign_limits)),
             sessions: RwLock::default(),
         }
     }

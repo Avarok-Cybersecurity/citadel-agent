@@ -4,8 +4,11 @@
 pub(crate) mod connect;
 mod post_connect;
 pub(crate) mod register;
+#[cfg(test)]
+mod sign_challenge_tests;
 
-use crate::kernel::identity::{IdentityHost, Refused};
+use crate::kernel::identity::plan::PlanError;
+use crate::kernel::identity::{IdentityHost, Refused, SignRequest};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -84,6 +87,25 @@ pub(crate) async fn lifecycle<T: IOInterface + Sync, R: Ratchet>(
             InternalServiceRequest::IdentityExport {
                 unlock_password, ..
             } => host.export(secret(&unlock_password)).await,
+            // `uuid` is the connection: the origin signed is its handshake's, never the page's.
+            InternalServiceRequest::IdentitySignChallenge {
+                issuer,
+                aud,
+                nonce,
+                challenge,
+                unlock_password,
+                ..
+            } => {
+                let request = SignRequest {
+                    issuer,
+                    aud,
+                    nonce,
+                    challenge,
+                };
+                let origin = this.control_origins.origin(&uuid);
+                let password = secret(&unlock_password);
+                host.sign_challenge(uuid, origin, request, password).await
+            }
             InternalServiceRequest::IdentityImport {
                 phrase,
                 unlock_password,
@@ -111,19 +133,25 @@ pub(crate) async fn discover<T: IOInterface + Sync, R: Ratchet>(
         unreachable!("dispatched by requests/mod.rs")
     };
     let response = match register::discover(this, &server_addr).await {
-        Ok(doc) => InternalServiceResponse::ServerDiscoverySuccess(ServerDiscoverySuccess {
+        Ok((doc, citadel_wss)) => {
+            InternalServiceResponse::ServerDiscoverySuccess(ServerDiscoverySuccess {
+                cid: 0,
+                request_id: Some(request_id),
+                canonical_domain: doc.canonical_domain.to_string(),
+                citadel_wss,
+                server_fp: citadel_identity::fingerprint(&doc.server_key),
+                former_domains: doc.former_domains.iter().map(ToString::to_string).collect(),
+                issued_at: doc.issued_at_s,
+            })
+        }
+        Err(err) => InternalServiceResponse::ServerDiscoveryFailure(ServerDiscoveryFailure {
             cid: 0,
             request_id: Some(request_id),
-            canonical_domain: doc.canonical_domain.to_string(),
-            citadel_wss: doc.citadel_wss,
-            server_fp: citadel_identity::fingerprint(&doc.server_key),
-            former_domains: doc.former_domains.iter().map(ToString::to_string).collect(),
-            issued_at: doc.issued_at_s,
-        }),
-        Err(message) => InternalServiceResponse::ServerDiscoveryFailure(ServerDiscoveryFailure {
-            cid: 0,
-            request_id: Some(request_id),
-            message,
+            reason: match err {
+                PlanError::NoCitadelEndpoint(_) => Some(IdentityRefusal::NoCitadelEndpoint),
+                PlanError::Invalid(_) => None,
+            },
+            message: err.to_string(),
         }),
     };
     Some(HandledRequestResult { response, uuid })

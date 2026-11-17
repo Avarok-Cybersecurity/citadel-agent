@@ -67,6 +67,16 @@ pub enum IdentityRefusal {
     BadPhrase,
     /// The account was not registered with an identity.
     NotAnIdentityAccount,
+    /// The server's `/.well-known/citadel` has no `citadel` member: it only issues sign-in
+    /// assertions (work.avarok.net) and runs no node to register on or dial.
+    NoCitadelEndpoint,
+    /// `IdentitySignChallenge` on a connection whose handshake carried no browser `Origin`.
+    NoBrowserOrigin,
+    /// Too soon after the last signature on this connection, or after too many wrong
+    /// passwords in a row: wait and try again.
+    RateLimited,
+    /// A request field is out of its bounds (the message names which).
+    BadField,
     /// The stored identity or pin could not be read or written.
     Storage,
     /// A reason this build does not know. Never sent by the agent.
@@ -107,6 +117,10 @@ pub enum IdentityOutcome {
     Imported {
         pk: String,
         id_fp: String,
+    },
+    /// The sign-in proof (base64url blob, `identity-api.md` §7a) for the issuer to verify.
+    SignedChallenge {
+        proof: String,
     },
     /// The binding (base64url) for account `cid`, to publish as profile metadata.
     Binding {
@@ -161,6 +175,10 @@ pub struct ServerDiscoveryFailure {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
     pub request_id: Option<Uuid>,
+    /// `Some(NoCitadelEndpoint)` for an issuer-only server; `None` for every other failure
+    /// (unreachable, unsigned, another server's document), which the message describes.
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub reason: Option<IdentityRefusal>,
     pub message: String,
 }
 

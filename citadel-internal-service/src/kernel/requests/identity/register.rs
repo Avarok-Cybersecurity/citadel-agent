@@ -5,11 +5,11 @@
 
 use super::host;
 use crate::kernel::identity::pin::{self, Pin};
-use crate::kernel::identity::plan::{self, Plan};
+use crate::kernel::identity::plan::{self, Plan, PlanError};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::session_route::deliver;
 use crate::kernel::CitadelWorkspaceService;
-use citadel_identity::{parse_well_known, WellKnownCitadel};
+use citadel_identity::WellKnownCitadel;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     FailureReason, IdentityDiscovery, InternalServiceRequest, InternalServiceResponse,
@@ -19,15 +19,19 @@ use citadel_sdk::logging::warn;
 use citadel_sdk::prelude::Ratchet;
 use uuid::Uuid;
 
-/// `server_addr`'s verified `/.well-known/citadel`.
+/// `server_addr`'s verified `/.well-known/citadel` and the node it names.
 pub(crate) async fn discover<T: IOInterface, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     server_addr: &str,
-) -> Result<WellKnownCitadel, String> {
-    let host = host(this).map_err(|(_, message)| message)?;
-    let dialled = plan::dialled(server_addr)?;
-    let document = host.well_known.fetch(&dialled).await?;
-    parse_well_known(&document, &dialled).map_err(|err| err.to_string())
+) -> Result<(WellKnownCitadel, String), PlanError> {
+    let host = host(this).map_err(|(_, message)| PlanError::Invalid(message))?;
+    let dialled = plan::dialled(server_addr).map_err(PlanError::Invalid)?;
+    let document = host
+        .well_known
+        .fetch(&dialled)
+        .await
+        .map_err(PlanError::Invalid)?;
+    plan::verified(&dialled, &document)
 }
 
 fn refused(
@@ -79,20 +83,23 @@ pub(crate) async fn handle<T: IOInterface + Sync, R: Ratchet>(
         Ok(dialled) => dialled,
         Err(err) => return refuse(None, format!("{server_addr:?} is not a server name: {err}")),
     };
-    let planned: Result<Plan, String> = match &discovery {
+    let planned: Result<Plan, PlanError> = match &discovery {
         IdentityDiscovery::WellKnown => match host.well_known.fetch(&dialled).await {
             Ok(document) => plan::from_well_known(&handle, &dialled, &document),
-            Err(err) => Err(err),
+            Err(err) => Err(PlanError::Invalid(err)),
         },
         IdentityDiscovery::Pinned { server_fp } => {
-            plan::pinned(&handle, &server_addr, dialled, server_fp)
+            plan::pinned(&handle, &server_addr, dialled, server_fp).map_err(PlanError::Invalid)
         }
     };
     let plan = match planned {
         Ok(plan) => plan,
         Err(err) => {
-            let message = format!("Cannot add {server_addr}: {err}");
-            return refuse(Some(FailureReason::ServerDiscoveryFailed), message);
+            let reason = match err {
+                PlanError::NoCitadelEndpoint(_) => FailureReason::NoCitadelEndpoint,
+                PlanError::Invalid(_) => FailureReason::ServerDiscoveryFailed,
+            };
+            return refuse(Some(reason), format!("Cannot add {server_addr}: {err}"));
         }
     };
 

@@ -20,6 +20,16 @@ impl WellKnownFetch for NoFetch {
     }
 }
 
+/// Serves one fixed document for every domain, as a fetched `/.well-known/citadel`.
+pub(crate) struct ServeDocument(pub(crate) &'static [u8]);
+
+#[async_trait]
+impl WellKnownFetch for ServeDocument {
+    async fn fetch(&self, _domain: &CanonicalDomain) -> Result<Vec<u8>, String> {
+        Ok(self.0.to_vec())
+    }
+}
+
 pub(crate) struct NoCodec;
 
 impl ServerIdentityCodec for NoCodec {
@@ -33,12 +43,34 @@ impl ServerIdentityCodec for NoCodec {
 }
 
 pub(crate) fn host() -> IdentityHost {
-    IdentityHost::new(IdentityConfig {
+    host_with(SHIPPED_SIGN_LIMITS)
+}
+
+/// The shipped `[identity]` values (`sign-in-with-citadel.md` §8), so a test sees the agent's
+/// own rate limits unless it states others.
+pub(crate) const SHIPPED_SIGN_LIMITS: super::SignLimits = super::SignLimits {
+    min_interval: Duration::from_secs(2),
+    wrong_password_limit: 5,
+    lockout: Duration::from_secs(60),
+};
+
+/// A host with `limits`, for a test that needs another rate than the shipped one.
+pub(crate) fn host_with(limits: super::SignLimits) -> IdentityHost {
+    IdentityHost::new(config(limits, Arc::new(NoFetch)))
+}
+
+/// The unit tests' configuration: an in-memory store, no codec, and `well_known`.
+pub(crate) fn config(
+    limits: super::SignLimits,
+    well_known: Arc<dyn WellKnownFetch>,
+) -> IdentityConfig {
+    IdentityConfig {
         store: Arc::new(MemoryIdentityStore::default()),
-        well_known: Arc::new(NoFetch),
+        well_known,
         codec: Arc::new(NoCodec),
         // Long enough that no test sees it pass.
         unlock_idle: Duration::from_secs(3600),
         challenge_timeout: Duration::from_secs(5),
-    })
+        sign_limits: limits,
+    }
 }

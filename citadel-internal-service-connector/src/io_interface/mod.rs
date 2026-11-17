@@ -18,6 +18,13 @@ pub trait IOInterface: Sized + Send + 'static {
     type Stream: Stream<Item = std::io::Result<InternalServicePayload>> + Unpin + Send + 'static;
     async fn next_connection(&mut self) -> Option<(Self::Sink, Self::Stream)>;
 
+    /// The browser `Origin` header this connection's handshake carried, as the
+    /// transport saw it. `None` when the transport has no handshake header (a
+    /// native client over TCP or in memory) -- never a value the client sent in
+    /// a request. A sign-in proof signs exactly this (`IdentitySignChallenge`),
+    /// so a transport must not invent one.
+    fn handshake_origin(sink: &Self::Sink) -> Option<&str>;
+
     /// Whether a caller on this interface may name a file by absolute path.
     ///
     /// `SendFile` accepts `FileSource::Path`, which the agent opens and sends

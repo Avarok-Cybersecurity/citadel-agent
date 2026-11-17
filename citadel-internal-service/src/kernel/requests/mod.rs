@@ -212,6 +212,7 @@ where
         | InternalServiceRequest::IdentityUnlock { .. }
         | InternalServiceRequest::IdentityLock { .. }
         | InternalServiceRequest::IdentityExport { .. }
+        | InternalServiceRequest::IdentitySignChallenge { .. }
         | InternalServiceRequest::IdentityImport { .. }
         | InternalServiceRequest::IdentityBinding { .. } => {
             identity::lifecycle(this, uuid, command).await

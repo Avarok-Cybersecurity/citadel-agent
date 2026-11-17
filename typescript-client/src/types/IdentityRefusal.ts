@@ -3,4 +3,4 @@
 /**
  * Why an identity request was refused, for the UI to act on.
  */
-export type IdentityRefusal = "not_configured" | "no_identity" | "already_exists" | "locked" | "wrong_password" | "bad_phrase" | "not_an_identity_account" | "storage" | "unknown";
+export type IdentityRefusal = "not_configured" | "no_identity" | "already_exists" | "locked" | "wrong_password" | "bad_phrase" | "not_an_identity_account" | "no_citadel_endpoint" | "no_browser_origin" | "rate_limited" | "bad_field" | "storage" | "unknown";

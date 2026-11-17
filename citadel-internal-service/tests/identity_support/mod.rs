@@ -7,7 +7,7 @@
 //! `citadel-workspace-types` in the parent repository; this repository does not depend on it.
 
 use citadel_identity::{canonical_domain, fingerprint, ServerKey};
-use citadel_internal_service::kernel::identity::{IdentityConfig, MemoryIdentityStore};
+use citadel_internal_service::kernel::identity::{IdentityConfig, MemoryIdentityStore, SignLimits};
 use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::connector::{InternalServiceConnector, WrappedSink};
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
@@ -156,6 +156,12 @@ pub async fn spawn_identity_agent(
         codec: Arc::new(JsonCodec),
         unlock_idle: Duration::from_secs(3600),
         challenge_timeout: Duration::from_secs(10),
+        // The shipped values (sign-in-with-citadel.md §8).
+        sign_limits: SignLimits {
+            min_interval: Duration::from_secs(2),
+            wrong_password_limit: 5,
+            lockout: Duration::from_secs(60),
+        },
     });
     let mut builder = NodeBuilder::<StackedRatchet>::default();
     let node = common::test_stun_servers()

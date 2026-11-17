@@ -1,3 +1,4 @@
+use crate::kernel::control_origin::OriginEntry;
 use crate::kernel::media::{MediaLaneRx, MediaLaneTx};
 use crate::kernel::membership::connection_closed;
 use crate::kernel::{send_to_kernel, sink_send_payload, Connection};
@@ -25,6 +26,8 @@ pub trait IOInterfaceExt: IOInterface {
         mut from_kernel: UnboundedReceiver<InternalServiceResponse>,
         mut media_from_kernel: MediaLaneRx,
         conn_id: Uuid,
+        // Held for the connection's life: its drop forgets the handshake `Origin`.
+        origin: OriginEntry,
         tcp_connection_map: Arc<RwLock<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
         media_lanes: Arc<RwLock<HashMap<Uuid, MediaLaneTx>>>,
         server_connection_map: Arc<RwLock<HashMap<u64, Connection<R>>>>,
@@ -150,6 +153,7 @@ pub trait IOInterfaceExt: IOInterface {
 
             // Clean up the orphan_sessions entry if it exists (no longer used for decisions)
             orphan_sessions.write().remove(&conn_id);
+            drop(origin);
         });
     }
 }

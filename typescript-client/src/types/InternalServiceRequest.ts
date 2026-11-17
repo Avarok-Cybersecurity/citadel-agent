@@ -83,7 +83,23 @@ server_addr: string, full_name: string, username: string, proposed_password: num
  * `connect_after_register` against such a server the connect is refused with
  * `admission_required` and the window signs in with a fresh token. Never logged.
  */
-admission_token?: string | null, } } | { "IdentityStatus": { request_id: string, } } | { "IdentityCreate": { request_id: string, unlock_password: number[], } } | { "IdentityUnlock": { request_id: string, unlock_password: number[], } } | { "IdentityLock": { request_id: string, } } | { "IdentityExport": { request_id: string, unlock_password: number[], } } | { "IdentityImport": { request_id: string, phrase: number[], unlock_password: number[], } } | { "IdentityBinding": { request_id: string, cid: bigint, } } | { "ServerDiscovery": { request_id: string, server_addr: string, } } | { "RegisterIdentity": { request_id: string, 
+admission_token?: string | null, } } | { "IdentityStatus": { request_id: string, } } | { "IdentityCreate": { request_id: string, unlock_password: number[], } } | { "IdentityUnlock": { request_id: string, unlock_password: number[], } } | { "IdentityLock": { request_id: string, } } | { "IdentityExport": { request_id: string, unlock_password: number[], } } | { "IdentitySignChallenge": { request_id: string, 
+/**
+ * The issuer's canonical domain (`work.avarok.net`).
+ */
+issuer: string, 
+/**
+ * The client the person is consenting to (`sw-mcp`).
+ */
+aud: string, 
+/**
+ * The issuer's attempt nonce.
+ */
+nonce: number[], 
+/**
+ * `SHA3-256(verifier)` from the sign-in link.
+ */
+challenge: number[], unlock_password: number[], } } | { "IdentityImport": { request_id: string, phrase: number[], unlock_password: number[], } } | { "IdentityBinding": { request_id: string, cid: bigint, } } | { "ServerDiscovery": { request_id: string, server_addr: string, } } | { "RegisterIdentity": { request_id: string, 
 /**
  * What the person typed: a domain, `host:port`, or a URL.
  */

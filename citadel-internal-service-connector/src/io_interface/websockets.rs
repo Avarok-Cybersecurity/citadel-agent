@@ -202,18 +202,22 @@ fn tls_config(
         })
 }
 
-/// Refuse the handshake unless its `Origin` is permitted.
+/// Refuse the handshake unless its `Origin` is permitted, and record in `seen`
+/// the `Origin` an admitted handshake carried.
 ///
 /// This runs during the handshake, so a refused page gets an HTTP 403 and no
 /// WebSocket at all — it never reaches `handle_request` and cannot be counted
-/// as a connection.
+/// as a connection. What it records is what a sign-in proof names as its
+/// origin (`IdentitySignChallenge`): a browser sets this header and page script
+/// cannot, so it is the one origin value no request body can stand in for.
 // The Err type is tungstenite's `ErrorResponse`, fixed by the callback trait
 // this closure has to satisfy. It cannot be boxed without failing to implement
 // the trait, and it is constructed at most once per refused handshake.
 #[allow(clippy::result_large_err)]
-fn origin_check(
-    origins: &OriginPolicy,
-) -> impl FnOnce(&Request, Response) -> Result<Response, ErrorResponse> + '_ {
+fn origin_check<'a>(
+    origins: &'a OriginPolicy,
+    seen: &'a mut Option<String>,
+) -> impl FnOnce(&Request, Response) -> Result<Response, ErrorResponse> + 'a {
     move |request: &Request, response: Response| {
         // A header that is not valid UTF-8 is not an origin we listed, so it
         // is treated as present-and-unrecognised rather than as absent.
@@ -223,6 +227,7 @@ fn origin_check(
             .map(|value| value.to_str().unwrap_or("<invalid>"));
 
         if origins.permits(origin) {
+            *seen = origin.map(str::to_string);
             return Ok(response);
         }
 
@@ -266,6 +271,10 @@ impl IOInterface for WebSocketInterface {
     /// `PickFileRef` and `ByteContents`, which are both driven by a choice the
     /// user actually made.
     const CALLER_CAN_ALREADY_READ_LOCAL_FILES: bool = false;
+
+    fn handshake_origin(sink: &Self::Sink) -> Option<&str> {
+        sink.origin.as_deref()
+    }
 
     /// The next connection whose handshake has COMPLETED.
     ///
@@ -319,6 +328,7 @@ impl IOInterface for WebSocketInterface {
                         // A peer that opens a socket and sends no ClientHello is
                         // exactly the stall the timeout was added for; putting
                         // TLS outside it would reopen that hole one layer down.
+                        let mut origin = None;
                         let upgrade = async {
                             let transport = match tls {
                                 Some(acceptor) => AgentTransport::Tls(Box::new(
@@ -329,13 +339,16 @@ impl IOInterface for WebSocketInterface {
                                 )),
                                 None => AgentTransport::Plain(stream),
                             };
-                            accept_hdr_async(transport, origin_check(&origins)).await
+                            accept_hdr_async(transport, origin_check(&origins, &mut origin)).await
                         };
                         match citadel_io::tokio::time::timeout(HANDSHAKE_TIMEOUT, upgrade).await {
                             Ok(Ok(ws_stream)) => {
                                 let (sink, stream) = ws_stream.split();
                                 let _ = tx.send((
-                                    WebSocketSink { inner: sink },
+                                    WebSocketSink {
+                                        inner: sink,
+                                        origin,
+                                    },
                                     WebSocketStream_ { inner: stream },
                                 ));
                             }
@@ -362,6 +375,8 @@ impl IOInterface for WebSocketInterface {
 
 pub struct WebSocketSink {
     inner: futures_util::stream::SplitSink<WebSocketStream<AgentTransport>, Message>,
+    /// The `Origin` this connection's handshake carried; `None` for a native client.
+    origin: Option<String>,
 }
 
 impl Sink<InternalServicePayload> for WebSocketSink {
@@ -1069,6 +1084,9 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+#[path = "websockets_origin_record_tests.rs"]
+mod origin_record_tests;
 #[cfg(test)]
 #[path = "websockets_unknown_request_tests.rs"]
 mod unknown_request_tests;

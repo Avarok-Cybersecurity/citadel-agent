@@ -83,6 +83,11 @@ impl IOInterface for InMemoryInterface {
     /// agent can by definition.
     const CALLER_CAN_ALREADY_READ_LOCAL_FILES: bool = true;
 
+    /// In-process: no handshake, so no browser `Origin`.
+    fn handshake_origin(_sink: &Self::Sink) -> Option<&str> {
+        None
+    }
+
     async fn next_connection(&mut self) -> Option<(Self::Sink, Self::Stream)> {
         // This can only be called once
         if let Some((sink, stream)) = self.sink.take().zip(self.stream.take()) {

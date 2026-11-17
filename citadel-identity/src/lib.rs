@@ -34,6 +34,11 @@ pub const MIN_HANDLE_BYTES: usize = 3;
 pub const MAX_HANDLE_BYTES: usize = 64;
 /// 64 + 1 + 190 = 255.
 pub const MAX_DOMAIN_BYTES: usize = 190;
+/// Seconds an agent waits for the server's answer to its `ServerIdentityChallenge` before it
+/// refuses the sign-in. A protocol value, not an operator's choice.
+pub const SERVER_CHALLENGE_TIMEOUT_S: u64 = 10;
+/// Seconds the whole `/.well-known/citadel` exchange may take. A protocol value, likewise.
+pub const WELL_KNOWN_FETCH_TIMEOUT_S: u64 = 10;
 
 pub use assertion::{
     assertion_message, open_assertion, verify_assertion, AssertionError, SignInAssertion,

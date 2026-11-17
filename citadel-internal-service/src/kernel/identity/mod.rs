@@ -41,10 +41,9 @@ pub struct IdentityConfig {
     pub store: Arc<dyn IdentityStore>,
     pub well_known: Arc<dyn WellKnownFetch>,
     pub codec: Arc<dyn ServerIdentityCodec>,
-    /// How long the unsealed identity is kept after its last use.
+    /// How long the unsealed identity is kept after its last use. The connect's wait for the
+    /// server's challenge answer is the protocol's (`citadel_identity::SERVER_CHALLENGE_TIMEOUT_S`).
     pub unlock_idle: Duration,
-    /// How long a connect waits for the server's challenge answer before refusing it.
-    pub challenge_timeout: Duration,
     /// How often `IdentitySignChallenge` may run (`[identity]` in the agent's config).
     pub sign_limits: SignLimits,
 }
@@ -67,7 +66,7 @@ impl IdentityHost {
             store: config.store,
             well_known: config.well_known,
             waiters: Arc::new(ChallengeWaiters::new(config.codec)),
-            challenge_timeout: config.challenge_timeout,
+            challenge_timeout: Duration::from_secs(citadel_identity::SERVER_CHALLENGE_TIMEOUT_S),
             unlocked: Unlocked::new(config.unlock_idle),
             sign_gate: Mutex::new(SignGate::new(config.sign_limits)),
             sessions: RwLock::default(),

@@ -70,7 +70,6 @@ pub(crate) fn config(
         codec: Arc::new(NoCodec),
         // Long enough that no test sees it pass.
         unlock_idle: Duration::from_secs(3600),
-        challenge_timeout: Duration::from_secs(5),
         sign_limits: limits,
     }
 }

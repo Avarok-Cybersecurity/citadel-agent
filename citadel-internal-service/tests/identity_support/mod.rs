@@ -155,7 +155,6 @@ pub async fn spawn_identity_agent(
         well_known: Arc::new(NoFetch),
         codec: Arc::new(JsonCodec),
         unlock_idle: Duration::from_secs(3600),
-        challenge_timeout: Duration::from_secs(10),
         // The shipped values (sign-in-with-citadel.md §8).
         sign_limits: SignLimits {
             min_interval: Duration::from_secs(2),

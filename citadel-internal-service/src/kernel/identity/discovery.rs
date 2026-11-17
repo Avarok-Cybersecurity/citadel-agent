@@ -21,16 +21,19 @@ pub(crate) fn well_known_url(domain: &CanonicalDomain) -> String {
 
 /// HTTPS with the webpki roots the updater uses, `Accept: application/json`, no redirects (a
 /// document is only ever trusted from the name it was asked for), the 64 KiB cap enforced while
-/// reading, and the caller's timeout for the whole exchange.
+/// reading, and the protocol's `citadel_identity::WELL_KNOWN_FETCH_TIMEOUT_S` for the whole
+/// exchange.
 pub struct HttpsWellKnownFetch {
     client: reqwest::Client,
 }
 
 impl HttpsWellKnownFetch {
-    pub fn new(timeout: Duration) -> Result<Self, String> {
+    pub fn new() -> Result<Self, String> {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(timeout)
+            .timeout(Duration::from_secs(
+                citadel_identity::WELL_KNOWN_FETCH_TIMEOUT_S,
+            ))
             .build()
             .map_err(|err| err.to_string())?;
         Ok(Self { client })

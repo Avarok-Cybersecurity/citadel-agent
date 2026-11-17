@@ -17,7 +17,7 @@ fn kat() -> Value {
 #[test]
 fn every_constant_matches_the_contract() {
     let c = &kat()["constants"];
-    let ours: [(&str, u64); 18] = [
+    let ours: [(&str, u64); 20] = [
         ("ASSERTION_VERSION", ASSERTION_VERSION.into()),
         ("BINDING_FIXED_LEN", BINDING_FIXED_LEN as u64),
         ("BINDING_VERSION", BINDING_VERSION.into()),
@@ -37,7 +37,9 @@ fn every_constant_matches_the_contract() {
         ("PHRASE_WORDS", PHRASE_WORDS as u64),
         ("PUBLIC_KEY_LEN", PUBLIC_KEY_LEN as u64),
         ("SEED_LEN", SEED_LEN as u64),
+        ("SERVER_CHALLENGE_TIMEOUT_S", SERVER_CHALLENGE_TIMEOUT_S),
         ("SIGNATURE_LEN", SIGNATURE_LEN as u64),
+        ("WELL_KNOWN_FETCH_TIMEOUT_S", WELL_KNOWN_FETCH_TIMEOUT_S),
         ("WELL_KNOWN_VERSION", WELL_KNOWN_VERSION.into()),
     ];
     for (name, value) in ours {

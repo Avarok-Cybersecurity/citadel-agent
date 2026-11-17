@@ -3,4 +3,4 @@
 /**
  * A failure the UI can act on, beside the message it shows.
  */
-export type FailureReason = "admission_required" | "admission_failed" | "account_on_another_server" | "no_such_account" | "username_held_for_another_server" | "unknown";
+export type FailureReason = "admission_required" | "admission_failed" | "account_on_another_server" | "no_such_account" | "username_held_for_another_server" | "username_held" | "identity_locked" | "not_an_identity_account" | "server_identity_mismatch" | "server_discovery_failed" | "unknown";

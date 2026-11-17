@@ -30,7 +30,7 @@ pub(crate) async fn challenge<T: IOInterface, R: Ratchet>(
     };
     let mut nonce = [0u8; NONCE_LEN];
     getrandom::fill(&mut nonce).map_err(|err| failed(format!("no OS randomness: {err}")))?;
-    let answer = host.waiters.expect(cid);
+    let answer = host.waiters.await_answer(cid);
     let frame = host.waiters.codec().challenge(&nonce).map_err(failed)?;
     let link = ServerLinks::new(this.server_connection_map.clone());
     if let Err(err) = link.send_to_server(cid, frame).await {

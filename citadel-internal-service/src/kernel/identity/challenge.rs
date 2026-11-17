@@ -104,7 +104,7 @@ impl ChallengeWaiters {
     }
 
     /// Waits for session `cid`'s next answer; a newer wait replaces an older one.
-    pub(crate) fn expect(&self, cid: u64) -> oneshot::Receiver<ServerIdentityAnswer> {
+    pub(crate) fn await_answer(&self, cid: u64) -> oneshot::Receiver<ServerIdentityAnswer> {
         let (tx, rx) = oneshot::channel();
         self.pending.lock().insert(cid, tx);
         rx

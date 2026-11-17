@@ -5,6 +5,7 @@
 // rewritten wholesale by generate_types.sh, and a hand-added export would be
 // lost on the next run. Add the Rust type instead.
 
+export * from './AccountIdentity.js';
 export * from './AccountInformation.js';
 export * from './AccountPreferences.js';
 export * from './AccountPreferencesResponse.js';
@@ -109,6 +110,12 @@ export * from './GroupRequestJoinSuccess.js';
 export * from './GroupRespondRequestFailure.js';
 export * from './GroupRespondRequestSuccess.js';
 export * from './IceServer.js';
+export * from './IdentityDiscovery.js';
+export * from './IdentityFailure.js';
+export * from './IdentityOutcome.js';
+export * from './IdentityRefusal.js';
+export * from './IdentityState.js';
+export * from './IdentitySuccess.js';
 export * from './IhttpFrameNotification.js';
 export * from './IhttpSendAccepted.js';
 export * from './IhttpSendFailure.js';
@@ -185,6 +192,9 @@ export * from './SendFileRequestFailure.js';
 export * from './SendFileRequestSuccess.js';
 export * from './SendReliableAccepted.js';
 export * from './ServerConnectionLost.js';
+export * from './ServerDiscoveryFailure.js';
+export * from './ServerDiscoverySuccess.js';
+export * from './ServerIdentityMismatch.js';
 export * from './ServerReconnectFailed.js';
 export * from './ServerReconnected.js';
 export * from './ServiceConnectionAccepted.js';

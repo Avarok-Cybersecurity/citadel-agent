@@ -15,7 +15,7 @@ use citadel_internal_service_types::{
     InternalServiceResponse, SessionSecuritySettings,
 };
 use citadel_sdk::logging::warn;
-use citadel_sdk::prelude::{ConnectMode, NodeRemote, PreSharedKey, Ratchet};
+use citadel_sdk::prelude::{ConnectMode, PreSharedKey, Ratchet};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -70,10 +70,12 @@ async fn account<T: IOInterface, R: Ratchet>(
             identity.id_fp()
         )));
     }
-    let username = username(remote, cid).await.ok_or((
-        Some(FailureReason::NoSuchAccount),
-        format!("this computer has no account {cid}"),
-    ))?;
+    let queried = remote
+        .account_manager()
+        .get_username_by_cid(cid)
+        .await
+        .map_err(|err| err.into_string());
+    let username = account_username(cid, queried)?;
     let pinned = Username::V2 {
         handle: &pin.handle,
         domain: pin.domain.as_str(),
@@ -87,13 +89,23 @@ async fn account<T: IOInterface, R: Ratchet>(
     Ok((host, identity, pin, username))
 }
 
-async fn username<R: Ratchet>(remote: &NodeRemote<R>, cid: u64) -> Option<String> {
-    remote
-        .account_manager()
-        .get_username_by_cid(cid)
-        .await
-        .ok()
-        .flatten()
+/// Account `cid`'s username, from the store's answer. A failed read is reported as one, never
+/// as "no such account": the account may well be there.
+fn account_username(
+    cid: u64,
+    queried: Result<Option<String>, String>,
+) -> Result<String, (Option<FailureReason>, String)> {
+    match queried {
+        Ok(Some(username)) => Ok(username),
+        Ok(None) => Err((
+            Some(FailureReason::NoSuchAccount),
+            format!("this computer has no account {cid}"),
+        )),
+        Err(err) => Err((
+            None,
+            format!("could not read account {cid}'s username: {err}"),
+        )),
+    }
 }
 
 pub(crate) async fn connect_identity<T: IOInterface + Sync, R: Ratchet>(
@@ -202,4 +214,28 @@ pub(crate) async fn binding<T: IOInterface, R: Ratchet>(
         cid,
         binding: blob.to_base64url(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    //! Control: map `Err` to the `Ok(None)` arm in `account_username` → a failed read is
+    //! reported as a missing account and `a_failed_username_read_is_not_a_missing_account`
+    //! goes red.
+    use super::*;
+
+    #[test]
+    fn a_failed_username_read_is_not_a_missing_account() {
+        assert_eq!(
+            account_username(7, Ok(Some("alice@a.example".into()))).unwrap(),
+            "alice@a.example"
+        );
+        let missing = account_username(7, Ok(None)).unwrap_err();
+        assert_eq!(missing.0, Some(FailureReason::NoSuchAccount));
+        let failed = account_username(7, Err("backend down".into())).unwrap_err();
+        assert_eq!(
+            failed.0, None,
+            "a failed read names no reason the UI would act on"
+        );
+        assert!(failed.1.contains("backend down"), "{}", failed.1);
+    }
 }

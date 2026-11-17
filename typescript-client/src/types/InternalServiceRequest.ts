@@ -10,6 +10,7 @@ import type { BrowserConsoleEntry } from "./BrowserConsoleEntry";
 import type { ConfigCommand } from "./ConfigCommand";
 import type { ConversationMessage } from "./ConversationMessage";
 import type { FileSource } from "./FileSource";
+import type { IdentityDiscovery } from "./IdentityDiscovery";
 import type { MessagePatch } from "./MessagePatch";
 import type { MessageType } from "./MessageType";
 import type { PeerTurnConfig } from "./PeerTurnConfig";
@@ -82,7 +83,11 @@ server_addr: string, full_name: string, username: string, proposed_password: num
  * `connect_after_register` against such a server the connect is refused with
  * `admission_required` and the window signs in with a fresh token. Never logged.
  */
-admission_token?: string | null, } } | { "Message": { request_id: string, message: number[], cid: bigint, peer_cid: bigint | null, security_level: SecurityLevel, } } | { "Disconnect": { request_id: string, cid: bigint, } } | { "MediaOpen": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "MediaSend": { request_id: string, cid: bigint, peer_cid: bigint, 
+admission_token?: string | null, } } | { "IdentityStatus": { request_id: string, } } | { "IdentityCreate": { request_id: string, unlock_password: number[], } } | { "IdentityUnlock": { request_id: string, unlock_password: number[], } } | { "IdentityLock": { request_id: string, } } | { "IdentityExport": { request_id: string, unlock_password: number[], } } | { "IdentityImport": { request_id: string, phrase: number[], unlock_password: number[], } } | { "IdentityBinding": { request_id: string, cid: bigint, } } | { "ServerDiscovery": { request_id: string, server_addr: string, } } | { "RegisterIdentity": { request_id: string, 
+/**
+ * What the person typed: a domain, `host:port`, or a URL.
+ */
+server_addr: string, handle: string, full_name: string, discovery: IdentityDiscovery, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, admission_token?: string | null, } } | { "ConnectIdentity": { request_id: string, cid: bigint, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Message": { request_id: string, message: number[], cid: bigint, peer_cid: bigint | null, security_level: SecurityLevel, } } | { "Disconnect": { request_id: string, cid: bigint, } } | { "MediaOpen": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "MediaSend": { request_id: string, cid: bigint, peer_cid: bigint, 
 /**
  * Which stream within the call: audio, main video, or thumbnail video.
  */

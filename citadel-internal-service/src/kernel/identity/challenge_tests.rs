@@ -96,7 +96,7 @@ fn only_an_awaited_answer_is_kept_from_the_windows() {
         waiters.on_server_frame(CID, &[1]),
         "nobody waits: a window asked"
     );
-    let mut rx = waiters.expect(CID);
+    let mut rx = waiters.await_answer(CID);
     assert!(waiters.on_server_frame(CID + 1, &[1]), "another session's");
     assert!(
         !waiters.on_server_frame(CID, &[1]),

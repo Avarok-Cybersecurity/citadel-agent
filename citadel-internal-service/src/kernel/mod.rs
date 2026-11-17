@@ -52,10 +52,13 @@ pub(crate) mod pending_group_invites;
 pub(crate) mod picked_files;
 pub(crate) mod pulled_files;
 pub(crate) mod pulled_reads;
+pub(crate) mod received_files;
+pub(crate) mod received_reads;
 pub(crate) mod reconnect;
 pub mod supervisor;
 
 use reconnect::policy::ReconnectPolicy;
+pub(crate) mod account_server;
 pub(crate) mod attach_tokens;
 pub(crate) mod membership;
 mod membership_hosting;
@@ -394,6 +397,8 @@ pub struct Connection<R: Ratchet> {
     pub staged_uploads: staged_uploads::StagedUploads,
     /// Files this session pulled that the page may read. See kernel/pulled_reads.rs.
     pub(crate) pulled_reads: pulled_reads::PulledReads,
+    /// Chat files this session accepted, cached from the account's store. See kernel/received_reads.rs.
+    pub(crate) received_reads: pulled_reads::PulledReads,
     /// The client-side password hash this session was opened with.
     ///
     /// Consulted when a later `Connect` names this session's username, so the
@@ -492,7 +497,8 @@ impl<R: Ratchet> Connection<R> {
             revfs_correlations: revfs_correlation::RevfsCorrelations::default(),
             send_correlations: send_correlation::SendCorrelations::default(),
             staged_uploads: staged_uploads::StagedUploads::default(),
-            pulled_reads: pulled_reads::PulledReads::default(),
+            pulled_reads: pulled_reads::PulledReads::new(picked_files::MAX_PICKED_FILES),
+            received_reads: pulled_reads::PulledReads::new(received_reads::MAX_CACHED_RECEIVED),
             credential_fingerprint,
             window_relay: None,
             reconnect,

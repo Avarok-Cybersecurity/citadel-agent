@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::picked_files::MAX_PICKED_FILES;
 use crate::kernel::requests::file::file_identity::identify;
 
 fn key(peer_cid: Option<u64>, path: &str) -> PulledKey {
@@ -19,11 +20,12 @@ fn identity() -> (tempfile::TempDir, FileIdentity) {
 
 fn recorded(now: Instant) -> (PulledReads, tempfile::TempDir) {
     let (dir, identity) = identity();
-    let mut reads = PulledReads::default();
+    let mut reads = PulledReads::new(MAX_PICKED_FILES);
     reads.record(
         key(Some(9), "/shared/a.docx"),
         PathBuf::from("/data/transfers/9/a.docx"),
         identity,
+        Retention::PullWindow,
         now,
     );
     (reads, dir)
@@ -146,6 +148,7 @@ fn a_read_from_before_a_re_pull_settles_nothing() {
         k.clone(),
         PathBuf::from("/data/transfers/9/a (1).docx"),
         fresh,
+        Retention::PullWindow,
         now,
     );
     reads.settle(&k, old.generation, Some((0, 10)));
@@ -163,13 +166,14 @@ fn a_read_from_before_a_re_pull_settles_nothing() {
 fn the_table_is_bounded() {
     let now = Instant::now();
     let (_dir, identity) = identity();
-    let mut reads = PulledReads::default();
+    let mut reads = PulledReads::new(MAX_PICKED_FILES);
     for i in 0..(MAX_PICKED_FILES + 5) {
         let at = now + Duration::from_millis(i as u64);
         reads.record(
             key(None, &format!("/f{i}")),
             PathBuf::from("/x"),
             identity.clone(),
+            Retention::PullWindow,
             at,
         );
     }
@@ -203,4 +207,31 @@ fn a_chunk_past_the_end_is_refused() {
 fn a_file_over_the_limit_is_refused_before_any_bytes() {
     assert!(plan_chunk(MAX_BROWSER_TRANSFER_TOTAL_BYTES + 1, 0, 1).is_err());
     assert_eq!(plan_chunk(MAX_BROWSER_TRANSFER_TOTAL_BYTES, 0, 1), Ok(1));
+}
+
+#[test]
+fn an_accepted_chat_file_outlives_the_pull_window() {
+    let now = Instant::now();
+    let (_dir, identity) = identity();
+    let mut reads = PulledReads::new(MAX_PICKED_FILES);
+    let received = key(Some(9), "/data/transfers/9/photo.png");
+    reads.record(
+        received.clone(),
+        PathBuf::from("/data/transfers/9/photo.png"),
+        identity,
+        Retention::Session,
+        now,
+    );
+    let later = now + PICKED_FILE_TTL + Duration::from_secs(1);
+    // A later record sweeps expired ones; the session's own file is not one.
+    let (_other_dir, other) = self::identity();
+    reads.record(
+        key(None, "/f"),
+        PathBuf::from("/x"),
+        other,
+        Retention::PullWindow,
+        later,
+    );
+    let ticket = reads.begin_read(&received, 0, 10, later);
+    assert!(ticket.is_ok(), "{ticket:?}");
 }

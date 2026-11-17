@@ -23,6 +23,9 @@ mod app_storage_tests;
 pub(crate) const APP_STORAGE_REFUSED: &str = "app: keys are the agent's apps storage";
 /// What a window is told when its LocalDB request names one of the agent's own settings.
 pub(crate) const AGENT_SETTINGS_REFUSED: &str = "agent: keys are the agent's own settings";
+/// What a window is told when its LocalDB request names a received-file record.
+pub(crate) const RECEIVED_FILES_REFUSED: &str =
+    "received: keys are the agent's record of files received";
 
 /// Why a window may not name `key`, if it is one only the agent reads and writes: an app's
 /// `local` record (kernel/apps/kv, through `AppKv` and its namespace), or one of the agent's
@@ -33,6 +36,8 @@ pub(crate) fn reserved_key(key: &str) -> Option<&'static str> {
         Some(APP_STORAGE_REFUSED)
     } else if key.starts_with(AGENT_KEY_PREFIX) || key == AUTO_INSTALL_KEY {
         Some(AGENT_SETTINGS_REFUSED)
+    } else if key.starts_with(crate::kernel::received_files::RECEIVED_KEY_PREFIX) {
+        Some(RECEIVED_FILES_REFUSED)
     } else {
         None
     }

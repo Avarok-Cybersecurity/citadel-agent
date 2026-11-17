@@ -1,3 +1,4 @@
+use crate::kernel::conversations::kv::HostKv;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::{spawn_tick_updater, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -5,9 +6,10 @@ use citadel_internal_service_types::{
     FileTransferStatusNotification, InternalServiceRequest, InternalServiceResponse,
 };
 use citadel_sdk::prelude::Ratchet;
+use std::sync::Arc;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
@@ -31,6 +33,14 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             if let Some(mut owned_handler) = handler.take() {
                 let result = if accept {
                     let accept_result = owned_handler.accept();
+                    // The saved file is this session's to read into the page,
+                    // which is how a click on it downloads the original.
+                    let on_received = crate::kernel::received_reads::on_received(
+                        this.server_connection_map.clone(),
+                        Arc::new(HostKv::account(this.host_io(), cid)),
+                        cid,
+                        peer_cid,
+                    );
                     spawn_tick_updater(
                         owned_handler,
                         cid,
@@ -38,7 +48,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                         &mut server_connection_map,
                         this.tx_to_localhost_clients.clone(),
                         Some(request_id),
-                        crate::kernel::tick_updater::StreamHooks::default(),
+                        crate::kernel::tick_updater::StreamHooks {
+                            on_pulled: Some(on_received),
+                            on_end: None,
+                        },
                     );
 
                     accept_result

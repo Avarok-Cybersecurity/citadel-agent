@@ -3,4 +3,4 @@
 /**
  * Which store changed (`AppEvent::StorageChanged`).
  */
-export type StorageBackend = "user" | "scope" | { "node": { node_id: string, } } | "local" | "blob" | "files";
+export type StorageBackend = "user" | "scope" | { "node": { node_id: string, } } | "local" | "blob" | "files" | { "node_authored": { node_id: string, author: string, } };

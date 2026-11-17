@@ -49,6 +49,21 @@ pub enum FailureReason {
     AdmissionRequired,
     /// The server refused the admission token that was sent (reset the widget and retry).
     AdmissionFailed,
+    /// A Connect named a server, and this agent's account with that username is registered
+    /// to a different one. Nothing was dialled: signing in would have reached that other server.
+    AccountOnAnotherServer,
+    /// A Connect named a username this agent holds no account for.
+    NoSuchAccount,
+    /// A Register named a username this agent already holds an account for on a different
+    /// server (`RegisterFailure::held_for_server`). One agent holds one account per username
+    /// (the SDK stores accounts by `username_to_cid`), so registering would overwrite it.
+    UsernameHeldForAnotherServer,
+    /// A reason this build does not know: a newer agent's. Decoded rather than refused, so
+    /// the failure it rides on still reaches the page (as "update the page"); an unknown
+    /// variant otherwise failed the whole response, and the page waited out a timeout.
+    /// Never sent by the agent.
+    #[serde(other)]
+    Unknown,
 }
 
 /// The factors a window offers to prove the account again before a change to its sign-in

@@ -150,8 +150,10 @@ impl Window {
         })
     }
 
+    /// Signs `username` in on `server`, the address its account was registered to.
     pub async fn connect(
         &mut self,
+        server: SocketAddr,
         username: &str,
         offer: &Offer,
     ) -> Result<Outcome, Box<dyn Error>> {
@@ -159,6 +161,7 @@ impl Window {
         self.send(InternalServiceRequest::Connect {
             request_id,
             username: username.to_string(),
+            server_address: server.to_string(),
             password: offer.password.as_deref().map(SecBuffer::from),
             security_key: offer.key.is_some(),
             recovery_code: offer.recovery_code.as_deref().map(SecBuffer::from),
@@ -176,14 +179,17 @@ impl Window {
     /// The session's CID, or the refusal's message.
     pub async fn sign_in(
         &mut self,
+        server: SocketAddr,
         username: &str,
         offer: &Offer,
     ) -> Result<Result<u64, String>, Box<dyn Error>> {
-        Ok(match self.connect(username, offer).await?.response {
-            InternalServiceResponse::ConnectSuccess(success) => Ok(success.cid),
-            InternalServiceResponse::ConnectFailure(failure) => Err(failure.message),
-            other => Err(format!("{other:?}")),
-        })
+        Ok(
+            match self.connect(server, username, offer).await?.response {
+                InternalServiceResponse::ConnectSuccess(success) => Ok(success.cid),
+                InternalServiceResponse::ConnectFailure(failure) => Err(failure.message),
+                other => Err(format!("{other:?}")),
+            },
+        )
     }
 
     pub async fn manage(

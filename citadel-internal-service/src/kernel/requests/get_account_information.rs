@@ -107,8 +107,10 @@ async fn add_account_to_map<R: Ratchet>(
     }
 
     // best-effort, for the reason the peer list above is.
-    let server_host = match crate::kernel::server_host::load(remote, account.cid).await {
-        Ok(server_host) => server_host,
+    // The server a Connect for this account must name: what account_server::check compares.
+    let server_host = match crate::kernel::account_server::account_server(remote, account.cid).await
+    {
+        Ok(server) => server.map(|server| server.as_requested()),
         Err(err) => {
             citadel_sdk::logging::warn!(
                 target: "citadel",

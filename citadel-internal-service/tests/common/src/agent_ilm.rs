@@ -2,9 +2,13 @@
 //! window runs ILM itself (the browser's messenger, natively).
 
 use crate::group::recv_until;
-use crate::{get_free_port, register_and_connect_to_server_then_peers, PeerHandle};
+use crate::{
+    connect_every_pair, get_free_port, server_info_skip_cert_verification,
+    services_connected_to_server_at, PeerHandle,
+};
 use citadel_internal_service_connector::connector::InternalServiceConnector;
 use citadel_internal_service_connector::io_interface::in_memory::InMemoryInterface;
+use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
 use citadel_internal_service_connector::messenger::backend::CitadelWorkspaceBackend;
 use citadel_internal_service_connector::messenger::{
     CitadelWorkspaceMessenger, IlmOptions, MessengerTx,
@@ -73,6 +77,17 @@ pub async fn host_alice(alice: &mut PeerHandle) {
 }
 
 pub async fn mixed_hosting(bob_options: IlmOptions) -> MixedHosting {
+    let (server, server_addr) = server_info_skip_cert_verification::<StackedRatchet>();
+    tokio::task::spawn(server);
+    mixed_hosting_reaching(server_addr, bob_options).await
+}
+
+/// As [`mixed_hosting`], against a server the caller runs at `server_addr`; both accounts
+/// (`peer.0` on Alice's agent, `peer.1` on Bob's) are registered to it.
+pub async fn mixed_hosting_reaching(
+    server_addr: SocketAddr,
+    bob_options: IlmOptions,
+) -> MixedHosting {
     let addresses: Vec<SocketAddr> = (0..2)
         .map(|_| {
             format!("127.0.0.1:{}", get_free_port())
@@ -80,10 +95,16 @@ pub async fn mixed_hosting(bob_options: IlmOptions) -> MixedHosting {
                 .expect("addr")
         })
         .collect();
-    let mut handles =
-        register_and_connect_to_server_then_peers::<StackedRatchet>(addresses.clone(), None, None)
-            .await
-            .expect("two connected peers");
+    let services = services_connected_to_server_at::<StackedRatchet, TcpIOInterface>(
+        addresses.clone(),
+        server_addr,
+        None,
+    )
+    .await
+    .expect("two server-connected agents");
+    let mut handles = connect_every_pair(services, None, Default::default())
+        .await
+        .expect("two connected peers");
     let (bob_to_service, bob_from_service, bob_cid) = handles.remove(1);
     let mut alice = handles.remove(0);
 

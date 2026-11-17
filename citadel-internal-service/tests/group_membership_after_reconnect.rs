@@ -32,8 +32,9 @@ use citadel_internal_service_test_common as common;
 #[cfg(test)]
 mod tests {
     use crate::common::group::{
-        accept_invitation, create_inviting, group_message_arrives, joined_group_on_one_service,
-        peered, recv_until, send_group_message, OneServiceGroup,
+        accept_invitation, create_inviting, group_message_arrives,
+        joined_group_on_one_service_reaching, peered, recv_until, send_group_message,
+        OneServiceGroup,
     };
     use crate::common::group_rejoin::{rejoined, sign_in_again, sign_out};
     use crate::common::{
@@ -47,12 +48,14 @@ mod tests {
     async fn a_member_rejoins_by_itself_after_its_session_is_reestablished(
     ) -> Result<(), Box<dyn Error>> {
         let tag = "groupreconnect";
+        let (server, server_addr) = server_info_skip_cert_verification::<StackedRatchet>();
+        drop(tokio::spawn(server));
         let OneServiceGroup {
             service_addr,
             owner: (owner_tx, _owner_rx, owner_cid),
             member: (member_tx, mut member_rx, member_cid),
             group_key,
-        } = joined_group_on_one_service(tag).await?;
+        } = joined_group_on_one_service_reaching(tag, [server_addr; 2]).await?;
 
         send_group_message(&owner_tx, owner_cid, group_key, b"before");
         group_message_arrives(&mut member_rx, b"before")
@@ -60,8 +63,14 @@ mod tests {
             .ok_or("control: no delivery before the reconnect")?;
 
         sign_out(&member_tx, &mut member_rx, member_cid).await?;
-        let (_new_tx, mut new_rx) =
-            sign_in_again(service_addr, &format!("{tag}.1"), b"secret_1", member_cid).await?;
+        let (_new_tx, mut new_rx) = sign_in_again(
+            service_addr,
+            server_addr,
+            &format!("{tag}.1"),
+            b"secret_1",
+            member_cid,
+        )
+        .await?;
 
         // No re-invite, no accept: the channel must come back unasked.
         let _ = recv_until(&mut new_rx, "unsolicited GroupChannelCreateSuccess", |r| {
@@ -101,8 +110,14 @@ mod tests {
         // and the member's rejoin cannot complete, so its new session has no key.
         sign_out(&owner.0, &mut owner.1, owner.2).await?;
         sign_out(&member.0, &mut member.1, member.2).await?;
-        let (_new_tx, mut new_rx) =
-            sign_in_again(service_addr, &format!("{tag}.1"), b"secret_1", member.2).await?;
+        let (_new_tx, mut new_rx) = sign_in_again(
+            service_addr,
+            server_addr,
+            &format!("{tag}.1"),
+            b"secret_1",
+            member.2,
+        )
+        .await?;
 
         send_group_message(&talker.0, talker.2, group_key, b"unreadable");
         let dropped = recv_until(&mut new_rx, "GroupMessageDroppedNotification", |r| {

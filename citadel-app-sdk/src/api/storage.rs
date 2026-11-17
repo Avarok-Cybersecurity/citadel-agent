@@ -34,6 +34,60 @@ pub fn node(node_id: &str) -> Kv {
     }
 }
 
+/// The caller's own namespace on a node (`storage.node.authored`): anyone who may view the node
+/// writes here, and only here.
+pub fn node_authored(node_id: &str) -> Kv {
+    Kv {
+        backend: KvBackend::NodeAuthored {
+            node_id: node_id.into(),
+            author: None,
+        },
+    }
+}
+
+/// Another member's namespace on a node (`storage.node.authored`), to read; a write is refused.
+pub fn node_authored_by(node_id: &str, author: &str) -> AuthoredReader {
+    AuthoredReader {
+        backend: KvBackend::NodeAuthored {
+            node_id: node_id.into(),
+            author: Some(author.into()),
+        },
+    }
+}
+
+/// One page of every author's keys under `prefix` on a node, by author then key.
+pub fn list_authored(node_id: &str, prefix: &str, cursor: Option<String>) -> Pending<AuthoredPage> {
+    call(&KvListAuthored {
+        node_id: node_id.into(),
+        prefix: prefix.into(),
+        cursor,
+    })
+}
+
+/// Reads of one author's namespace on a node; it has no write, as the kernel admits none.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AuthoredReader {
+    backend: KvBackend,
+}
+
+impl AuthoredReader {
+    pub fn get(&self, key: &str) -> Pending<Option<Vec<u8>>> {
+        call(&KvGet {
+            backend: self.backend.clone(),
+            key: key.into(),
+        })
+        .map(|v| v.value.map(|b| b.0))
+    }
+
+    pub fn list(&self, prefix: &str, cursor: Option<String>) -> Pending<KvPage> {
+        call(&KvList {
+            backend: self.backend.clone(),
+            prefix: prefix.into(),
+            cursor,
+        })
+    }
+}
+
 /// On the member's own machine (`storage.local`).
 pub fn local() -> Kv {
     Kv {

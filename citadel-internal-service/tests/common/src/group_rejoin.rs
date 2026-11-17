@@ -36,9 +36,11 @@ pub async fn sign_out(
     Ok(())
 }
 
-/// Signs `username` in again on a new localhost connection; it must come back as `cid`.
+/// Signs `username` in again on a new localhost connection, to `server` (the address the
+/// account was registered to); it must come back as `cid`.
 pub async fn sign_in_again(
     service_addr: SocketAddr,
+    server: SocketAddr,
     username: &str,
     password: &[u8],
     cid: u64,
@@ -53,6 +55,7 @@ pub async fn sign_in_again(
     let connect_id = Uuid::new_v4();
     new_tx.send(InternalServiceRequest::Connect {
         username: username.to_string(),
+        server_address: server.to_string(),
         password: Some(password.to_vec().into()),
         security_key: false,
         recovery_code: None,

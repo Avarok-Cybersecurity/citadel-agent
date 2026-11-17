@@ -16,6 +16,8 @@ import type { ConnectMode, UdpMode, SessionSecuritySettings, PreSharedKey, Secur
 export interface CitadelClientConfig {
     url: string;
     username: string;
+    /** The server the account is on: the agent signs in only the account of this name there. */
+    serverAddress: string;
     password: string;
     timeout?: number;
 }
@@ -90,6 +92,7 @@ export class CitadelClient {
             Connect: {
                 request_id: requestId,
                 username: this.config.username,
+                server_address: this.config.serverAddress,
                 password: Array.from(passwordBytes),
                 // A password sign-in: this client cannot answer a security-key challenge.
                 security_key: false,

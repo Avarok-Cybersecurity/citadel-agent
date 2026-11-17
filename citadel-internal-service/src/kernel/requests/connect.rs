@@ -35,6 +35,10 @@ use citadel_internal_service_types::{
 use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt, Ratchet, SessionScope};
 use uuid::Uuid;
 
+/// Shown by a page too old to name the server: it can only be fixed by loading the current page.
+pub(crate) const OUTDATED_PAGE: &str =
+    "This page is older than the Citadel agent on this computer. Reload the page to update it, then sign in again.";
+
 pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
@@ -52,10 +56,33 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         keep_alive_timeout,
         session_security_settings,
         server_password,
+        server_address,
     } = request
     else {
         unreachable!("Should never happen if programmed properly")
     };
+    // A page built before Connect named its server sends none. Answered, not dropped: an
+    // unparseable request was ignored, and that page waited 30 seconds to say "timeout".
+    // No reason code, so the older page's client can read the answer and show the message.
+    if server_address.trim().is_empty() {
+        citadel_sdk::logging::warn!(target: "citadel", "[Connect] REFUSED {}: the page is older than this agent (no server_address)", username);
+        let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+            cid: 0,
+            message: OUTDATED_PAGE.to_string(),
+            request_id: Some(request_id),
+            reason_code: None,
+            admission_challenge: None,
+        });
+        return Some(HandledRequestResult { response, uuid });
+    }
+    // Only the account with this username on THIS server (account_server.rs), before anything is dialled.
+    if let Err(refusal) =
+        crate::kernel::account_server::check(this.remote(), &username, &server_address).await
+    {
+        citadel_sdk::logging::warn!(target: "citadel", "[Connect] REFUSED {} for {}: {:?}", username, server_address, refusal);
+        let response = refusal.into_response(&username, &server_address, request_id);
+        return Some(HandledRequestResult { response, uuid });
+    }
     let connect_mode = crate::kernel::requests::connect_mode::server_connect_mode(
         connect_mode,
         crate::kernel::requests::connect_mode::LoginOrigin::UserSignIn,

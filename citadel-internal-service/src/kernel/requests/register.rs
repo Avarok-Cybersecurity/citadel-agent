@@ -20,12 +20,13 @@
 //! - `register.rs` (this file) → `remote.register()` → Creates NEW account with NEW CID
 //! - `connect.rs` → `remote.connect()` → Connects to EXISTING account, SAME CID
 
+use crate::kernel::account_server::Refusal;
 use crate::kernel::requests::{handle_request, HandledRequestResult};
 use crate::kernel::session_route::deliver;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    InternalServiceRequest, InternalServiceResponse, RecoveryCodes,
+    FailureReason, InternalServiceRequest, InternalServiceResponse, RecoveryCodes,
 };
 use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{ConnectMode, ProtocolRemoteExt, Ratchet};
@@ -65,20 +66,24 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     // A failed lookup is answered, not logged: registration is a foreground
     // action and "Registration timed out" is what the user saw for a name that
     // simply does not resolve.
-    let refuse = |message: String| {
+    let refuse_held = |message: String, held_for_server: Option<String>| {
         Some(HandledRequestResult {
             response: InternalServiceResponse::RegisterFailure(
                 citadel_internal_service_types::RegisterFailure {
                     cid: 0,
                     message,
                     request_id: Some(request_id),
-                    reason_code: None,
+                    reason_code: held_for_server
+                        .as_ref()
+                        .map(|_| FailureReason::UsernameHeldForAnotherServer),
                     admission_challenge: None,
+                    held_for_server,
                 },
             ),
             uuid,
         })
     };
+    let refuse = |message: String| refuse_held(message, None);
 
     let address = match crate::kernel::server_address::classify(&server_addr) {
         Err(err) => return refuse(format!("invalid server address {server_addr}: {err}")),
@@ -90,6 +95,24 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         Err(err) => return refuse(format!("invalid server address {server_addr}: {err}")),
         Ok(server_host) => server_host,
     };
+
+    // One agent holds one account per username: the SDK stores an account by
+    // `username_to_cid(username)` and saves a new registration over whatever is there.
+    // Registering a name this agent holds for another server would erase that account
+    // here, so it is refused before anything is dialled. The same server is the
+    // server's to decide (a username it already has is refused there).
+    match crate::kernel::account_server::check(remote, &username, &server_addr).await {
+        Ok(()) | Err(Refusal::NoSuchAccount) => {}
+        Err(Refusal::OnAnotherServer(held)) => {
+            return refuse_held(
+                format!("This device already has an account named {username} on {held}; one device holds one account per username"),
+                Some(held),
+            )
+        }
+        Err(Refusal::InvalidServer(err)) => {
+            return refuse(format!("could not check this device's accounts for {username}: {err}"))
+        }
+    }
 
     let registered = match address {
         crate::kernel::server_address::ServerAddress::WebSocket(endpoint) => {
@@ -165,6 +188,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
             let connect_command = InternalServiceRequest::Connect {
                 username,
+                // The host just recorded for the account: the Connect signs in exactly it.
+                server_address: server_host,
                 password: Some(proposed_password),
                 security_key: false,
                 recovery_code: None,
@@ -186,6 +211,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     cid: 0,
                     reason_code: crate::kernel::sign_in::failure_reason(err.code),
                     admission_challenge: crate::kernel::sign_in::admission_challenge(&err),
+                    held_for_server: None,
                     message: err.into_string(),
                     request_id: Some(request_id),
                 },

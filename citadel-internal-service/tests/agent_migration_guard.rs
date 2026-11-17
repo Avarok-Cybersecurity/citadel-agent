@@ -11,20 +11,25 @@ mod tests {
     use crate::common::agent_ilm::*;
     use crate::common::group::recv_until;
     use crate::common::multi_window::{attach, next_role, open_window, password, ALICE_PASSWORD};
-    use crate::common::{open_localhost_connection, setup_log, two_sessions_on_one_service_at};
+    use crate::common::{
+        open_localhost_connection, server_info_skip_cert_verification, setup_log,
+        two_sessions_on_one_service_at,
+    };
     use citadel_internal_service_connector::messenger::ACCOUNT_ILM_OPTIONS;
     use citadel_internal_service_types::{
         ConfigCommand, InternalServiceRequest, InternalServiceResponse, SessionRole,
     };
     use citadel_sdk::prelude::*;
+    use std::net::SocketAddr;
     use uuid::Uuid;
 
     const RELOAD: &str = "Reload it to continue";
 
-    fn connect_as(username: &str) -> InternalServiceRequest {
+    fn connect_as(server: SocketAddr, username: &str) -> InternalServiceRequest {
         InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: username.to_string(),
+            server_address: server.to_string(),
             password: Some(SecBuffer::from(ALICE_PASSWORD.as_bytes().to_vec())),
             security_key: false,
             recovery_code: None,
@@ -40,7 +45,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn an_older_page_cannot_enter_a_hosted_session() {
         setup_log();
-        let world = mixed_hosting(ACCOUNT_ILM_OPTIONS).await;
+        let (server, server_addr) = server_info_skip_cert_verification::<StackedRatchet>();
+        tokio::task::spawn(server);
+        let world = mixed_hosting_reaching(server_addr, ACCOUNT_ILM_OPTIONS).await;
         let MixedHosting {
             alice_addr,
             alice,
@@ -77,7 +84,7 @@ mod tests {
 
         // The same page signing in with the right password: refused too, never taken over.
         let username = crate::common::agent_ilm::username_of(alice_addr, alice_cid).await;
-        older.0.send(connect_as(&username)).unwrap();
+        older.0.send(connect_as(server_addr, &username)).unwrap();
         match recv_until(&mut older.1, "the sign-in", |r| {
             matches!(
                 r,

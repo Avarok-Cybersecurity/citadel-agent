@@ -27,10 +27,14 @@ async fn a_password_and_key_account_signs_in_with_both_and_not_with_the_password
     let key = FakeKey::new(7);
     let user = account(&mut window, server, SignInPolicy::PasswordAndKey, &key).await?;
 
-    let alone = window.sign_in(&user.username, &password_offer()).await?;
+    let alone = window
+        .sign_in(server, &user.username, &password_offer())
+        .await?;
     assert!(alone.is_err(), "the password alone signed in: {alone:?}");
 
-    let both = window.connect(&user.username, &password_and(&key)).await?;
+    let both = window
+        .connect(server, &user.username, &password_and(&key))
+        .await?;
     assert!(
         matches!(both.response, InternalServiceResponse::ConnectSuccess(_)),
         "password and key did not sign in: {:?}",
@@ -61,7 +65,7 @@ async fn a_wrong_prf_output_is_refused() -> Result<(), Box<dyn Error>> {
 
     let another_key = FakeKey::new(8);
     let wrong = window
-        .connect(&user.username, &password_and(&another_key))
+        .connect(server, &user.username, &password_and(&another_key))
         .await?;
     assert_eq!(wrong.challenges.len(), 1, "the key was not asked for");
     assert!(
@@ -84,12 +88,14 @@ async fn a_key_only_account_signs_in_with_no_password() -> Result<(), Box<dyn Er
         key: Some(key),
         ..Default::default()
     };
-    let signed_in = window.sign_in(&user.username, &key_only).await?;
+    let signed_in = window.sign_in(server, &user.username, &key_only).await?;
     assert!(
         signed_in.is_ok(),
         "the key alone did not sign in: {signed_in:?}"
     );
-    let no_key = window.sign_in(&user.username, &password_offer()).await?;
+    let no_key = window
+        .sign_in(server, &user.username, &password_offer())
+        .await?;
     assert!(
         no_key.is_err(),
         "a key-only account signed in on its password"
@@ -107,10 +113,14 @@ async fn a_key_gated_session_is_not_handed_to_its_password_alone() -> Result<(),
     let mut first = Window::open(agent).await?;
     let key = FakeKey::new(7);
     let user = account(&mut first, server, SignInPolicy::PasswordAndKey, &key).await?;
-    first.sign_in(&user.username, &password_and(&key)).await??;
+    first
+        .sign_in(server, &user.username, &password_and(&key))
+        .await??;
 
     let mut second = Window::open(agent).await?;
-    let reused = second.connect(&user.username, &password_offer()).await?;
+    let reused = second
+        .connect(server, &user.username, &password_offer())
+        .await?;
     assert!(
         matches!(reused.response, InternalServiceResponse::ConnectFailure(ref f) if f.cid == 0),
         "the password alone was handed a key-gated session: {:?}",

@@ -102,6 +102,7 @@ mod tests {
         legacy.0.send(InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "mw.legacy.0".to_string(),
+            server_address: accounts.server_addr.to_string(),
             password: Some(SecBuffer::from(ALICE_PASSWORD.as_bytes().to_vec())),
             security_key: false,
             recovery_code: None,

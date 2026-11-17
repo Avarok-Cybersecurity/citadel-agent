@@ -146,7 +146,17 @@ pub fn render() -> String {
     let node = KvBackend::Node {
         node_id: String::new(),
     };
-    for b in [KvBackend::User, KvBackend::Scope, node, KvBackend::Local] {
+    let authored = KvBackend::NodeAuthored {
+        node_id: String::new(),
+        author: None,
+    };
+    for b in [
+        KvBackend::User,
+        KvBackend::Scope,
+        node,
+        KvBackend::Local,
+        authored,
+    ] {
         writeln!(o, "  {}: {},", kv_tag(&b), q(b.capability().name())).unwrap();
     }
     writeln!(o, "}} as const;\n\n/** The capability a client stream's first attempt needs, and its relay fallback's (null: none). */\nexport const TRANSPORT_CAPABILITY = {{").unwrap();

@@ -262,6 +262,7 @@ mod tests {
         let connect_command = InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "Username".into(),
+            server_address: server_bind_address.to_string(),
             password: Some("Password".into()),
             security_key: false,
             recovery_code: None,
@@ -289,6 +290,7 @@ mod tests {
         let connect_command = InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "Username".into(),
+            server_address: server_bind_address.to_string(),
             password: Some("Password".into()),
             security_key: false,
             recovery_code: None,
@@ -316,6 +318,7 @@ mod tests {
         let connect_command = InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "Username".into(),
+            server_address: server_bind_address.to_string(),
             password: Some("Password".into()),
             security_key: false,
             recovery_code: None,
@@ -769,7 +772,7 @@ mod tests {
 
             let internal_service = NodeBuilder::default()
                 .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
-                .with_backend(BackendType::Filesystem("filesystem".into()))
+                .with_backend(crate::common::test_backend())
                 .with_node_type(NodeType::Peer)
                 .with_insecure_skip_cert_verification()
                 .build(internal_service_kernel)?;

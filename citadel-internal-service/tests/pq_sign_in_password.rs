@@ -41,7 +41,7 @@ async fn a_registration_returns_ten_recovery_codes_and_the_password_signs_in(
         "the codes repeat"
     );
 
-    let signed_in = window.connect(&user, &password(PASSWORD)).await?;
+    let signed_in = window.connect(server, &user, &password(PASSWORD)).await?;
     let InternalServiceResponse::ConnectSuccess(success) = signed_in.response else {
         panic!("the password did not sign in: {:?}", signed_in.response);
     };
@@ -71,16 +71,18 @@ async fn a_live_session_is_handed_only_to_its_password(kind: Server) -> Result<(
     let user = username("live");
     let (_, codes) = first.register(server, &user, PASSWORD).await??;
     assert_eq!(codes.0.len(), 10);
-    let cid = first.sign_in(&user, &password(PASSWORD)).await??;
+    let cid = first.sign_in(server, &user, &password(PASSWORD)).await??;
 
     let mut second = Window::open(agent).await?;
-    let wrong = second.connect(&user, &password("not the password")).await?;
+    let wrong = second
+        .connect(server, &user, &password("not the password"))
+        .await?;
     assert!(
         matches!(wrong.response, InternalServiceResponse::ConnectFailure(ref f) if f.cid == 0),
         "a wrong password was handed the live session: {:?}",
         wrong.response
     );
-    let right = second.connect(&user, &password(PASSWORD)).await?;
+    let right = second.connect(server, &user, &password(PASSWORD)).await?;
     assert!(
         matches!(right.response, InternalServiceResponse::SessionAlreadyActive(ref a) if a.cid == cid),
         "the right password was not handed the live session: {:?}",

@@ -100,6 +100,7 @@ groups! {
         StoreFileWrite = 9 -> (), StorageFiles;
         StoreFileRead = 10 -> BytesValue, StorageFiles;
         StoreFileList = 11 -> FileList, StorageFiles;
+        KvListAuthored = 12 -> AuthoredPage, StorageNodeAuthored;
     }
     Net = 10, "net", NetOps {
         HostFetch = 1 -> HttpResponse, NetHost;

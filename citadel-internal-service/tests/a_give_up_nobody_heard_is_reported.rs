@@ -80,7 +80,7 @@ async fn a_give_up_with_no_ui_attached_is_reported_to_the_next_one() -> Result<(
 
     // Signing in again ends it.
     proxy.refuse(false);
-    let login = connect(&mut sink, &mut stream, &name).await?;
+    let login = connect(&mut sink, &mut stream, &proxy.addr.to_string(), &name).await?;
     assert!(
         matches!(login, InternalServiceResponse::ConnectSuccess(ref s) if s.cid == cid),
         "{login:?}"

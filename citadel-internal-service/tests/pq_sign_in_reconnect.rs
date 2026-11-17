@@ -28,7 +28,7 @@ async fn after_a_drop(policy: SignInPolicy) -> Result<Vec<String>, Box<dyn Error
         key: Some(key),
         ..password_offer()
     };
-    let cid = window.sign_in(&user.username, &offer).await??;
+    let cid = window.sign_in(proxy.addr, &user.username, &offer).await??;
 
     proxy.sever();
     let mut events = vec![next_link_event(&mut window.stream, cid).await?];

@@ -47,13 +47,18 @@ async fn a_registration_and_a_sign_in_need_a_good_token() -> Result<(), Box<dyn 
         (None, FailureReason::AdmissionRequired),
         (Some("forged"), FailureReason::AdmissionFailed),
     ] {
-        let refused = window.connect(&user, &password(token)).await?.response;
+        let refused = window
+            .connect(server, &user, &password(token))
+            .await?
+            .response;
         let InternalServiceResponse::ConnectFailure(failure) = refused else {
             panic!("a sign-in was admitted without a good token: {refused:?}");
         };
         assert_eq!(failure.reason_code, Some(reason), "{token:?}");
     }
-    let signed_in = window.sign_in(&user, &password(Some(GOOD_TOKEN))).await?;
+    let signed_in = window
+        .sign_in(server, &user, &password(Some(GOOD_TOKEN)))
+        .await?;
     assert!(signed_in.is_ok(), "a good token was refused: {signed_in:?}");
     Ok(())
 }
@@ -74,7 +79,7 @@ async fn a_wrong_password_carries_no_reason_code() -> Result<(), Box<dyn Error>>
         admission: Some(GOOD_TOKEN.to_string()),
         ..Default::default()
     };
-    let refused = window.connect(&user, &offer).await?.response;
+    let refused = window.connect(server, &user, &offer).await?.response;
     let InternalServiceResponse::ConnectFailure(failure) = refused else {
         panic!("a wrong password signed in: {refused:?}");
     };
@@ -114,7 +119,9 @@ async fn connect_after_register_asks_for_a_fresh_sign_in_token() -> Result<(), B
         panic!("the connect reused the registration's token: {connect:?}");
     };
     assert_eq!(failure.reason_code, Some(FailureReason::AdmissionRequired));
-    let signed_in = window.sign_in(&user, &password(Some(GOOD_TOKEN))).await?;
+    let signed_in = window
+        .sign_in(server, &user, &password(Some(GOOD_TOKEN)))
+        .await?;
     assert!(signed_in.is_ok(), "{signed_in:?}");
     Ok(())
 }

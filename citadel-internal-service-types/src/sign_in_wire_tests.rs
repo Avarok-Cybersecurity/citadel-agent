@@ -4,10 +4,12 @@ use super::*;
 
 /// A `Connect` as a client from before post-quantum sign-in sends it: a password, and neither
 /// `security_key` nor `recovery_code` (nor `server_password`, which the UI never sends).
+/// Nor `server_address`: it parses, empty, so the agent can answer that page (connect.rs).
 fn legacy_connect_json() -> String {
     let current = InternalServiceRequest::Connect {
         request_id: Uuid::new_v4(),
         username: "alice".to_string(),
+        server_address: "bench.work.avarok.net".to_string(),
         password: Some(SecBuffer::from("hunter2")),
         security_key: true,
         recovery_code: None,
@@ -25,6 +27,7 @@ fn legacy_connect_json() -> String {
         "recovery_code",
         "server_password",
         "admission_token",
+        "server_address",
     ] {
         assert!(fields.remove(added).is_some(), "{added} is not a field");
     }
@@ -38,11 +41,14 @@ fn an_older_clients_connect_still_parses_as_a_password_sign_in() {
         password,
         security_key,
         recovery_code,
+        server_address,
         ..
     } = request
     else {
         panic!("not a Connect: {request:?}");
     };
+    // Parsed rather than dropped, so the agent answers it: an empty server is refused at once.
+    assert_eq!(server_address, "");
     assert_eq!(password.expect("the password").as_ref(), b"hunter2");
     assert!(
         !security_key,
@@ -108,6 +114,7 @@ fn an_admission_token_never_reaches_a_debug_string() {
     let connect = InternalServiceRequest::Connect {
         request_id: Uuid::nil(),
         username: "alice".to_string(),
+        server_address: "bench.work.avarok.net".to_string(),
         password: None,
         security_key: false,
         recovery_code: None,
@@ -157,4 +164,16 @@ fn a_key_challenge_and_its_answer_never_print_their_bytes() {
         assert!(!printed.contains(leading), "{printed}");
         assert!(!printed.contains("90, 90"), "{printed}");
     }
+}
+
+#[test]
+fn a_reason_from_a_newer_agent_decodes_as_unknown_and_keeps_its_failure() {
+    let reason: FailureReason = serde_json::from_str("\"some_reason_from_the_future\"").unwrap();
+    assert_eq!(reason, FailureReason::Unknown);
+    let failure: RegisterFailure = serde_json::from_str(
+        r#"{"cid":0,"message":"refused","request_id":null,"reason_code":"some_reason_from_the_future"}"#,
+    )
+    .unwrap();
+    assert_eq!(failure.reason_code, Some(FailureReason::Unknown));
+    assert_eq!(failure.message, "refused");
 }

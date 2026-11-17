@@ -2,8 +2,8 @@
 //! master plan §5.1). One crate holds every derivation and every verifier, compiled natively
 //! for the agent and the kernel and to wasm32-unknown-unknown for the browser: names
 //! (`handle@canonical-domain`), the identity key and its fingerprint, per-server passwords,
-//! bindings, the recovery phrase, `/.well-known/citadel`, the server challenge and the
-//! "Sign in with Citadel" assertion.
+//! bindings, the recovery phrase, `/.well-known/citadel`, the server challenge, and the
+//! "Sign in with Citadel" identity proof and assertion.
 //!
 //! Pure: no I/O, no randomness (seeds and nonces are the caller's), no clock (`now_s` is the
 //! caller's). Post-quantum only: ML-DSA-65, SHA3-256, HMAC-SHA3-256.
@@ -22,6 +22,7 @@ mod keys;
 mod names;
 mod phrase;
 mod pin;
+mod proof;
 mod server;
 mod well_known;
 mod well_known_error;
@@ -60,6 +61,10 @@ pub use phrase::{
     match_phrase, phrase_decode, phrase_encode, PhraseError, MATCH_PHRASE_DOMAIN, PHRASE_WORDS,
 };
 pub use pin::check_against_pin;
+pub use proof::{
+    proof_message, verify_proof, ProofError, SignInProof, MAX_PROOF_FIELD_BYTES, PROOF_DOMAIN,
+    PROOF_FIXED_LEN, PROOF_VERSION,
+};
 pub use server::{
     challenge_message, verify_server_challenge, ChallengeError, ServerKey, CHALLENGE_DOMAIN,
     NONCE_LEN, SERVER_KEY_LABEL,

@@ -7,6 +7,10 @@
 //!
 //! The CBOR mirrors the JSON exactly: the same keys, text as text, integers as unsigned, the key
 //! as its base64url text. Unknown fields are refused, so nothing unsigned rides along.
+//!
+//! `citadel` is optional: absent means an issuer-only server (work.avarok.net) that runs no node
+//! and only signs sign-in assertions. Absent is absent in the JSON and in the CBOR, never `null`
+//! and never an empty map.
 
 use crate::cbor::Cbor;
 use crate::codec::{base64url_decode, base64url_encode, domain_separated};
@@ -29,7 +33,8 @@ pub const MAX_WSS_LEN: usize = 256;
 pub struct WellKnownCitadel {
     pub v: u8,
     pub canonical_domain: CanonicalDomain,
-    pub citadel_wss: String,
+    /// `None` ⇔ the document has no `citadel` member: an issuer-only server.
+    pub citadel_wss: Option<String>,
     pub server_key: MlDsa65Pk,
     pub former_domains: Vec<CanonicalDomain>,
     pub issued_at_s: u64,
@@ -40,7 +45,12 @@ pub struct WellKnownCitadel {
 struct Doc {
     v: u8,
     canonical_domain: String,
-    citadel: DocCitadel,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    citadel: Option<DocCitadel>,
     server_key: DocKey,
     former_domains: Vec<String>,
     issued_at: u64,
@@ -60,6 +70,11 @@ struct DocKey {
     pk: String,
 }
 
+/// A present `citadel` must be an object: `"citadel": null` is refused, not read as absent.
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<DocCitadel>, D::Error> {
+    DocCitadel::deserialize(d).map(Some)
+}
+
 /// The bytes the document's `sig` covers.
 pub fn well_known_message(doc: &WellKnownCitadel) -> Result<Vec<u8>, WellKnownError> {
     let pk = doc.server_key.to_base64url();
@@ -68,16 +83,17 @@ pub fn well_known_message(doc: &WellKnownCitadel) -> Result<Vec<u8>, WellKnownEr
         .iter()
         .map(|d| Cbor::Text(d.as_str()))
         .collect();
-    let cbor = Cbor::Map(vec![
+    let mut entries = vec![
         ("v", Cbor::Unsigned(u64::from(doc.v))),
         (
             "canonical_domain",
             Cbor::Text(doc.canonical_domain.as_str()),
         ),
-        (
-            "citadel",
-            Cbor::Map(vec![("wss", Cbor::Text(&doc.citadel_wss))]),
-        ),
+    ];
+    if let Some(wss) = &doc.citadel_wss {
+        entries.push(("citadel", Cbor::Map(vec![("wss", Cbor::Text(wss))])));
+    }
+    entries.extend([
         (
             "server_key",
             Cbor::Map(vec![
@@ -87,9 +103,8 @@ pub fn well_known_message(doc: &WellKnownCitadel) -> Result<Vec<u8>, WellKnownEr
         ),
         ("former_domains", Cbor::Array(former)),
         ("issued_at", Cbor::Unsigned(doc.issued_at_s)),
-    ])
-    .encode()
-    .map_err(WellKnownError::Json)?;
+    ]);
+    let cbor = Cbor::Map(entries).encode().map_err(WellKnownError::Json)?;
     Ok(domain_separated(WELL_KNOWN_DOMAIN, &cbor))
 }
 
@@ -102,7 +117,7 @@ fn canonical(text: &str) -> Result<CanonicalDomain, WellKnownError> {
 }
 
 /// The schema's bounds on the raw values, checked before anything is interpreted.
-fn check_shape(issued_at: u64, former: usize, wss: &str) -> Result<(), WellKnownError> {
+fn check_shape(issued_at: u64, former: usize, wss: Option<&str>) -> Result<(), WellKnownError> {
     if !(MIN_ISSUED_AT_S..=MAX_ISSUED_AT_S).contains(&issued_at) {
         return Err(WellKnownError::Json(format!(
             "issued_at {issued_at} is outside [{MIN_ISSUED_AT_S}, {MAX_ISSUED_AT_S}]"
@@ -113,6 +128,9 @@ fn check_shape(issued_at: u64, former: usize, wss: &str) -> Result<(), WellKnown
             "{former} former domains, over the {MAX_FORMER_DOMAINS} allowed"
         )));
     }
+    let Some(wss) = wss else {
+        return Ok(());
+    };
     let charset = wss
         .bytes()
         .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b".:/_~-".contains(&b));
@@ -128,12 +146,13 @@ fn check_fields(doc: &WellKnownCitadel) -> Result<(), WellKnownError> {
     if doc.v != WELL_KNOWN_VERSION {
         return Err(WellKnownError::Version(doc.v));
     }
-    let host = doc
-        .citadel_wss
-        .strip_prefix("wss://")
-        .ok_or_else(|| WellKnownError::Endpoint(doc.citadel_wss.clone()))?;
-    if canonical_domain(host).is_err() {
-        return Err(WellKnownError::Endpoint(doc.citadel_wss.clone()));
+    if let Some(wss) = &doc.citadel_wss {
+        let host = wss
+            .strip_prefix("wss://")
+            .ok_or_else(|| WellKnownError::Endpoint(wss.clone()))?;
+        if canonical_domain(host).is_err() {
+            return Err(WellKnownError::Endpoint(wss.clone()));
+        }
     }
     for (at, former) in doc.former_domains.iter().enumerate() {
         if *former == doc.canonical_domain || doc.former_domains[..at].contains(former) {
@@ -150,14 +169,15 @@ pub fn parse_well_known(
     fetched_from: &CanonicalDomain,
 ) -> Result<WellKnownCitadel, WellKnownError> {
     let raw: Doc = serde_json::from_slice(json).map_err(|e| WellKnownError::Json(e.to_string()))?;
-    check_shape(raw.issued_at, raw.former_domains.len(), &raw.citadel.wss)?;
+    let wss = raw.citadel.map(|c| c.wss);
+    check_shape(raw.issued_at, raw.former_domains.len(), wss.as_deref())?;
     if raw.server_key.alg != SERVER_KEY_ALG {
         return Err(WellKnownError::Alg(raw.server_key.alg));
     }
     let doc = WellKnownCitadel {
         v: raw.v,
         canonical_domain: canonical(&raw.canonical_domain)?,
-        citadel_wss: raw.citadel.wss,
+        citadel_wss: wss,
         server_key: MlDsa65Pk::from_base64url(&raw.server_key.pk)
             .map_err(WellKnownError::Signature)?,
         former_domains: raw
@@ -188,15 +208,17 @@ impl ServerKey {
                 offered_fp: fingerprint(&doc.server_key),
             });
         }
-        check_shape(doc.issued_at_s, doc.former_domains.len(), &doc.citadel_wss)?;
+        check_shape(
+            doc.issued_at_s,
+            doc.former_domains.len(),
+            doc.citadel_wss.as_deref(),
+        )?;
         check_fields(doc)?;
         let sig = self.signer.sign(&well_known_message(doc)?);
         let raw = Doc {
             v: doc.v,
             canonical_domain: doc.canonical_domain.to_string(),
-            citadel: DocCitadel {
-                wss: doc.citadel_wss.clone(),
-            },
+            citadel: doc.citadel_wss.clone().map(|wss| DocCitadel { wss }),
             server_key: DocKey {
                 alg: SERVER_KEY_ALG.to_string(),
                 pk: doc.server_key.to_base64url(),

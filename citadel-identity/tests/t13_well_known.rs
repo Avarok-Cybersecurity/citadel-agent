@@ -15,7 +15,7 @@ fn doc(key: &ServerKey) -> WellKnownCitadel {
     WellKnownCitadel {
         v: 1,
         canonical_domain: main_domain(),
-        citadel_wss: "wss://main.work.avarok.net/citadel".to_string(),
+        citadel_wss: Some("wss://main.work.avarok.net/citadel".to_string()),
         server_key: key.public_key().clone(),
         former_domains: vec![former_domain()],
         issued_at_s: NOW,
@@ -127,7 +127,7 @@ fn unknown_fields_wrong_alg_version_and_endpoint_are_refused() {
     v2.v = 2;
     assert_eq!(key.sign_well_known(&v2), Err(WellKnownError::Version(2)));
     let mut plain = doc(&key);
-    plain.citadel_wss = "ws://main.work.avarok.net/citadel".to_string();
+    plain.citadel_wss = Some("ws://main.work.avarok.net/citadel".to_string());
     assert!(matches!(
         key.sign_well_known(&plain),
         Err(WellKnownError::Endpoint(_))

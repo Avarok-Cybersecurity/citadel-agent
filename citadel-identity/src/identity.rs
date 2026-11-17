@@ -27,7 +27,7 @@ pub const PASSWORD_LEN: usize = 43;
 /// A person's identity, expanded from the 32-byte seed the caller holds sealed. The seed itself
 /// is not kept; the signing key and the password key are wiped on drop.
 pub struct Identity {
-    signer: Signer,
+    pub(crate) signer: Signer,
     k_pw: Zeroizing<[u8; 32]>,
 }
 

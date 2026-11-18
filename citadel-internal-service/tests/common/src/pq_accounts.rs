@@ -2,7 +2,7 @@
 //! in with the password, enrol a key right after (the PRF salt exists only once the server has
 //! the account), and choose a policy.
 
-use crate::pq::{username, CRED, PASSWORD};
+use crate::pq::{username, PASSWORD};
 use crate::pq_window::{FakeKey, Offer, Window};
 use citadel_internal_service_types::RecoveryCodes;
 use citadel_internal_service_types::{SignInManagementOp, SignInManagementOutcome, SignInPolicy};
@@ -23,7 +23,6 @@ pub fn password_offer() -> Offer {
 
 pub fn add_key() -> SignInManagementOp {
     SignInManagementOp::AddSecurityKey {
-        credential_id: CRED.to_vec(),
         label: "YubiKey".to_string(),
     }
 }

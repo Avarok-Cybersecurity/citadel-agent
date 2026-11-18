@@ -1053,6 +1053,7 @@ fn refusal_response(
             cid: *cid,
             message: message.to_string(),
             request_id: Some(*request_id),
+            reason: None,
         }),
         InternalServiceRequest::AppFetch {
             request_id, cid, ..

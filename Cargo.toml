@@ -40,6 +40,21 @@ exclude = [
 [profile.release]
 overflow-checks = true
 
+# Optimise the password hash in debug and test builds. This is the one explanation; the
+# parent workspace and deploy/tenant-worker carry the same two lines and point here.
+#
+# The SDK hashes every password at its shipped Argon2 cost (64 MiB, 10 passes, 8 lanes) in
+# every build, and sets this same override in its own root Cargo.toml. Cargo applies only
+# the ROOT workspace's [profile] sections and ignores a dependency's, so the SDK's override
+# never reaches this workspace. Unoptimised, one hash cost ~3.7 s of CPU instead of ~0.3 s
+# (measured on this workspace's debug build). On a 4-vCPU runner each reconnect attempt then
+# spent its attempt timeout hashing: sign-in and reconnect tests failed "no answer from the
+# server in 8s", and a timed-out attempt still in flight refused the next login with
+# "Session for CID .. already exists". Only the hashing crate is optimised: the same
+# settings and code run, `test` inherits `dev`, and release builds are untouched.
+[profile.dev.package.rust-argon2]
+opt-level = 3
+
 [workspace.dependencies]
 
 # Workspace deps
@@ -58,16 +73,16 @@ citadel-app-net-policy = { path = "citadel-app-net-policy", version = "0.1.0" }
 citadel-ihttp-types = { path = "citadel-ihttp-types", version = "0.1.0" }
 
 # Avarok deps
-citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "f419b95e" }
-citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "f419b95e" }
-citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "f419b95e" }
-citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "f419b95e" }
-citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "f419b95e" }
-citadel_proto = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "f419b95e" }
+citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "cdaa0555" }
+citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "cdaa0555" }
+citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "cdaa0555" }
+citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "cdaa0555" }
+citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "cdaa0555" }
+citadel_proto = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "cdaa0555" }
 # Tests only: a Flat group's application ciphertext, measured against the topic cap (app_topic.rs).
-citadel_treekem = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "f419b95e" }
+citadel_treekem = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "cdaa0555" }
 # Tests only: the server-side post-quantum sign-in settings (tests/common/src/pq.rs).
-citadel_user = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "f419b95e" }
+citadel_user = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "cdaa0555" }
 
 # Standard deps
 serde = { version = "1.0.104", features = ["derive"] }

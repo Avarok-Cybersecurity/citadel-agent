@@ -8,17 +8,19 @@
 //!
 //! What "valid" means is checked here, before the challenge is spent, so a bad answer cannot use
 //! up the touch a good one needs: the challenge must still be open, the answer must come
-//! from a window it was sent to, name an allowed credential, and carry a 32-byte PRF output.
+//! from a window it was sent to, name a credential its ceremony accepts (an allowed key, or a
+//! new one when registering), and carry a 32-byte PRF output.
 //!
 //! The agent does not wait for anyone: the SDK's own deadline bounds the wait. A relay lives as
 //! long as the request that asked, and that request ends when the SDK gives up on the touch, so
 //! its open challenges close with it and a late answer finds nothing to answer.
 
+use super::key_wire::{purpose, wire_ceremony};
 use crate::kernel::session_route::{deliver, Clients};
 use citadel_internal_service_types::{
-    InternalServiceResponse, SecurityKeyChallengeNotification, SecurityKeyPurpose,
+    InternalServiceResponse, SecurityKeyCeremony, SecurityKeyChallengeNotification,
 };
-use citadel_proto::auth::{SecurityKeyPurpose as SdkPurpose, KEY_PRESENCE_WINDOW};
+use citadel_proto::auth::KEY_PRESENCE_WINDOW;
 use citadel_sdk::logging::{info, warn};
 use citadel_sdk::prelude::{security_key_channel, SecBuffer, SecurityKeyChallenge, SecurityKeyPrf};
 use parking_lot::Mutex;
@@ -40,7 +42,7 @@ struct Open {
     relay: Uuid,
     cid: u64,
     audience: Vec<Uuid>,
-    allowed: Vec<Vec<u8>>,
+    ceremony: SecurityKeyCeremony,
     challenge: SecurityKeyChallenge,
 }
 
@@ -122,12 +124,14 @@ async fn serve(
     while let Some(challenge) = touches.recv().await {
         asked.store(true, Ordering::SeqCst);
         let challenge_id = Uuid::new_v4();
+        let ceremony = wire_ceremony(&challenge.request.ceremony);
         let notification = SecurityKeyChallengeNotification {
             cid: asker.cid,
             request_id: Some(asker.request_id),
             challenge_id,
             purpose: purpose(challenge.purpose),
-            allowed_credential_ids: challenge.request.credential_ids.clone(),
+            rp_id: challenge.request.rp_id.clone(),
+            ceremony: ceremony.clone(),
             prf_salt: challenge.request.prf_eval_salt.to_vec(),
             expires_in_ms: KEY_PRESENCE_WINDOW.as_millis() as u64,
         };
@@ -137,7 +141,7 @@ async fn serve(
                 relay,
                 cid: asker.cid,
                 audience: asker.audience.clone(),
-                allowed: challenge.request.credential_ids.clone(),
+                ceremony,
                 challenge,
             },
         );
@@ -152,14 +156,6 @@ async fn serve(
     }
 }
 
-fn purpose(purpose: SdkPurpose) -> SecurityKeyPurpose {
-    match purpose {
-        SdkPurpose::SignIn => SecurityKeyPurpose::SignIn,
-        SdkPurpose::StepUp => SecurityKeyPurpose::StepUp,
-        SdkPurpose::Enrol => SecurityKeyPurpose::Enrol,
-    }
-}
-
 impl KeyChallenges {
     /// Hands `prf_output` for `credential_id` to the SDK if the answer is valid; the session's
     /// CID either way.
@@ -171,7 +167,7 @@ impl KeyChallenges {
         prf_output: &SecBuffer,
     ) -> Result<u64, Refused> {
         let open = self.take(from, challenge_id, |open| {
-            if !open.allowed.contains(&credential_id) {
+            if !open.ceremony.accepts(&credential_id) {
                 return Err("The key that answered is not one this challenge allows".into());
             }
             if prf_output.as_ref().len() != PRF_LEN {

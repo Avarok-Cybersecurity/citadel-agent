@@ -6,7 +6,6 @@ const CRED: &[u8] = b"yubikey-5-credential-id";
 
 fn add() -> SignInManagementOp {
     SignInManagementOp::AddSecurityKey {
-        credential_id: CRED.to_vec(),
         label: "YubiKey".into(),
     }
 }
@@ -75,8 +74,7 @@ fn no_credential_id_reaches_a_debug_string() {
         credentials: vec![credential()],
     });
     let needle = format!("{:?}", CRED.to_vec());
-    for printed in [format!("{listed:?}"), format!("{:?}", add())] {
-        assert!(!printed.contains(&needle), "{printed}");
-        assert!(!printed.contains("yubikey-5"), "{printed}");
-    }
+    let printed = format!("{listed:?}");
+    assert!(!printed.contains(&needle), "{printed}");
+    assert!(!printed.contains("yubikey-5"), "{printed}");
 }

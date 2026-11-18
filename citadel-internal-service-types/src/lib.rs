@@ -762,6 +762,11 @@ pub struct PeerConnectSuccess {
     /// Whether a background upgrade may still move the connection off the server relay. `false`
     /// with `server_relay` means it stays relayed.
     pub upgrading: bool,
+    /// The settings the connection was established with: those the two ends agreed in their
+    /// key exchange. When both dialled at once the server merges the two dials at the stronger
+    /// offer, so these need not be the ones this end asked for, nor any offer this end was shown.
+    #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
+    pub session_security_settings: SessionSecuritySettings,
     pub request_id: Option<Uuid>,
 }
 

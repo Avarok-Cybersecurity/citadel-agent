@@ -36,6 +36,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let path_watch = PathWatch::new(&channel.p2p_path_cell());
     this.peer_path_up(session_cid, peer_cid, channel.p2p_path_cell());
     let (path, upgrading) = path_watch.current();
+    let negotiated = channel.session_security_settings();
     this.supervisors
         .set_path_control(session_cid, peer_cid, channel.path_control());
     if let Some(restored) = channel.take_restored_udp() {
@@ -144,6 +145,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     peer_cid,
                     path,
                     upgrading,
+                    session_security_settings: negotiated,
                     request_id: None,
                 },
             ))

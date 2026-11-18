@@ -44,6 +44,18 @@ async fn offered_level(to: &mut support::Stream, from: u64) -> Result<u8, Box<dy
     .await
 }
 
+/// The level (`SecurityLevel::value`) of the next link to `peer` that `window` is told is up:
+/// the level the two ends agreed, whichever of them dialled.
+async fn linked_level(window: &mut support::Stream, peer: u64) -> Result<u8, Box<dyn Error>> {
+    expect(window, |r| match r {
+        InternalServiceResponse::PeerConnectSuccess(s) if s.peer_cid == peer => {
+            Some(s.session_security_settings.security_level.value())
+        }
+        _ => None,
+    })
+    .await
+}
+
 /// The connected pair's chat at `a` raised to Extreme as the UI raises it: tell the agent, drop
 /// the link, ask for it back.
 async fn connect_then_raise(pair: &mut supervised::Pair) -> Result<(), Box<dyn Error>> {
@@ -53,10 +65,14 @@ async fn connect_then_raise(pair: &mut supervised::Pair) -> Result<(), Box<dyn E
         offered_level(&mut pair.b.stream, a).await?,
         SecurityLevel::Standard.value()
     );
-    expect(&mut pair.a.stream, |r| {
-        matches!(r, InternalServiceResponse::PeerConnectSuccess(s) if s.peer_cid == b).then_some(())
-    })
-    .await?;
+    assert_eq!(
+        linked_level(&mut pair.a.stream, b).await?,
+        SecurityLevel::Standard.value()
+    );
+    assert_eq!(
+        linked_level(&mut pair.b.stream, a).await?,
+        SecurityLevel::Standard.value()
+    );
 
     // The UI's changeChatLevel: tell the agent, drop, ask for it back.
     let told = Uuid::new_v4();
@@ -101,13 +117,16 @@ async fn connect_then_raise(pair: &mut supervised::Pair) -> Result<(), Box<dyn E
     Ok(())
 }
 
-/// `a`'s window sees the link back, and any "Reconnecting…" it was told answered.
-async fn settles(pair: &mut supervised::Pair) -> Result<(), Box<dyn Error>> {
+/// `a`'s window sees the link back, and any "Reconnecting…" it was told answered; the level the
+/// link came back at.
+async fn settles(pair: &mut supervised::Pair) -> Result<u8, Box<dyn Error>> {
     let b = pair.b.cid;
-    let (mut connected, mut dialing, mut healed) = (false, false, false);
+    let (mut connected, mut dialing, mut healed) = (None, false, false);
     expect(&mut pair.a.stream, |r| {
         match r {
-            InternalServiceResponse::PeerConnectSuccess(s) if s.peer_cid == b => connected = true,
+            InternalServiceResponse::PeerConnectSuccess(s) if s.peer_cid == b => {
+                connected.get_or_insert(s.session_security_settings.security_level.value());
+            }
             InternalServiceResponse::SupervisorNotification(n) if n.peer_cid == Some(b) => {
                 match n.state {
                     SupervisorState::Healing => dialing = true,
@@ -117,11 +136,12 @@ async fn settles(pair: &mut supervised::Pair) -> Result<(), Box<dyn Error>> {
             }
             _ => {}
         }
-        (connected && (!dialing || healed)).then_some(())
+        connected.filter(|_| !dialing || healed)
     })
     .await
     .map_err(|e| {
-        format!("connected {connected}, told dialing {dialing}, told healed {healed}: {e}").into()
+        format!("connected at {connected:?}, told dialing {dialing}, told healed {healed}: {e}")
+            .into()
     })
 }
 
@@ -135,22 +155,34 @@ async fn a_raised_chat_is_redialled_at_its_level_and_reported_back() -> Result<(
         SecurityLevel::Extreme.value(),
         "the supervisor redials at the chat's level, not the session's"
     );
-    settles(&mut pair).await
+    assert_eq!(settles(&mut pair).await?, SecurityLevel::Extreme.value());
+    Ok(())
 }
 
-/// The peer did not change its level and its agent supervises too: it redials at Standard
-/// and is declined. The pair still settles at the raised level -- the peer does not have to
-/// agree -- and the peer's own "Reconnecting…" is answered.
+/// The peer did not change its level and its agent supervises too: it redials at Standard.
+/// The pair still settles at the raised level -- the peer does not have to agree -- and the
+/// peer's own "Reconnecting…" is answered.
+///
+/// Both ends redial, so which link comes up depends on the order the two dials reach the
+/// server, and both orders are correct:
+///   - the peer's Standard dial is answered first, and declined; `a`'s Extreme dial then
+///     reaches the peer as an offer, which it accepts;
+///   - `a`'s dial arrives while the peer's is still pending: the server merges the crossed
+///     dials into one link at the stronger offer (R-DIAL), and the peer is never offered
+///     anything -- its own dial succeeds, at Extreme.
+///
+/// So what is asserted is the level each end's link came up at, not an offer: asserting the
+/// peer was offered Extreme failed whenever the dials crossed (about one run in seven).
 #[tokio::test(flavor = "multi_thread")]
 async fn only_one_side_raising_it_still_settles_both() -> Result<(), Box<dyn Error>> {
     let mut pair = supervised::pair(Some(AGENT_SUPERVISOR), Some(AGENT_SUPERVISOR)).await?;
     let a = pair.a.cid;
     connect_then_raise(&mut pair).await?;
-    let (mut offered, mut healed) = (None, false);
+    let (mut linked, mut healed) = (None, false);
     expect(&mut pair.b.stream, |r| {
         match r {
-            InternalServiceResponse::PeerConnectNotification(n) if n.peer_cid == a => {
-                offered.get_or_insert(n.session_security_settings.security_level.value());
+            InternalServiceResponse::PeerConnectSuccess(s) if s.peer_cid == a => {
+                linked.get_or_insert(s.session_security_settings.security_level.value());
             }
             InternalServiceResponse::SupervisorNotification(n)
                 if n.peer_cid == Some(a) && n.state == SupervisorState::Healed =>
@@ -159,10 +191,11 @@ async fn only_one_side_raising_it_still_settles_both() -> Result<(), Box<dyn Err
             }
             _ => {}
         }
-        (offered.is_some() && healed).then_some(())
+        (linked.is_some() && healed).then_some(())
     })
     .await
-    .map_err(|e| format!("b was offered {offered:?}, told healed {healed}: {e}"))?;
-    assert_eq!(offered, Some(SecurityLevel::Extreme.value()));
-    settles(&mut pair).await
+    .map_err(|e| format!("b linked at {linked:?}, told healed {healed}: {e}"))?;
+    assert_eq!(linked, Some(SecurityLevel::Extreme.value()));
+    assert_eq!(settles(&mut pair).await?, SecurityLevel::Extreme.value());
+    Ok(())
 }

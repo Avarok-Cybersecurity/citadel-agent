@@ -153,9 +153,8 @@ pub(crate) async fn dial<T: IOInterface + Sync, R: Ratchet>(
                 .connect_to_peer_custom(session_security_settings, udp_mode, peer_session_password)
                 .await
             {
-                Ok(peer_connect_success) => {
+                Ok(mut peer_connect_success) => {
                     info!(target: "citadel", "[PeerConnect] connect_to_peer_custom succeeded!");
-                    let mut peer_connect_success = peer_connect_success;
                     // Taken before the channel is split and the struct is
                     // consumed. This is the only moment the UDP channel is
                     // offered; dropping it here would mean no call with this
@@ -167,6 +166,7 @@ pub(crate) async fn dial<T: IOInterface + Sync, R: Ratchet>(
                     let path_watch = PathWatch::new(&cell);
                     this.peer_path_up(cid, peer_cid, cell);
                     let (path, upgrading) = path_watch.current();
+                    let negotiated = peer_connect_success.channel.session_security_settings();
                     this.supervisors.set_path_control(
                         cid,
                         peer_cid,
@@ -221,10 +221,10 @@ pub(crate) async fn dial<T: IOInterface + Sync, R: Ratchet>(
                         peer_cid,
                         path,
                         upgrading,
+                        session_security_settings: negotiated,
                         request_id,
                     })
                 }
-
                 Err(err) => {
                     let err_str = err.into_string();
                     log_connect_failure(request_id, &err_str);

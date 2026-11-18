@@ -68,6 +68,10 @@ pub enum FailureReason {
     NotAnIdentityAccount,
     /// The server did not prove the key pinned for the account; the session was disconnected.
     ServerIdentityMismatch,
+    /// An `AddSecurityKey` the SDK refused before sending: the server is too old to enrol a key
+    /// whose credential the client creates (protocol 0.12.2), or has not enabled security keys.
+    /// The UI says the server must be updated before a key can be added.
+    ServerCannotEnrolSecurityKeys,
     /// `/.well-known/citadel` could not be fetched or did not verify.
     ServerDiscoveryFailed,
     /// The server's verified `/.well-known/citadel` has no `citadel` member: an issuer-only
@@ -109,7 +113,9 @@ pub enum SecurityKeyPurpose {
 
 /// The SDK needs a security-key touch. The window runs `ceremony` for relying party `rp_id`, with
 /// the PRF extension evaluated at `prf_salt`, then answers with `SecurityKeyAnswer` (or
-/// `SecurityKeyDecline`). The server names `rp_id`, so every client asks its keys under one.
+/// `SecurityKeyDecline`). The server names `rp_id`, so every client asks its keys under one. A
+/// server at protocol 0.12.2 names none: the window then uses its own, as every window did for
+/// 0.12.2. A `Register` ceremony always has one.
 ///
 /// `request_id` is the request of the window that asked (its `Connect` or
 /// `SignInManagement`). `cid` is the session's, or 0 for a sign-in, which has none yet.
@@ -123,7 +129,7 @@ pub struct SecurityKeyChallengeNotification {
     /// Names this challenge in the answer.
     pub challenge_id: Uuid,
     pub purpose: SecurityKeyPurpose,
-    pub rp_id: String,
+    pub rp_id: Option<String>,
     pub ceremony: SecurityKeyCeremony,
     /// 32 bytes: the PRF `eval.first` input.
     #[debug(with = plaintext_debug_fmt)]
@@ -183,6 +189,8 @@ pub struct SignInManagementFailure {
     pub cid: u64,
     pub request_id: Option<Uuid>,
     pub message: String,
+    /// Why, when the UI can say more than the message (`ServerCannotEnrolSecurityKeys`).
+    pub reason: Option<FailureReason>,
 }
 
 #[cfg(test)]

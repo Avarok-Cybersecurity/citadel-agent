@@ -89,7 +89,7 @@ fn the_new_notification_is_a_notification_and_the_failures_are_errors() {
             request_id: None,
             challenge_id: Uuid::nil(),
             purpose: SecurityKeyPurpose::SignIn,
-            rp_id: "work.avarok.net".to_string(),
+            rp_id: Some("work.avarok.net".to_string()),
             ceremony: SecurityKeyCeremony::Authenticate {
                 credential_ids: vec![],
             },
@@ -109,6 +109,7 @@ fn the_new_notification_is_a_notification_and_the_failures_are_errors() {
         cid: 0,
         request_id: None,
         message: String::new(),
+        reason: None,
     });
     assert!(failed.is_error());
 }
@@ -151,7 +152,7 @@ fn a_key_challenge_and_its_answer_never_print_their_bytes() {
         request_id: None,
         challenge_id: Uuid::nil(),
         purpose: SecurityKeyPurpose::SignIn,
-        rp_id: "work.avarok.net".to_string(),
+        rp_id: Some("work.avarok.net".to_string()),
         ceremony: SecurityKeyCeremony::Authenticate {
             credential_ids: vec![credential.clone()],
         },

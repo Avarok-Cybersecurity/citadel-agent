@@ -54,7 +54,8 @@ async fn a_password_and_key_account_signs_in_with_both_and_not_with_the_password
         }
     );
     assert_eq!(
-        challenge.rp_id, RP_ID,
+        challenge.rp_id.as_deref(),
+        Some(RP_ID),
         "the server's relying party was not relayed"
     );
     assert_eq!(challenge.prf_salt.len(), 32);

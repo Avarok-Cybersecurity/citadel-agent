@@ -80,6 +80,17 @@ pub(crate) fn failure_reason(code: citadel_io::ErrorCode) -> Option<FailureReaso
     }
 }
 
+/// The reason a refused management change carries for the UI, when it has one: an
+/// `AddSecurityKey` the SDK found it cannot send (a 0.12.2 server cannot enrol a key whose
+/// credential the client creates) or that the server cannot take (it names no relying party).
+pub(crate) fn management_failure_reason(
+    adds_a_key: bool,
+    code: citadel_io::ErrorCode,
+) -> Option<FailureReason> {
+    (adds_a_key && matches!(code, citadel_io::ErrorCode::PqSignInUnavailable))
+        .then_some(FailureReason::ServerCannotEnrolSecurityKeys)
+}
+
 /// The check a refused sign-in or registration asks the window to show, when the server's
 /// refusal published one. Public: a site key and the identity the token is bound to.
 pub(crate) fn admission_challenge(err: &NetworkError) -> Option<AdmissionChallengeWire> {
@@ -142,5 +153,24 @@ mod tests {
             })
         );
         assert_eq!(admission_challenge(&refused()), None);
+    }
+
+    #[test]
+    fn only_an_unsendable_key_enrolment_says_the_server_must_be_updated() {
+        use citadel_io::ErrorCode;
+        assert_eq!(
+            management_failure_reason(true, ErrorCode::PqSignInUnavailable),
+            Some(FailureReason::ServerCannotEnrolSecurityKeys)
+        );
+        assert_eq!(
+            management_failure_reason(false, ErrorCode::PqSignInUnavailable),
+            None,
+            "another change refused as unavailable is not about keys"
+        );
+        assert_eq!(
+            management_failure_reason(true, ErrorCode::PqSignInFactorMissing),
+            None,
+            "a key that was not touched is not the server's age"
+        );
     }
 }

@@ -5,7 +5,9 @@ import type { SecurityKeyPurpose } from "./SecurityKeyPurpose";
 /**
  * The SDK needs a security-key touch. The window runs `ceremony` for relying party `rp_id`, with
  * the PRF extension evaluated at `prf_salt`, then answers with `SecurityKeyAnswer` (or
- * `SecurityKeyDecline`). The server names `rp_id`, so every client asks its keys under one.
+ * `SecurityKeyDecline`). The server names `rp_id`, so every client asks its keys under one. A
+ * server at protocol 0.12.2 names none: the window then uses its own, as every window did for
+ * 0.12.2. A `Register` ceremony always has one.
  *
  * `request_id` is the request of the window that asked (its `Connect` or
  * `SignInManagement`). `cid` is the session's, or 0 for a sign-in, which has none yet.
@@ -14,7 +16,7 @@ export type SecurityKeyChallengeNotification = { cid: bigint, request_id: string
 /**
  * Names this challenge in the answer.
  */
-challenge_id: string, purpose: SecurityKeyPurpose, rp_id: string, ceremony: SecurityKeyCeremony, 
+challenge_id: string, purpose: SecurityKeyPurpose, rp_id: string | null, ceremony: SecurityKeyCeremony, 
 /**
  * 32 bytes: the PRF `eval.first` input.
  */

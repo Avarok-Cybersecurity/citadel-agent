@@ -81,6 +81,7 @@ pub(crate) mod staged_uploads;
 pub(crate) mod store_keys;
 pub(crate) mod tick_updater;
 pub mod updates;
+pub mod updates_handoff;
 pub(crate) use tick_updater::spawn_tick_updater;
 
 pub type RatchetType = StackedRatchet;

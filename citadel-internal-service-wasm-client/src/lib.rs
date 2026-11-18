@@ -521,7 +521,7 @@ pub async fn open_messenger_for(cid_str: String) -> Result<(), JsValue> {
             cid
         );
         // Small delay then check if it's now in connections
-        citadel_io::tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        citadel_io::time::sleep(std::time::Duration::from_millis(100)).await;
         let workspace_state = get_workspace_state();
         let guard = workspace_state.read().await;
         if let Some(state) = guard.as_ref()

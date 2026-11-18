@@ -7,6 +7,7 @@
 
 pub(crate) mod factors;
 pub(crate) mod key_relay;
+mod key_wire;
 pub(crate) mod recovery;
 
 use crate::kernel::reconnect::Reauth;

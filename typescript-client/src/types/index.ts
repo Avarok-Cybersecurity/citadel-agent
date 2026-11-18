@@ -189,6 +189,7 @@ export * from './RegisterSuccess.js';
 export * from './Retention.js';
 export * from './SecurityKeyAnswerFailure.js';
 export * from './SecurityKeyAnswerSuccess.js';
+export * from './SecurityKeyCeremony.js';
 export * from './SecurityKeyChallengeNotification.js';
 export * from './SecurityKeyPurpose.js';
 export * from './SendFileRequestFailure.js';

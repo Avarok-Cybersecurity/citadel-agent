@@ -89,7 +89,10 @@ fn the_new_notification_is_a_notification_and_the_failures_are_errors() {
             request_id: None,
             challenge_id: Uuid::nil(),
             purpose: SecurityKeyPurpose::SignIn,
-            allowed_credential_ids: vec![],
+            rp_id: "work.avarok.net".to_string(),
+            ceremony: SecurityKeyCeremony::Authenticate {
+                credential_ids: vec![],
+            },
             prf_salt: vec![0; 32],
             expires_in_ms: 60_000,
         },
@@ -148,7 +151,10 @@ fn a_key_challenge_and_its_answer_never_print_their_bytes() {
         request_id: None,
         challenge_id: Uuid::nil(),
         purpose: SecurityKeyPurpose::SignIn,
-        allowed_credential_ids: vec![credential.clone()],
+        rp_id: "work.avarok.net".to_string(),
+        ceremony: SecurityKeyCeremony::Authenticate {
+            credential_ids: vec![credential.clone()],
+        },
         prf_salt: salt.clone(),
         expires_in_ms: 60_000,
     };

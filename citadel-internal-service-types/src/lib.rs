@@ -40,6 +40,7 @@ mod notices;
 mod pulled_read;
 mod server_link;
 mod sign_in;
+mod sign_in_ceremony;
 mod sign_in_wire;
 mod supervisor;
 mod turn;
@@ -89,6 +90,7 @@ pub use sign_in::{
     SecurityKeyChallengeNotification, SecurityKeyPurpose, SignInManagementFailure,
     SignInManagementSuccess, StepUp,
 };
+pub use sign_in_ceremony::SecurityKeyCeremony;
 pub use sign_in_wire::{
     FactorKind, SignInCredential, SignInManagementOp, SignInManagementOutcome, SignInPolicy,
 };

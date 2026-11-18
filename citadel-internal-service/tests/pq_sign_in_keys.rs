@@ -3,12 +3,14 @@
 //! decides. The window here is a fake PRF responder: it answers every challenge with a fixed
 //! PRF output for one credential, as a browser relaying WebAuthn would.
 
-use citadel_internal_service_test_common::pq::{spawn_agent, spawn_server, Server, CRED};
+use citadel_internal_service_test_common::pq::{spawn_agent, spawn_server, Server, CRED, RP_ID};
 use citadel_internal_service_test_common::pq_accounts::{account, password_offer};
 use citadel_internal_service_test_common::pq_window::{FakeKey, Offer, Window};
 use citadel_internal_service_test_common::setup_log;
 use citadel_internal_service_types::SignInPolicy;
-use citadel_internal_service_types::{InternalServiceResponse, SecurityKeyPurpose};
+use citadel_internal_service_types::{
+    InternalServiceResponse, SecurityKeyCeremony, SecurityKeyPurpose,
+};
 use std::error::Error;
 
 fn password_and(key: &FakeKey) -> Offer {
@@ -45,7 +47,16 @@ async fn a_password_and_key_account_signs_in_with_both_and_not_with_the_password
     };
     assert_eq!(challenge.purpose, SecurityKeyPurpose::SignIn);
     assert_eq!(challenge.cid, 0, "a sign-in has no session yet");
-    assert_eq!(challenge.allowed_credential_ids, vec![CRED.to_vec()]);
+    assert_eq!(
+        challenge.ceremony,
+        SecurityKeyCeremony::Authenticate {
+            credential_ids: vec![CRED.to_vec()]
+        }
+    );
+    assert_eq!(
+        challenge.rp_id, RP_ID,
+        "the server's relying party was not relayed"
+    );
     assert_eq!(challenge.prf_salt.len(), 32);
     Ok(())
 }

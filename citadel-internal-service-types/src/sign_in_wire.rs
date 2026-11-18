@@ -61,9 +61,9 @@ pub struct SignInCredential {
 #[cfg_attr(feature = "typescript", ts(export))]
 pub enum SignInManagementOp {
     ListCredentials,
+    /// The SDK asks a window to create the key's credential (a `Register` ceremony) once the
+    /// server has named the relying party and the keys the account already has.
     AddSecurityKey {
-        #[debug(with = plaintext_debug_fmt)]
-        credential_id: Vec<u8>,
         label: String,
     },
     RenameCredential {
@@ -153,13 +153,7 @@ impl From<SignInManagementOp> for sdk::SignInManagementOp {
     fn from(op: SignInManagementOp) -> Self {
         match op {
             SignInManagementOp::ListCredentials => Self::ListCredentials,
-            SignInManagementOp::AddSecurityKey {
-                credential_id,
-                label,
-            } => Self::AddSecurityKey {
-                credential_id,
-                label,
-            },
+            SignInManagementOp::AddSecurityKey { label } => Self::AddSecurityKey { label },
             SignInManagementOp::RenameCredential { id, label } => {
                 Self::RenameCredential { id, label }
             }

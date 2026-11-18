@@ -44,7 +44,6 @@ mod tests {
     #[test]
     fn a_recovery_session_may_add_a_key_set_the_policy_and_sign_out() {
         let add = SignInManagementOp::AddSecurityKey {
-            credential_id: vec![1],
             label: "key".into(),
         };
         let policy = SignInManagementOp::SetSignInPolicy {

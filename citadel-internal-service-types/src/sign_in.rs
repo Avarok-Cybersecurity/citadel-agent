@@ -9,7 +9,7 @@
 //! them is ever printed: the PRF output and the password are `SecBuffer`s, and the codes are
 //! [`RecoveryCodes`], whose `Debug` shows only how many there are.
 
-use crate::{plaintext_debug_fmt, SignInManagementOutcome};
+use crate::{plaintext_debug_fmt, SecurityKeyCeremony, SignInManagementOutcome};
 use citadel_types::crypto::SecBuffer;
 use custom_debug::Debug;
 use serde::{Deserialize, Serialize};
@@ -102,13 +102,14 @@ pub enum SecurityKeyPurpose {
     SignIn,
     /// A fresh proof of the account before a change to its factors.
     StepUp,
-    /// The key being added: its PRF output becomes the new factor.
+    /// The key being added: the window creates its credential, whose PRF output becomes the
+    /// new factor.
     Enrol,
 }
 
-/// The SDK needs a security-key touch. The window runs WebAuthn `get` with
-/// `allowCredentials = allowed_credential_ids` and the PRF extension evaluated at `prf_salt`,
-/// then answers with `SecurityKeyAnswer` (or `SecurityKeyDecline`).
+/// The SDK needs a security-key touch. The window runs `ceremony` for relying party `rp_id`, with
+/// the PRF extension evaluated at `prf_salt`, then answers with `SecurityKeyAnswer` (or
+/// `SecurityKeyDecline`). The server names `rp_id`, so every client asks its keys under one.
 ///
 /// `request_id` is the request of the window that asked (its `Connect` or
 /// `SignInManagement`). `cid` is the session's, or 0 for a sign-in, which has none yet.
@@ -122,8 +123,8 @@ pub struct SecurityKeyChallengeNotification {
     /// Names this challenge in the answer.
     pub challenge_id: Uuid,
     pub purpose: SecurityKeyPurpose,
-    #[debug(with = credential_ids_fmt)]
-    pub allowed_credential_ids: Vec<Vec<u8>>,
+    pub rp_id: String,
+    pub ceremony: SecurityKeyCeremony,
     /// 32 bytes: the PRF `eval.first` input.
     #[debug(with = plaintext_debug_fmt)]
     pub prf_salt: Vec<u8>,
@@ -182,12 +183,6 @@ pub struct SignInManagementFailure {
     pub cid: u64,
     pub request_id: Option<Uuid>,
     pub message: String,
-}
-
-/// How many credentials a challenge allows, never which.
-#[allow(clippy::ptr_arg)] // custom_debug hands the field over as `&Vec`.
-fn credential_ids_fmt(ids: &Vec<Vec<u8>>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{{{} credential id(s), redacted}}", ids.len())
 }
 
 #[cfg(test)]

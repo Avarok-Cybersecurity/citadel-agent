@@ -28,7 +28,9 @@ export async function loadWasmModule(): Promise<WasmModule> {
         // This is needed because Vite mangles import.meta.url used by wasm-bindgen
         const wasmBinaryUrl = '/wasm/citadel_internal_service_wasm_client_bg.wasm';
         console.log('Initializing WASM module with binary from:', wasmBinaryUrl);
-        await wasmModule.default(wasmBinaryUrl);
+        // The object form: a bare URL is wasm-bindgen's deprecated signature, and the glue
+        // warns "using deprecated parameters for the initialization function" on every load.
+        await wasmModule.default({ module_or_path: wasmBinaryUrl });
         console.log('WASM module initialized successfully');
 
         // WASM-BOUNDARY: dynamic import returns untyped module namespace, cast to our interface

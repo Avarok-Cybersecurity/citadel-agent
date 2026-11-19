@@ -12,8 +12,11 @@
 //! The fix is a format of our own, independent of the wire enums:
 //! - an envelope (`MAGIC`, `FORMAT_V1`) so a reader knows what it holds;
 //! - `StoredContents`, an enum used ONLY here, append-only, whose variants copy
-//!   the fields of the two payloads ILM queues; anything else is kept
-//!   self-described (variant names, not positions) as JSON.
+//!   the fields of the only two payloads ILM queues (an outbound `Message`, an
+//!   inbound `MessageNotification`). Any other payload is refused on write: it
+//!   could only be stored positionally, which is the defect being removed. (A
+//!   JSON fallback for it cost the browser's WASM 1.1 MB, for a case no sender
+//!   produces.)
 //!
 //! A blob without the envelope is the legacy format. It is accepted only if it
 //! decodes with nothing left over AND every message is the payload that queue
@@ -68,9 +71,6 @@ enum StoredContents {
         peer_cid: u64,
         request_id: Option<Uuid>,
     },
-    SelfDescribed {
-        json: Vec<u8>,
-    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -106,14 +106,17 @@ fn to_stored(contents: &InternalServicePayload) -> Result<StoredContents, String
                 request_id: n.request_id,
             }
         }
-        other => StoredContents::SelfDescribed {
-            json: serde_json::to_vec(other).map_err(|e| format!("self-described payload: {e}"))?,
-        },
+        _ => {
+            return Err(
+                "ILM's queues hold only an outbound Message or an inbound MessageNotification"
+                    .to_string(),
+            )
+        }
     })
 }
 
-fn from_stored(contents: StoredContents) -> Result<InternalServicePayload, String> {
-    Ok(match contents {
+fn from_stored(contents: StoredContents) -> InternalServicePayload {
+    match contents {
         StoredContents::OutboundMessage {
             request_id,
             message,
@@ -140,10 +143,7 @@ fn from_stored(contents: StoredContents) -> Result<InternalServicePayload, Strin
                 request_id,
             },
         )),
-        StoredContents::SelfDescribed { json } => {
-            serde_json::from_slice(&json).map_err(|e| format!("self-described payload: {e}"))?
-        }
-    })
+    }
 }
 
 /// The current format: envelope, then `StoredState`.
@@ -205,7 +205,7 @@ fn decode_current(body: &[u8]) -> Result<State, String> {
     for (peer, messages) in stored {
         let per_peer = state.entry(peer).or_default();
         for (id, m) in messages {
-            let contents = from_stored(m.contents)?;
+            let contents = from_stored(m.contents);
             per_peer.insert(
                 id,
                 WrappedMessage {

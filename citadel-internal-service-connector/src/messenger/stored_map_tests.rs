@@ -119,7 +119,17 @@ fn a_bare_queue_of_the_wrong_kind_or_owner_is_unreadable() {
 }
 
 #[test]
-fn every_payload_round_trips() {
+fn both_queued_payloads_round_trip() {
+    let state = State::from([(PEER, HashMap::from([(1, outbound(1)), (2, inbound(2))]))]);
+    match decode(&encode(&state).unwrap(), QueueKind::Outbound, OWNER) {
+        Decoded::Current(got) => assert_eq!(fingerprint(&got), fingerprint(&state)),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Anything else could only be stored positionally: refused, not written.
+#[test]
+fn any_other_payload_is_refused_on_write() {
     let other = wrapped(
         3,
         InternalServicePayload::Response(InternalServiceResponse::MessageSendSuccess(
@@ -130,14 +140,7 @@ fn every_payload_round_trips() {
             },
         )),
     );
-    let state = State::from([(
-        PEER,
-        HashMap::from([(1, outbound(1)), (2, inbound(2)), (3, other)]),
-    )]);
-    match decode(&encode(&state).unwrap(), QueueKind::Outbound, OWNER) {
-        Decoded::Current(got) => assert_eq!(fingerprint(&got), fingerprint(&state)),
-        other => panic!("{other:?}"),
-    }
+    assert!(encode(&one(other)).is_err());
 }
 
 #[test]
@@ -151,13 +154,6 @@ fn the_tags_are_pinned() {
     };
     assert_eq!(tag(outbound(1)), 0);
     assert_eq!(tag(inbound(1)), 1);
-    let other = wrapped(
-        1,
-        InternalServicePayload::Request(InternalServiceRequest::GetSessions {
-            request_id: Uuid::nil(),
-        }),
-    );
-    assert_eq!(tag(other), 2);
 }
 
 #[test]

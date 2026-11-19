@@ -63,3 +63,41 @@ abi_types! {
         pub stream: u32,
     }
 }
+
+impl HttpMethod {
+    /// Every method; the host's `HTTP_METHODS` (bindings/AbiConstants.ts) is rendered from it.
+    pub const ALL: [HttpMethod; 6] = [
+        Self::Get,
+        Self::Post,
+        Self::Put,
+        Self::Delete,
+        Self::Patch,
+        Self::Head,
+    ];
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HttpMethod::{self, *};
+
+    /// A new method stops this compiling until it is given the next place, and so a place in ALL.
+    fn place(method: &HttpMethod) -> usize {
+        match method {
+            Get => 0,
+            Post => 1,
+            Put => 2,
+            Delete => 3,
+            Patch => 4,
+            Head => 5,
+        }
+    }
+
+    #[test]
+    fn all_names_every_method_once_in_order() {
+        let places: std::vec::Vec<usize> = HttpMethod::ALL.iter().map(place).collect();
+        assert_eq!(
+            places,
+            (0..HttpMethod::ALL.len()).collect::<std::vec::Vec<_>>()
+        );
+    }
+}

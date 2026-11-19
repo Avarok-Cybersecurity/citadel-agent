@@ -2,7 +2,7 @@
 //! from the Rust tables, so the host never restates one. Written by the `ts` feature's test.
 
 use crate::abi::{self, AbiError, CloseResult, InitResult};
-use crate::calls::{topic, KvBackend, Transport, Via};
+use crate::calls::{topic, HttpMethod, KvBackend, Transport, Via};
 use crate::ops::{ts_reply_names, OPS};
 use crate::{encode, Capability, Group};
 use std::collections::BTreeSet;
@@ -23,13 +23,13 @@ fn referenced(ts: &str, out: &mut BTreeSet<String>) {
     }
 }
 
-/// The serde tag of a KV backend: its text, or the one key of its map.
-fn kv_tag(b: &KvBackend) -> String {
-    let value: ciborium::Value = crate::decode(&encode(b)).expect("a KvBackend re-decodes");
+/// The serde tag of an enum value: its text, or the one key of its map.
+fn tag_of<T: serde::Serialize>(value: &T) -> String {
+    let value: ciborium::Value = crate::decode(&encode(value)).expect("an enum value re-decodes");
     match value {
         ciborium::Value::Text(t) => t,
         ciborium::Value::Map(m) => m[0].0.as_text().expect("a text tag").into(),
-        other => panic!("unexpected KvBackend encoding {other:?}"),
+        other => panic!("unexpected enum encoding {other:?}"),
     }
 }
 
@@ -38,6 +38,7 @@ pub fn render() -> String {
     let mut types: BTreeSet<String> = [
         "Capability",
         "Group",
+        "HttpMethod",
         "CloseReason",
         "LifecycleState",
         "LifecycleStep",
@@ -157,9 +158,12 @@ pub fn render() -> String {
         KvBackend::Local,
         authored,
     ] {
-        writeln!(o, "  {}: {},", kv_tag(&b), q(b.capability().name())).unwrap();
+        writeln!(o, "  {}: {},", tag_of(&b), q(b.capability().name())).unwrap();
     }
-    writeln!(o, "}} as const;\n\n/** The capability a client stream's first attempt needs, and its relay fallback's (null: none). */\nexport const TRANSPORT_CAPABILITY = {{").unwrap();
+    let methods: Vec<String> = HttpMethod::ALL.iter().map(|m| q(&tag_of(m))).collect();
+    let methods = methods.join(", ");
+    writeln!(o, "}} as const;\n\n/** Every method an HttpRequest may name. */\nexport const HTTP_METHODS = [{methods}] as const satisfies readonly HttpMethod[];").unwrap();
+    writeln!(o, "\n/** The capability a client stream's first attempt needs, and its relay fallback's (null: none). */\nexport const TRANSPORT_CAPABILITY = {{").unwrap();
     for t in Transport::ALL {
         let fallback = t
             .fallback_capability()

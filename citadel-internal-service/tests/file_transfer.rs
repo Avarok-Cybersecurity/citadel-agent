@@ -8,6 +8,7 @@ mod tests {
         RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
+    use citadel_internal_service_test_common::node_settings::TestNode;
     use citadel_internal_service_types::{
         DeleteVirtualFileSuccess, DownloadFileFailure, DownloadFileSuccess, FileSource,
         FileTransferRequestNotification, FileTransferStatusNotification,
@@ -130,6 +131,7 @@ mod tests {
             .with_backend(crate::common::test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -295,6 +297,7 @@ mod tests {
             .with_backend(crate::common::test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -1134,6 +1137,7 @@ mod tests {
             .with_backend(crate::common::test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -1206,6 +1210,7 @@ mod tests {
             .with_backend(crate::common::test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);

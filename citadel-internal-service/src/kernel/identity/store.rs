@@ -53,38 +53,12 @@ impl FsIdentityStore {
 #[async_trait]
 impl IdentityStore for FsIdentityStore {
     async fn load(&self) -> Result<Option<Vec<u8>>, String> {
-        match tokio::fs::read(self.dir.join(FILE_NAME)).await {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(err) => Err(format!("reading {}: {err}", self.dir.display())),
-        }
+        crate::kernel::private_file::read(&self.dir, FILE_NAME).await
     }
 
     async fn save(&self, record: Vec<u8>) -> Result<(), String> {
-        let dir = self.dir.clone();
-        tokio::task::spawn_blocking(move || write_private(&dir, &record))
-            .await
-            .map_err(|err| err.to_string())?
-            .map_err(|err| format!("writing {}: {err}", self.dir.display()))
+        crate::kernel::private_file::write(&self.dir, FILE_NAME, TEMP_NAME, record).await
     }
-}
-
-fn write_private(dir: &std::path::Path, record: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut builder = std::fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir)?;
-    let temp = dir.join(TEMP_NAME);
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let mut file = options.open(&temp)?;
-    file.write_all(record)?;
-    file.sync_all()?;
-    std::fs::rename(&temp, dir.join(FILE_NAME))
 }
 
 #[cfg(test)]

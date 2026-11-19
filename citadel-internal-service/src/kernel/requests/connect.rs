@@ -493,6 +493,32 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 Reauth::NeedsUser(_) => None,
             };
 
+            // Before the session is recorded: a session without its RE-VFS key could not store
+            // anything, and would fail each push long after this connect reported success.
+            let revfs_key = match crate::kernel::revfs_seed::session_key(
+                this.revfs_vault.get(),
+                remote,
+                cid,
+            )
+            .await
+            {
+                Ok(key) => key,
+                Err(err) => {
+                    citadel_sdk::logging::warn!(target: "citadel", "[Connect] No RE-VFS key for {}: {}", cid, err);
+                    cleanup_username(this, &username_for_cleanup);
+                    let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                        cid,
+                        message: format!(
+                            "Connected, but the account's storage key is unavailable: {err}"
+                        ),
+                        request_id: Some(request_id),
+                        reason_code: None,
+                        admission_challenge: None,
+                    });
+                    return Some(HandledRequestResult { response, uuid });
+                }
+            };
+
             let subscribers = crate::kernel::session_subscribers::SessionSubscribers::new(uuid);
             let connection_struct = Connection::new(
                 sink,
@@ -504,6 +530,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 fingerprint,
                 reconnect_credentials,
                 SessionSignIn { handle, scope },
+                revfs_key,
             );
             {
                 let mut map = this.server_connection_map.write();

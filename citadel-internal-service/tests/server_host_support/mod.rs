@@ -8,6 +8,7 @@ use citadel_internal_service_connector::connector::{
     InternalServiceConnector, WrappedSink, WrappedStream,
 };
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
+use citadel_internal_service_test_common::node_settings::TestNode;
 use citadel_internal_service_types::{
     AccountInformation, Accounts, GetSessionsResponse, InternalServiceRequest,
     InternalServiceResponse, RegisterFailure, SessionInformation,
@@ -61,19 +62,64 @@ pub async fn spawn_agent_with(
         citadel_internal_service_test_common::test_transfers(),
     )
     .await?;
+    let backend = BackendType::Filesystem(store.to_string_lossy().into_owned());
     let mut builder = NodeBuilder::<StackedRatchet>::default();
     let node = common::test_stun_servers()
         .apply(&mut builder)
-        .with_backend(BackendType::Filesystem(
-            store.to_string_lossy().into_owned(),
-        ))
+        .with_backend(backend.clone())
         .with_node_type(NodeType::Peer)
+        .as_restartable_test_agent(&kernel, &backend)
         .build(kernel)?;
     let handle = tokio::spawn(async move {
         let _ = node.await;
     });
     tokio::time::sleep(Duration::from_millis(500)).await;
     Ok((bind, handle))
+}
+
+/// Signs `name` in on `typed` after an agent restart. The server may still hold the aborted
+/// agent's session for a moment, so this retries until it lets go.
+pub async fn sign_in_after_restart(
+    sink: &mut WrappedSink<TcpIOInterface>,
+    stream: &mut Stream,
+    typed: &str,
+    name: &str,
+) -> Result<u64, Box<dyn Error>> {
+    let mut last = String::new();
+    for _ in 0..20 {
+        common::send(
+            sink,
+            InternalServiceRequest::Connect {
+                request_id: Uuid::new_v4(),
+                username: name.to_string(),
+                server_address: typed.to_string(),
+                password: Some(PASSWORD.as_bytes().to_vec().into()),
+                security_key: false,
+                recovery_code: None,
+                connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
+                udp_mode: Default::default(),
+                keep_alive_timeout: None,
+                session_security_settings: Default::default(),
+                server_password: None,
+                admission_token: None,
+            },
+        )
+        .await?;
+        let outcome = expect(stream, |response| match response {
+            InternalServiceResponse::ConnectSuccess(success) => Some(Ok(success.cid)),
+            InternalServiceResponse::ConnectFailure(failure) => Some(Err(failure.message)),
+            _ => None,
+        })
+        .await?;
+        match outcome {
+            Ok(cid) => return Ok(cid),
+            Err(message) => {
+                last = message;
+                tokio::time::sleep(Duration::from_millis(500)).await
+            }
+        }
+    }
+    Err(format!("never reconnected after the restart: {last}").into())
 }
 
 pub fn temp_store() -> std::path::PathBuf {

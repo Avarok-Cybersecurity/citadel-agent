@@ -10,6 +10,7 @@ mod tests {
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_connector::connector::InternalServiceConnector;
+    use citadel_internal_service_test_common::node_settings::TestNode;
     use citadel_internal_service_types::{
         InternalServiceRequest, InternalServiceResponse, MessageNotification, MessageSendSuccess,
     };
@@ -45,6 +46,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -111,6 +113,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -177,6 +180,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -373,6 +377,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -483,6 +488,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -763,6 +769,7 @@ mod tests {
                 .with_backend(crate::common::test_backend())
                 .with_node_type(NodeType::Peer)
                 .with_insecure_skip_cert_verification()
+                .as_test_agent(&internal_service_kernel)
                 .build(internal_service_kernel)?;
 
             // Add NodeFuture for Internal Service to Vector to be spawned
@@ -996,19 +1003,19 @@ mod tests {
 
         let bind_address_internal_service_a: SocketAddr =
             format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+        let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_address_internal_service_a,
+            citadel_internal_service::SERVER_RECONNECT,
+            crate::common::test_transfers(),
+        )
+        .await?;
         let internal_service = NodeBuilder::default()
             .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
-            .build(
-                CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
-                    bind_address_internal_service_a,
-                    citadel_internal_service::SERVER_RECONNECT,
-                    crate::common::test_transfers(),
-                )
-                .await?,
-            )?;
+            .as_test_agent(&internal_service_kernel)
+            .build(internal_service_kernel)?;
 
         let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
         internal_services.push(Box::pin(async move {
@@ -1100,6 +1107,7 @@ mod tests {
                 .with_node_type(NodeType::Peer)
                 .with_backend(crate::common::test_backend())
                 .with_insecure_skip_cert_verification()
+                .as_test_agent(&internal_service_kernel)
                 .build(internal_service_kernel)?;
 
             internal_services.push(Box::pin(async move {

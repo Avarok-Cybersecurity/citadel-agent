@@ -11,10 +11,9 @@ use citadel_internal_service_test_common as common;
 use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
 use citadel_sdk::prelude::*;
 use std::error::Error;
-use std::time::Duration;
 use support::{
-    account, expect, open, register, session, spawn_agent, spawn_server, temp_store, username,
-    PASSWORD,
+    account, expect, open, register, session, sign_in_after_restart, spawn_agent, spawn_server,
+    temp_store, username,
 };
 use uuid::Uuid;
 
@@ -100,43 +99,8 @@ async fn the_host_survives_an_agent_restart() -> Result<(), Box<dyn Error>> {
     assert_eq!(info.username, name);
     assert_eq!(info.server_host.as_deref(), Some(typed.as_str()));
 
-    // A login after the restart reports it too. The server may still hold the
-    // aborted agent's session for a moment, so retry until it lets go.
-    let mut connected = None;
-    for _ in 0..20 {
-        common::send(
-            &mut sink,
-            InternalServiceRequest::Connect {
-                request_id: Uuid::new_v4(),
-                username: name.clone(),
-                server_address: typed.clone(),
-                password: Some(PASSWORD.as_bytes().to_vec().into()),
-                security_key: false,
-                recovery_code: None,
-                connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
-                udp_mode: Default::default(),
-                keep_alive_timeout: None,
-                session_security_settings: Default::default(),
-                server_password: None,
-                admission_token: None,
-            },
-        )
-        .await?;
-        let outcome = expect(&mut stream, |response| match response {
-            InternalServiceResponse::ConnectSuccess(success) => Some(Ok(success.cid)),
-            InternalServiceResponse::ConnectFailure(failure) => Some(Err(failure.message)),
-            _ => None,
-        })
-        .await?;
-        match outcome {
-            Ok(cid) => {
-                connected = Some(cid);
-                break;
-            }
-            Err(_) => tokio::time::sleep(Duration::from_millis(500)).await,
-        }
-    }
-    let connected = connected.ok_or("never reconnected after the restart")?;
+    // A login after the restart reports it too.
+    let connected = sign_in_after_restart(&mut sink, &mut stream, &typed, &name).await?;
     assert_eq!(connected, *cid);
     let session = session(&mut sink, &mut stream, connected).await?;
     assert_eq!(session.server_host.as_deref(), Some(typed.as_str()));

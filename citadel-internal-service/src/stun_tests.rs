@@ -136,7 +136,9 @@ fn peer_builder() -> NodeBuilder<StackedRatchet> {
     let mut builder = NodeBuilder::<StackedRatchet>::default();
     builder
         .with_backend(BackendType::InMemory)
-        .with_node_type(NodeType::Peer);
+        .with_node_type(NodeType::Peer)
+        .with_max_security_level(citadel_sdk::test_common::localhost_max_security_level())
+        .with_link_manager(citadel_sdk::prelude::LinkManagerMode::Legacy);
     builder
 }
 

@@ -21,6 +21,7 @@
 use citadel_internal_service_test_common as common;
 
 use citadel_internal_service::kernel::CitadelWorkspaceService;
+use citadel_internal_service_test_common::node_settings::TestNode;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, MessageNotification, MessageSendSuccess,
 };
@@ -51,7 +52,8 @@ async fn spawn_agent(insecure: bool) -> Result<SocketAddr, Box<dyn Error>> {
     let builder = builder
         .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
         .with_backend(BackendType::InMemory)
-        .with_node_type(NodeType::Peer);
+        .with_node_type(NodeType::Peer)
+        .as_test_agent(&kernel);
     if insecure {
         let _ = builder.with_insecure_skip_cert_verification();
     }

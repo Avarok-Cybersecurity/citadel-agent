@@ -112,6 +112,10 @@ pub use updates::{UpdateAvailable, UpdateInstall, UpdateStatus};
 /// that has already been fixed five times in the agent's request handlers.
 pub const KEY_NOT_FOUND: &str = "Key not found";
 
+/// The identity of these wire types (see build_types_hash.rs): equal in two
+/// binaries exactly when they were built from the same type shapes.
+pub const TYPES_HASH: &str = env!("CITADEL_TYPES_HASH");
+
 /// Length only, for material that is the user's own content.
 ///
 /// `bytes_debug_fmt` below shows the first and last five bytes, which is the right
@@ -363,6 +367,13 @@ pub struct ServiceConnectionAccepted {
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(as = "Option<bool>", optional))]
     pub apps: bool,
+    /// This agent's `TYPES_HASH`. A page compares it with its WASM client's and,
+    /// when they differ, says the two are out of step before anything fails to
+    /// decode. Absent from an agent older than the field; the page then cannot
+    /// tell, and says that instead.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub types_hash: Option<String>,
 }
 
 impl ServiceConnectionAccepted {
@@ -384,6 +395,7 @@ impl ServiceConnectionAccepted {
             native_picker,
             browser_console,
             apps: true,
+            types_hash: Some(TYPES_HASH.to_string()),
         })
     }
 }
@@ -2585,6 +2597,8 @@ mod pulled_read_wire_tests;
 mod sign_in_wire_tests;
 #[cfg(test)]
 mod staged_upload_wire_tests;
+#[cfg(test)]
+mod types_hash_tests;
 
 #[cfg(test)]
 mod tests {

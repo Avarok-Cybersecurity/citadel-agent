@@ -41,4 +41,11 @@ browser_console: boolean,
  * their companions). Absent from an older agent's greeting, which is what `false` means:
  * a window never sends that agent a request it cannot parse.
  */
-apps?: boolean, };
+apps?: boolean, 
+/**
+ * This agent's `TYPES_HASH`. A page compares it with its WASM client's and,
+ * when they differ, says the two are out of step before anything fails to
+ * decode. Absent from an agent older than the field; the page then cannot
+ * tell, and says that instead.
+ */
+types_hash?: string | null, };

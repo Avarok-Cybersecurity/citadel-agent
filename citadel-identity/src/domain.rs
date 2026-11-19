@@ -2,8 +2,10 @@
 
 use crate::MAX_DOMAIN_BYTES;
 use std::fmt;
+use std::net::Ipv6Addr;
 
-/// A server's identity: lowercase host, no scheme, no `:443`, no trailing `/`, path kept.
+/// A server's identity: lowercase host (an IPv6 literal bracketed and compressed), no scheme, no
+/// `:443`, no trailing `/`, path kept.
 /// Only `canonical_domain` makes one, so holding one means the string is already canonical.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CanonicalDomain(String);
@@ -79,12 +81,7 @@ pub fn canonical_domain(dialled: &str) -> Result<CanonicalDomain, DomainError> {
         Some((authority, path)) => (authority, Some(path)),
         None => (rest, None),
     };
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((host, port)) => (host, Some(port)),
-        None => (authority, None),
-    };
-    check_host(host)?;
-    let mut out = host.to_string();
+    let (mut out, port) = split_authority(authority)?;
     if let Some(port) = port {
         let valid = !port.starts_with('0') && port.parse::<u16>().is_ok_and(|p| p != 0);
         if !valid || !port.bytes().all(|b| b.is_ascii_digit()) {
@@ -106,6 +103,38 @@ pub fn canonical_domain(dialled: &str) -> Result<CanonicalDomain, DomainError> {
         return Err(DomainError::TooLong { len: out.len() });
     }
     Ok(CanonicalDomain(out))
+}
+
+/// The canonical host and the port text of `authority`.
+///
+/// A bracketed IPv6 literal, `[addr]` or `[addr]:port`, is parsed whole, so its colons are never
+/// read as the port, and written as `Ipv6Addr`'s `Display` prints it (lowercase, compressed), so
+/// every spelling of one address names one server and derives one key. An unbracketed IPv6
+/// address is ambiguous with the port and stays refused. Names and IPv4 take the path they
+/// always took: their output (and with it every existing account's keys) does not change.
+fn split_authority(authority: &str) -> Result<(String, Option<&str>), DomainError> {
+    let Some(bracketed) = authority.strip_prefix('[') else {
+        let (host, port) = match authority.rsplit_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (authority, None),
+        };
+        check_host(host)?;
+        return Ok((host.to_string(), port));
+    };
+    let (literal, after) = bracketed
+        .split_once(']')
+        .ok_or_else(|| DomainError::BadHost("'[' is never closed".to_string()))?;
+    let address: Ipv6Addr = literal
+        .parse()
+        .map_err(|_| DomainError::BadHost(format!("{literal:?} is not an IPv6 address")))?;
+    let port =
+        match after {
+            "" => None,
+            _ => Some(after.strip_prefix(':').ok_or_else(|| {
+                DomainError::BadHost(format!("{after:?} follows the IPv6 address"))
+            })?),
+        };
+    Ok((format!("[{address}]"), port))
 }
 
 fn check_host(host: &str) -> Result<(), DomainError> {

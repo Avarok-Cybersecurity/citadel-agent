@@ -83,6 +83,28 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         let response = refusal.into_response(&username, &server_address, request_id);
         return Some(HandledRequestResult { response, uuid });
     }
+    // The account's RE-VFS key, before anything is dialled: a session without it could store
+    // nothing, and a refusal after the SDK connect would leave that SDK session behind.
+    let revfs_key = match crate::kernel::revfs_seed::session_key(
+        this.revfs_vault.get(),
+        this.remote(),
+        &username,
+    )
+    .await
+    {
+        Ok(key) => key,
+        Err(err) => {
+            citadel_sdk::logging::warn!(target: "citadel", "[Connect] REFUSED {}: no RE-VFS key: {}", username, err);
+            let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                cid: 0,
+                message: format!("The account's storage key is unavailable: {err}"),
+                request_id: Some(request_id),
+                reason_code: None,
+                admission_challenge: None,
+            });
+            return Some(HandledRequestResult { response, uuid });
+        }
+    };
     let connect_mode = crate::kernel::requests::connect_mode::server_connect_mode(
         connect_mode,
         crate::kernel::requests::connect_mode::LoginOrigin::UserSignIn,
@@ -504,6 +526,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 fingerprint,
                 reconnect_credentials,
                 SessionSignIn { handle, scope },
+                revfs_key,
             );
             {
                 let mut map = this.server_connection_map.write();

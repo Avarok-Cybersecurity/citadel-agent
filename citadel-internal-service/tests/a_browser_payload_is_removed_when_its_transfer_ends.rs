@@ -10,6 +10,7 @@ use citadel_internal_service_test_common as common;
 
 use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service::BrowserTransferRoot;
+use citadel_internal_service_test_common::node_settings::TestNode;
 use citadel_internal_service_types::{
     FileSource, FileTransferTickNotification, InternalServiceRequest, InternalServiceResponse,
 };
@@ -43,6 +44,7 @@ async fn agent(transfers: BrowserTransferRoot, backend: BackendType) -> SocketAd
         .with_backend(backend)
         .with_node_type(NodeType::Peer)
         .with_insecure_skip_cert_verification()
+        .as_test_agent(&kernel)
         .build(kernel)
         .unwrap();
     tokio::task::spawn(node);

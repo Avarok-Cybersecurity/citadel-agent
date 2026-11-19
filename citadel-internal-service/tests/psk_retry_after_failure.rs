@@ -175,6 +175,7 @@ mod tests {
         InternalServicesFutures, RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
+    use citadel_internal_service_test_common::node_settings::TestNode;
     use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
     use citadel_sdk::prelude::*;
     use std::error::Error;
@@ -304,6 +305,7 @@ mod tests {
                 .with_backend(crate::common::test_backend())
                 .with_node_type(NodeType::Peer)
                 .with_insecure_skip_cert_verification()
+                .as_test_agent(&kernel)
                 .build(kernel)?;
             services_to_spawn.push(Box::pin(async move {
                 match node.await {

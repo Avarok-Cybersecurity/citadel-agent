@@ -4,6 +4,7 @@ pub mod coturn;
 pub mod group;
 pub mod group_rejoin;
 pub mod multi_window;
+pub mod node_settings;
 mod ports;
 pub mod pq;
 pub mod pq_accounts;
@@ -19,6 +20,7 @@ fn test_notice_token() -> citadel_internal_service::kernel::notices::NoticeToken
 }
 pub mod turn_harness;
 
+use crate::node_settings::TestNode;
 use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service::StunServers;
 use citadel_internal_service_connector::connector::{
@@ -289,6 +291,7 @@ pub async fn services_connected_to_server_at<R: Ratchet, I: BindableInterface>(
             .with_backend(test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         // Add NodeFuture for Internal Service to Vector to be spawned
@@ -806,6 +809,7 @@ pub fn server_test_node_on_listener<'a, K: NetKernel<R> + 'a, R: Ratchet>(
         .with_backend(test_backend())
         .with_node_type(NodeType::Server(bind_addr))
         .with_path_policy(citadel_sdk::test_common::localhost_path_policy())
+        .as_test_node()
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(ServerMode::OrderedReliable(
             NativeOrderedReliableConfig::from_std_listener(tcp_listener).unwrap(),
@@ -833,6 +837,7 @@ pub fn server_test_node_skip_cert_verification_with_password<
         .with_backend(test_backend())
         .with_node_type(NodeType::Server(bind_addr))
         .with_path_policy(citadel_sdk::test_common::localhost_path_policy())
+        .as_test_node()
         .with_server_password(server_password)
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(ServerMode::OrderedReliable(
@@ -1259,6 +1264,7 @@ pub async fn sessions_on_one_service_reaching(
         .with_backend(BackendType::InMemory)
         .with_node_type(NodeType::Peer)
         .with_insecure_skip_cert_verification()
+        .as_test_agent(&service)
         .build(service)?;
     tokio::task::spawn(internal_service);
     tokio::time::sleep(Duration::from_millis(1000)).await;

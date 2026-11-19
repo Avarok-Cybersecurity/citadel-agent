@@ -14,6 +14,7 @@ use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::connector::{InternalServiceConnector, WrappedSink};
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
 use citadel_internal_service_test_common as common;
+use citadel_internal_service_test_common::node_settings::TestNode;
 use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
 use citadel_sdk::prelude::*;
 use futures::StreamExt;
@@ -167,6 +168,7 @@ pub async fn spawn_identity_agent(
             store.to_string_lossy().into_owned(),
         ))
         .with_node_type(NodeType::Peer)
+        .as_test_agent(&kernel)
         .build(kernel)?;
     let handle = tokio::spawn(async move {
         let _ = node.await;

@@ -9,6 +9,7 @@ use citadel_internal_service_connector::connector::WrappedSink;
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
 use citadel_internal_service_test_common as common;
 use citadel_internal_service_test_common::agent_ilm::declare_agent_ilm;
+use citadel_internal_service_test_common::node_settings::TestNode;
 use citadel_internal_service_types::{
     AgentCapabilities, ConfigCommand, InternalServiceRequest, InternalServiceResponse,
     PeerRegisterSuccess,
@@ -57,6 +58,7 @@ pub async fn spawn_agent(
         ))
         .with_node_type(NodeType::Peer)
         .with_insecure_skip_cert_verification()
+        .as_test_agent(&kernel)
         .build(kernel)?;
     Ok((
         bind,

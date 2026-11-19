@@ -1,9 +1,12 @@
 mod data_format;
 
-use citadel_internal_service::kernel::CitadelWorkspaceService;
+use citadel_internal_service::kernel::{revfs_seed, CitadelWorkspaceService};
 use citadel_internal_service::stun::{StunServers, STUN_SERVERS_ENV};
 use citadel_internal_service::{sweep_stale_browser_transfers, BrowserTransferRoot};
-use citadel_sdk::prelude::{BackendType, NodeBuilder, NodeType, StackedRatchet};
+use citadel_sdk::prelude::{
+    BackendType, LinkManagerMode, MaxSecurityLevel, NodeBuilder, NodeType, SecurityLevel,
+    StackedRatchet,
+};
 use std::error::Error;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -71,11 +74,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         );
     }
 
+    let revfs_keys = service.revfs_key_source(revfs_seed::vault_for(&backend)?)?;
+
     let mut builder = NodeBuilder::default();
     let mut builder = stun_servers
         .apply(&mut builder)
         .with_backend(backend)
-        .with_node_type(NodeType::Peer);
+        .with_node_type(NodeType::Peer)
+        // The owner's production maximum for the agent (2026-11-18); the SDK has no default.
+        .with_max_security_level(MaxSecurityLevel::new(SecurityLevel::Custom(10))?)
+        // Managed links are not switched on in this release.
+        .with_link_manager(LinkManagerMode::Legacy)
+        .with_revfs_key_source(revfs_keys);
 
     if opts.dangerous.unwrap_or(false) {
         builder = builder.with_insecure_skip_cert_verification()

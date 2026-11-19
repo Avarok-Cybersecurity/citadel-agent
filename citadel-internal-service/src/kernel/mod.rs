@@ -66,9 +66,11 @@ pub(crate) mod membership;
 mod membership_hosting;
 mod migration_guard;
 pub mod notices;
+pub(crate) mod private_file;
 pub(crate) mod requests;
 pub(crate) mod responses;
 pub(crate) mod revfs_correlation;
+pub mod revfs_seed;
 pub(crate) mod send_correlation;
 pub(crate) mod server_address;
 pub(crate) mod server_host;
@@ -157,6 +159,9 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     /// How apps' `citadel.session` servers are discovered, when the binary configured it
     /// (kernel/apps/session); `None` refuses every open as `not_configured`.
     pub(crate) app_sessions: Option<Arc<apps::AppSessionConfig>>,
+    /// The vault each account's RE-VFS seed is sealed under (kernel/revfs_seed), set with the
+    /// node's key source; unset, every Connect is refused.
+    pub(crate) revfs_vault: Arc<std::sync::OnceLock<revfs_seed::Vault>>,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -189,6 +194,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             apps: self.apps.clone(),
             identity: self.identity.clone(),
             app_sessions: self.app_sessions.clone(),
+            revfs_vault: self.revfs_vault.clone(),
             io: self.io.clone(),
         }
     }
@@ -231,6 +237,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             apps: Default::default(),
             identity: None,
             app_sessions: None,
+            revfs_vault: Default::default(),
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -269,6 +276,20 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
     pub fn with_identity(mut self, config: identity::IdentityConfig) -> Self {
         self.identity = Some(Arc::new(identity::IdentityHost::new(config)));
         self
+    }
+
+    /// The node's RE-VFS key source (`NodeBuilder::with_revfs_key_source`): each signed-in
+    /// account's key, from a seed sealed under the vault key `vault` keeps (kernel/revfs_seed).
+    /// Required, once: a service never given a vault refuses every Connect, and a node without
+    /// the source refuses every RE-VFS push.
+    pub fn revfs_key_source(
+        &self,
+        vault: Arc<dyn revfs_seed::RevfsVaultStore>,
+    ) -> Result<impl citadel_sdk::prelude::RevfsKeySource + 'static, String> {
+        self.revfs_vault
+            .set(revfs_seed::Vault::new(vault))
+            .map_err(|_| "this service already has a RE-VFS vault".to_string())?;
+        Ok(revfs_seed::key_source(self.server_connection_map.clone()))
     }
 
     /// Hold apps' `citadel.session`s (kernel/apps/session), discovering their servers by
@@ -444,6 +465,8 @@ pub struct Connection<R: Ratchet> {
     pub(crate) reconnect: reconnect::Credentials,
     /// What the sign-in proved, and the SDK handle for managing the account's factors.
     pub(crate) sign_in: sign_in::SessionSignIn<R>,
+    /// The account's RE-VFS key, established at Connect (kernel/revfs_seed).
+    pub(crate) revfs_key: citadel_sdk::prelude::RevfsKey,
     pub(crate) link: reconnect::LinkState,
     /// The SDK session the link is; a drop report of another is not this link's.
     /// See kernel/reconnect/instance.rs.
@@ -510,6 +533,7 @@ impl<R: Ratchet> Connection<R> {
         credential_fingerprint: Option<Vec<u8>>,
         reconnect: reconnect::Credentials,
         sign_in: sign_in::SessionSignIn<R>,
+        revfs_key: citadel_sdk::prelude::RevfsKey,
     ) -> Self {
         Connection {
             peers: HashMap::new(),
@@ -534,6 +558,7 @@ impl<R: Ratchet> Connection<R> {
             window_relay: None,
             reconnect,
             sign_in,
+            revfs_key,
             link: reconnect::LinkState::Up,
             handoff: reconnect::Handoff::default(),
         }

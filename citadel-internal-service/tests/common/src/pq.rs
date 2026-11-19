@@ -5,6 +5,7 @@
 //! poisoned (zero lanes), as in the SDK's suites: a post-quantum server never runs Argon2, and
 //! if it tried, these tests would fail.
 
+use crate::node_settings::TestNode;
 use crate::{server_test_node_skip_cert_verification, test_backend, test_stun_servers};
 use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service::SERVER_RECONNECT;
@@ -109,6 +110,7 @@ pub async fn spawn_agent() -> Result<SocketAddr, Box<dyn Error>> {
         .with_backend(test_backend())
         .with_node_type(NodeType::Peer)
         .with_insecure_skip_cert_verification()
+        .as_test_agent(&kernel)
         .build(kernel)?;
     drop(tokio::spawn(node));
     Ok(bind)

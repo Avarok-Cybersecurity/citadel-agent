@@ -15,6 +15,7 @@ use citadel_internal_service::{
     AppNetConfig, AppSessionConfig, AuthoritySignal, HostNetAuthority, KernelGrant, SessionLimits,
 };
 use citadel_internal_service_test_common as common;
+use citadel_internal_service_test_common::node_settings::TestNode;
 use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
 use citadel_sdk::prelude::*;
 use futures::StreamExt;
@@ -239,6 +240,7 @@ pub async fn spawn_agent(
             store.to_string_lossy().into_owned(),
         ))
         .with_node_type(NodeType::Peer)
+        .as_test_agent(&kernel)
         .build(kernel)?;
     tokio::spawn(async move {
         let _ = node.await;

@@ -7,6 +7,7 @@ mod tests {
         server_info_skip_cert_verification, RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
+    use citadel_internal_service_test_common::node_settings::TestNode;
     use citadel_internal_service_types::{
         ConfigCommand, InternalServiceRequest, InternalServiceResponse,
     };
@@ -36,6 +37,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -119,6 +121,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -211,6 +214,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);

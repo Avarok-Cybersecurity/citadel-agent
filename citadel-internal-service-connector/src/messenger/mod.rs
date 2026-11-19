@@ -53,6 +53,7 @@ use wasm_bindgen_futures;
 pub mod backend;
 pub mod backend_channel;
 pub mod backend_map;
+pub mod stored_map;
 pub mod wire;
 
 pub use intersession_layer_messaging::{CompressionHint, DynamicCompression, IlmOptions};

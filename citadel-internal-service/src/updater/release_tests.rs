@@ -89,3 +89,49 @@ fn the_notes_url_is_built_from_the_tag() {
         "https://github.com/Avarok-Cybersecurity/citadel-workspace/releases/tag/agent-v0.9.0"
     );
 }
+
+/// What an agent from 0.11.0 or 0.12.1 reads today (captured 2026-11-18): the feed and the
+/// mac/Windows/Linux asset names it looks for are unchanged, so the only thing between it and
+/// 0.13.0 is when it next checks.
+#[test]
+fn the_0_13_0_release_is_an_upgrade_an_older_agent_can_read() {
+    let body = include_bytes!("../../tests/fixtures/updater/latest-0.13.0.json");
+    let r = parse(body).unwrap();
+    assert_eq!(r.tag_name, "agent-v0.13.0");
+    for running in ["0.11.0", "0.12.1"] {
+        assert_eq!(
+            candidate(&r, &v(running)),
+            Candidate::Upgrade(v("0.13.0")),
+            "{running}"
+        );
+    }
+    assert!(matches!(candidate(&r, &v("0.13.0")), Candidate::None(_)));
+    for name in [
+        "Citadel-Agent.dmg",
+        "Citadel-Agent-x64.msi",
+        "citadel-agent-linux-x64.deb",
+        "Citadel-Agent-x86_64.AppImage",
+        "citadel-agent-macos-arm64.tar.gz",
+    ] {
+        for suffix in ["", ".sha256", ".mldsa.sig"] {
+            assert!(
+                asset(&r, &format!("{name}{suffix}")).is_ok(),
+                "{name}{suffix}"
+            );
+        }
+    }
+}
+
+#[test]
+fn minor_versions_compare_as_numbers_not_text() {
+    let upgrade = |from: &str, to: &str| {
+        matches!(
+            candidate(&release(&format!("agent-v{to}")), &v(from)),
+            Candidate::Upgrade(_)
+        )
+    };
+    assert!(upgrade("0.9.9", "0.13.0"));
+    assert!(upgrade("0.12.1", "0.13.0"));
+    assert!(!upgrade("0.13.0", "0.12.1"));
+    assert!(!upgrade("0.13.0", "0.9.9"));
+}

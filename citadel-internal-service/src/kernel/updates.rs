@@ -3,19 +3,19 @@
 //! updater's life inside the service's.
 
 use crate::kernel::conversations::kv::ConversationKv;
-use crate::kernel::notices::NoticeHub;
 use crate::kernel::session_route::{deliver, Clients};
+use crate::kernel::updates_handoff::{not_taken, MacAppHandoff, OnNotTaken, HANDOFF_TAKEN_WITHIN};
 use crate::kernel::CitadelWorkspaceService;
 use crate::updater::attest::SigstoreVerifier;
 use crate::updater::engine::{Engine, LOG_TARGET};
 use crate::updater::github::GitHub;
-use crate::updater::io::{Announcer, Installer, Io, Sessions, SettingsStore, Staged};
+use crate::updater::io::{Announcer, Installer, Io, Sessions, SettingsStore};
 use crate::updater::platform::{install_kind, plan};
 use crate::updater::staging::FsStaging;
 use crate::updater::{host, installer_for, release_key, version, UpdaterConfig};
 use async_trait::async_trait;
 use citadel_internal_service_connector::io_interface::IOInterface;
-use citadel_internal_service_types::{InternalServiceResponse, UpdateAvailable, UpdateInstall};
+use citadel_internal_service_types::{InternalServiceResponse, UpdateAvailable};
 use citadel_sdk::logging::{error, info};
 use citadel_sdk::prelude::Ratchet;
 use semver::Version;
@@ -70,7 +70,11 @@ fn engine_for<T: IOInterface + Sync, R: Ratchet>(
     let kind = install_kind(&facts);
     let plan = plan(&kind, facts.os, facts.arch);
     info!(target: LOG_TARGET, "running {current} as {kind:?}: {plan:?}");
-    let mac_app: Arc<dyn Installer> = Arc::new(MacAppHandoff(this.notices.clone()));
+    let mac_app: Arc<dyn Installer> = Arc::new(MacAppHandoff::new(
+        this.notices.clone(),
+        HANDOFF_TAKEN_WITHIN,
+        not_taken_recorder(this.updates.clone(), config.current_version.clone()),
+    ));
     let io = Io {
         source: Arc::new(GitHub::new(&config.current_version)?),
         verifier: Arc::new(SigstoreVerifier::new()?),
@@ -83,6 +87,16 @@ fn engine_for<T: IOInterface + Sync, R: Ratchet>(
         now: unix_now,
     };
     Ok(Arc::new(Engine::new(current, plan, io)))
+}
+
+/// Records on the engine, once it runs, that the menu-bar app did not take a handoff.
+fn not_taken_recorder(slot: Arc<UpdatesSlot>, current: String) -> OnNotTaken {
+    Arc::new(move |version: &Version| {
+        if let Some(engine) = slot.engine.get() {
+            let why = not_taken(version, &current, HANDOFF_TAKEN_WITHIN);
+            engine.install_failed(&version.to_string(), &why);
+        }
+    })
 }
 
 fn unix_now() -> u64 {
@@ -103,32 +117,6 @@ impl Announcer for Everyone {
             &all,
             InternalServiceResponse::UpdateAvailable(update.clone()),
         );
-    }
-}
-
-/// The menu-bar app owns the bundle, so it swaps it; the agent hands it the verified image.
-struct MacAppHandoff(Arc<NoticeHub>);
-
-impl Installer for MacAppHandoff {
-    fn can_install(&self, _staged: &Staged) -> Result<(), String> {
-        if self.0.has_stream() {
-            Ok(())
-        } else {
-            Err("Citadel Agent.app is not listening, so it cannot install the update".to_string())
-        }
-    }
-
-    fn install(&self, staged: &Staged, version: &Version) -> Result<(), String> {
-        let handoff = InternalServiceResponse::UpdateInstall(UpdateInstall {
-            cid: 0,
-            version: version.to_string(),
-            path: staged.path.to_string_lossy().into_owned(),
-            request_id: None,
-        });
-        match self.0.send_to_stream(handoff) {
-            0 => self.can_install(staged),
-            _ => Ok(()),
-        }
     }
 }
 

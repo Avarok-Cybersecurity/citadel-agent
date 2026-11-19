@@ -82,8 +82,8 @@ pub fn installer_for(
     plan: &Plan,
     mac_app: Arc<dyn Installer>,
 ) -> Arc<dyn Installer> {
-    if let Plan::LinkOnly { why, .. } = plan {
-        return Arc::new(LinkOnly(why.clone()));
+    if let Err(why) = platform::self_update(plan) {
+        return Arc::new(LinkOnly(why));
     }
     #[cfg(unix)]
     let replace = |target: &Path, args: Vec<String>| -> Arc<dyn Installer> {

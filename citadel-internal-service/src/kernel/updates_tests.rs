@@ -1,6 +1,4 @@
 use super::*;
-use crate::kernel::notices::NoticeToken;
-use std::path::PathBuf;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use uuid::Uuid;
 
@@ -35,43 +33,6 @@ fn every_window_hears_an_update_signed_in_or_not() {
             matches!(rx.try_recv(), Ok(InternalServiceResponse::UpdateAvailable(u)) if u == update())
         );
     }
-}
-
-#[test]
-fn only_the_menu_bar_app_is_handed_the_image_and_without_it_nothing_installs() {
-    let clients: Clients = Arc::default();
-    let hub = Arc::new(NoticeHub::new(
-        NoticeToken::new("t0ken".into()),
-        clients.clone(),
-        Vec::new(),
-    ));
-    let handoff = MacAppHandoff(hub.clone());
-    let (_, mut page) = window(&clients);
-    let version = Version::new(0, 9, 0);
-    let dmg = Staged {
-        path: PathBuf::from("/c/Citadel-Agent.dmg"),
-        launch: None,
-    };
-    assert!(handoff.can_install(&dmg).is_err());
-    assert!(handoff.install(&dmg, &version).is_err());
-
-    let (app_id, mut app) = window(&clients);
-    hub.subscribe(app_id);
-    assert!(handoff.can_install(&dmg).is_ok());
-    handoff.install(&dmg, &version).unwrap();
-    match app.try_recv() {
-        Ok(InternalServiceResponse::UpdateInstall(i)) => {
-            assert_eq!(
-                (i.version.as_str(), i.path.as_str()),
-                ("0.9.0", "/c/Citadel-Agent.dmg")
-            )
-        }
-        other => panic!("the app got {other:?}"),
-    }
-    assert!(
-        page.try_recv().is_err(),
-        "a page is never handed the install"
-    );
 }
 
 /// The owned request's store: `UpdateSetSettings` writes the reserved key through the agent's

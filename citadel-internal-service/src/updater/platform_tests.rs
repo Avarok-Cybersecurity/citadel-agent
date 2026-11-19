@@ -137,3 +137,38 @@ fn a_path_that_only_looks_like_a_bundle_is_not_one() {
         None
     );
 }
+
+/// Which installs replace themselves, decided before any download: the mac app and an
+/// AppImage or tarball in a writable place do; dpkg, the per-machine MSI and the rest say why
+/// not, so the window offers Download instead of a Restart that cannot finish.
+#[test]
+fn whether_an_install_updates_itself_is_known_up_front_with_the_reason() {
+    let can = |f: &HostFacts| self_update(&plan(&install_kind(f), f.os, f.arch));
+    let mut mac = facts(Os::MacOs, Arch::Arm64, APP_EXE);
+    mac.launched_by_app = true;
+    let mut image = facts(Os::Linux, Arch::X64, "/tmp/.mount_x/usr/bin/citadel-agent");
+    image.appimage = Some(PathBuf::from("/home/a/Citadel-Agent-x86_64.AppImage"));
+    for f in [
+        &mac,
+        &image,
+        &facts(Os::Linux, Arch::X64, "/home/a/citadel-agent"),
+    ] {
+        assert_eq!(can(f), Ok(()), "{f:?}");
+    }
+    let mut deb = facts(Os::Linux, Arch::X64, "/usr/bin/citadel-agent");
+    deb.dpkg_owned = true;
+    let msi = facts(
+        Os::Windows,
+        Arch::X64,
+        r"C:\Program Files\Citadel Agent\citadel-agent.exe",
+    );
+    let by_hand = facts(Os::MacOs, Arch::Arm64, APP_EXE);
+    for (f, said) in [
+        (&deb, "package manager"),
+        (&msi, "administrator"),
+        (&by_hand, "not started by it"),
+    ] {
+        let why = can(f).expect_err("not self-updating");
+        assert!(why.contains(said), "{f:?}: {why}");
+    }
+}

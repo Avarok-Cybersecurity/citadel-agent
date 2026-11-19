@@ -42,27 +42,20 @@ mod tests {
         }
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn an_older_page_cannot_enter_a_hosted_session() {
-        setup_log();
-        let (server, server_addr) = server_info_skip_cert_verification::<StackedRatchet>();
-        tokio::task::spawn(server);
-        let world = mixed_hosting_reaching(server_addr, ACCOUNT_ILM_OPTIONS).await;
-        let MixedHosting {
-            alice_addr,
-            alice,
-            bob: _bob,
-        } = world;
-        let alice_cid = alice.2;
-        drop(alice); // orphaned, still hosted
+    type Page = (
+        tokio::sync::mpsc::UnboundedSender<InternalServiceRequest>,
+        tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
+    );
 
-        let mut older = open_localhost_connection(alice_addr).await.unwrap();
+    /// An older page's `ClaimSession { only_if_orphaned }` of a hosted session is told to
+    /// reload, and nothing else.
+    async fn claim_is_told_to_reload(older: &mut Page, session_cid: u64) {
         older
             .0
             .send(InternalServiceRequest::ConnectionManagement {
                 request_id: Uuid::new_v4(),
                 management_command: ConfigCommand::ClaimSession {
-                    session_cid: alice_cid,
+                    session_cid,
                     only_if_orphaned: true,
                 },
             })
@@ -81,6 +74,39 @@ mod tests {
             }
             other => panic!("an older page claimed a hosted session: {other:?}"),
         }
+    }
+
+    /// The same claim while the hosting page still holds the session: refused for the same
+    /// reason. `drop(alice)` in the test above reaches the agent asynchronously, so its claim
+    /// can be handled before the agent has seen that socket close (CI job 135665053535 got
+    /// "Session … is not orphaned"). Holding the session open makes that ordering certain.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_older_page_cannot_claim_a_hosted_session_another_page_holds() {
+        setup_log();
+        let (server, server_addr) = server_info_skip_cert_verification::<StackedRatchet>();
+        tokio::task::spawn(server);
+        let world = mixed_hosting_reaching(server_addr, ACCOUNT_ILM_OPTIONS).await;
+        let mut older = open_localhost_connection(world.alice_addr).await.unwrap();
+        claim_is_told_to_reload(&mut older, world.alice.2).await;
+        drop(world);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_older_page_cannot_enter_a_hosted_session() {
+        setup_log();
+        let (server, server_addr) = server_info_skip_cert_verification::<StackedRatchet>();
+        tokio::task::spawn(server);
+        let world = mixed_hosting_reaching(server_addr, ACCOUNT_ILM_OPTIONS).await;
+        let MixedHosting {
+            alice_addr,
+            alice,
+            bob: _bob,
+        } = world;
+        let alice_cid = alice.2;
+        drop(alice); // orphaned, still hosted
+
+        let mut older = open_localhost_connection(alice_addr).await.unwrap();
+        claim_is_told_to_reload(&mut older, alice_cid).await;
 
         // The same page signing in with the right password: refused too, never taken over.
         let username = crate::common::agent_ilm::username_of(alice_addr, alice_cid).await;

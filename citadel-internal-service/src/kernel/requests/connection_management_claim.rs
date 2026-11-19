@@ -70,6 +70,17 @@ pub(super) async fn claim_session<T: IOInterface + Sync, R: Ratchet>(
     session_cid: u64,
     only_if_orphaned: bool,
 ) -> Option<HandledRequestResult> {
+    // Step 0: an older page may not enter a hosted session, whoever holds it.
+    // This is about the caller, not the session's attachment, so it is asked
+    // first, as attach and Connect ask it: decided after the orphan check, an
+    // older page claiming a session whose last page had just closed its socket
+    // was told "not orphaned" or "reload" depending on whether the agent had
+    // yet seen that socket close.
+    if this.refuses_older_page(session_cid, conn_id) {
+        let error = crate::kernel::migration_guard::OLDER_PAGE.to_string();
+        return Some(refusal(session_cid, request_id, conn_id, error));
+    }
+
     // Steps 1-2: cheap refusal before the SDK round-trip. Advisory only —
     // the state it reads is stale the moment the lock inside `owner_of` is
     // released, so Step 5 decides again on state it can trust.
@@ -86,10 +97,6 @@ pub(super) async fn claim_session<T: IOInterface + Sync, R: Ratchet>(
         });
     };
     if let Err(error) = decide_claim(owner, only_if_orphaned, conn_id, session_cid) {
-        return Some(refusal(session_cid, request_id, conn_id, error));
-    }
-    if this.refuses_older_page(session_cid, conn_id) {
-        let error = crate::kernel::migration_guard::OLDER_PAGE.to_string();
         return Some(refusal(session_cid, request_id, conn_id, error));
     }
 

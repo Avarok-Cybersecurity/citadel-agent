@@ -11,7 +11,6 @@ import {
     MessageNotification
 } from './types/index.js';
 import { isResponseType, isVariant } from './type-guards.js';
-import type { ConnectMode, UdpMode, SessionSecuritySettings, PreSharedKey, SecurityLevel } from '@avarok/citadel-protocol-types';
 
 export interface CitadelClientConfig {
     url: string;
@@ -22,18 +21,19 @@ export interface CitadelClientConfig {
     timeout?: number;
 }
 
+type ConnectFields = Extract<InternalServiceRequest, { Connect: unknown }>['Connect'];
+type MessageFields = Extract<InternalServiceRequest, { Message: unknown }>['Message'];
+
+/** The Connect request's settings, camel-cased, each typed by the generated request. */
 export interface ConnectOptions {
-    connectMode?: ConnectMode;
-    udpMode?: UdpMode;
-    keepAliveTimeout?: { secs: number; nanos: number } | null;
-    sessionSecuritySettings?: SessionSecuritySettings;
-    serverPassword?: PreSharedKey | null;
+    connectMode?: ConnectFields['connect_mode'];
+    udpMode?: ConnectFields['udp_mode'];
+    keepAliveTimeout?: ConnectFields['keep_alive_timeout'];
+    sessionSecuritySettings?: ConnectFields['session_security_settings'];
+    serverPassword?: ConnectFields['server_password'];
 }
 
-export interface MessageOptions {
-    peer_cid?: bigint | null;
-    security_level?: SecurityLevel;
-}
+export type MessageOptions = Partial<Pick<MessageFields, 'peer_cid' | 'security_level'>>;
 
 export class CitadelClient {
     private ws: WebSocket | null = null;

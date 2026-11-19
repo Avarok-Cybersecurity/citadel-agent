@@ -157,3 +157,31 @@ async fn two_accounts_do_not_share_a_key() {
     let other = CitadelWorkspaceBackend::with_channel(8, channel);
     assert_eq!(other.load_value("last_sent").await.unwrap(), None);
 }
+
+/// The owner's 0.11.0 -> 0.13.0 upgrade: the account's outbound queue was
+/// written in the old layout, and every send failed reading it. Now the send
+/// succeeds, the old bytes are kept under the quarantine key, and the queue
+/// holds only the new message.
+#[citadel_io::tokio::test]
+async fn a_queue_in_an_older_layout_is_quarantined_and_the_send_goes_through() {
+    const OLD: &[u8] = include_bytes!("../stored_map_fixtures/outbound-agent-0.11.0-2.bin");
+    let channel = MapChannel::default();
+    channel
+        .store
+        .lock()
+        .insert("outbound_messages-5".into(), OLD.to_vec());
+    let backend = CitadelWorkspaceBackend::with_channel(5, channel.clone());
+
+    let mut sent = message(41, 9);
+    sent.source_id = 5;
+    backend.store_outbound(sent).await.unwrap();
+
+    let kept: Vec<Vec<u8>> =
+        bincode2::deserialize(&channel.store.lock()["quarantine_outbound_messages-5"]).unwrap();
+    assert_eq!(kept, vec![OLD.to_vec()]);
+    let pending = backend.get_pending_outbound().await.unwrap();
+    assert_eq!(
+        pending.iter().map(|m| m.message_id).collect::<Vec<_>>(),
+        vec![41]
+    );
+}

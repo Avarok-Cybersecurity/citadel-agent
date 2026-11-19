@@ -37,6 +37,8 @@ export interface WasmModule {
     /** ML-DSA-65 app signature check (citadel-app-signature); needs no connection. */
     verify_app_signature(publicKeyHex: string, appId: string, version: string, manifestSha256Hex: string, wasmSha256Hex: string, signature: Uint8Array): boolean;
     get_version(): string;
+    /** The wire types this client was built from (citadel-internal-service-types TYPES_HASH). */
+    types_hash(): string;
     is_initialized(): boolean;
 }
 
@@ -282,6 +284,16 @@ export class InternalServiceWasmClient {
      */
     getVersion(): string {
         return this.wasmModule?.get_version() || 'Unknown';
+    }
+
+    /**
+     * The identity of the wire types this client was built from. Compared with the agent
+     * greeting's `types_hash`: unequal means the page and the agent are out of step.
+     * Throws before init, rather than answer with a value no agent could match.
+     */
+    typesHash(): string {
+        if (!this.wasmModule) throw new Error('The WASM client is not initialized');
+        return this.wasmModule.types_hash();
     }
 
     /**

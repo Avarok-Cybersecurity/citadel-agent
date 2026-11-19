@@ -145,20 +145,51 @@ jobs:
           submodules: recursive
       - run: cargo fmt --check
 
-  typescript-integration:
+  # The committed wire types are regenerated from the Rust and must not differ:
+  # a changed field, a new or deleted type, or a hand edit fails here. This
+  # replaced a `test -f` on three files, which passed all of those.
+  typescript-bindings-fresh:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
+    steps:
+      - uses: Avarok-Cybersecurity/gh-actions-deps@master
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - run: bash ci/check-ts-bindings-fresh.sh
+
+  # bincode formats whose bytes outlive one build (ILM queues in LocalDB, P2P
+  # frames between agents of different versions) may only be appended to. An
+  # insertion in the wire enums is what made every 0.11 queue unreadable in 0.13.
+  persisted-formats-append-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Verify TypeScript types exist
+          fetch-depth: 0
+      - name: Persisted enums are append-only
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          # Types are committed to the repo - verify they exist
-          test -f typescript-client/src/types/index.ts || exit 1
-          test -f typescript-client/src/types/InternalServiceRequest.ts || exit 1
-          test -f typescript-client/src/types/InternalServiceResponse.ts || exit 1
-          echo "TypeScript types verified"
+          # A pull request is judged against its base; a push to master against
+          # the commit it follows.
+          if [ -n "$BASE_REF" ]; then
+            base=$(git merge-base HEAD "origin/$BASE_REF")
+          else
+            base=$(git rev-parse HEAD^1)
+          fi
+          python3 ci/check-persisted-enums-are-append-only.py --base "$base"
+
+  typescript-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: typescript-bindings-fresh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Run integration tests via Docker Compose
         run: |
           cd ci

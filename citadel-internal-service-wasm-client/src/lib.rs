@@ -1050,6 +1050,13 @@ pub fn get_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// The identity of the wire types this client was built from. The page compares
+/// it with the agent's greeting (`types_hash`) and says when they are out of step.
+#[wasm_bindgen]
+pub fn types_hash() -> String {
+    citadel_internal_service_types::TYPES_HASH.to_string()
+}
+
 #[wasm_bindgen]
 pub fn is_initialized() -> bool {
     let workspace_state = get_workspace_state();

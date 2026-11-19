@@ -1,12 +1,21 @@
-#[cfg(feature = "typescript")]
+#[path = "build_types_hash.rs"]
+mod build_types_hash;
+
 fn main() {
+    build_types_hash::emit();
+    #[cfg(feature = "typescript")]
+    typescript_export_dir();
+}
+
+#[cfg(feature = "typescript")]
+fn typescript_export_dir() {
     use std::fs;
     use std::path::Path;
     use std::process::Command;
 
     // Get git repository root directory
     let git_root_output = Command::new("git")
-        .args(&["rev-parse", "--show-toplevel"])
+        .args(["rev-parse", "--show-toplevel"])
         .output()
         .expect("Failed to execute git command");
 
@@ -43,9 +52,4 @@ fn main() {
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=examples/generate_ts_types.rs");
-}
-
-#[cfg(not(feature = "typescript"))]
-fn main() {
-    // Do nothing when typescript feature is not enabled
 }

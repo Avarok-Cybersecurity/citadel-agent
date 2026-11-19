@@ -1,0 +1,101 @@
+name: Types bump
+
+# Moves this repository onto the newest @avarok/citadel-protocol-types, pinned
+# EXACTLY (TYPES-SYNC D1), on ONE branch, bot/types-bump, with ONE PR that each
+# run updates (TYPES-SYNC D2). Validate runs on that PR, so a type that no
+# longer matches is a compile error there, before anything merges.
+#
+# Started by the SDK's publish (repository_dispatch `types-released`), nightly
+# in case a dispatch was lost, and by hand.
+
+on:
+  repository_dispatch:
+    types: [types-released]
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: types-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    # The agent's own dispatches go to the parent, never here.
+    if: github.event_name != 'repository_dispatch' || github.event.client_payload.producer == 'sdk'
+    runs-on: ubuntu-latest
+    steps:
+      - name: The types-sync App is configured
+        env:
+          APP_ID: ${{ vars.TYPES_SYNC_APP_ID }}
+          APP_KEY: ${{ secrets.TYPES_SYNC_APP_PRIVATE_KEY }}
+        run: |
+          missing=""
+          [ -n "$APP_ID" ] || missing="$missing variable TYPES_SYNC_APP_ID"
+          [ -n "$APP_KEY" ] || missing="$missing secret TYPES_SYNC_APP_PRIVATE_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::not configured:$missing (see TYPES-SYNC-DESIGN.md, 'Creating the types-sync App')."
+            exit 1
+          fi
+      - uses: actions/create-github-app-token@v1
+        id: app
+        with:
+          app-id: ${{ vars.TYPES_SYNC_APP_ID }}
+          private-key: ${{ secrets.TYPES_SYNC_APP_PRIVATE_KEY }}
+      # The App's token, not GITHUB_TOKEN: a push or PR made with GITHUB_TOKEN
+      # starts no workflow, so Validate would never judge the bump.
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Which version
+        id: version
+        env:
+          FROM_DISPATCH: ${{ github.event.client_payload.version }}
+        run: |
+          if [ -n "$FROM_DISPATCH" ]; then
+            version=$FROM_DISPATCH
+          else
+            # The most recently published, whichever dist-tag it carries.
+            version=$(npm view @avarok/citadel-protocol-types time --json | node -e '
+              const t = JSON.parse(require("fs").readFileSync(0, "utf8"));
+              delete t.created; delete t.modified;
+              const [v] = Object.entries(t).sort((a, b) => b[1].localeCompare(a[1]))[0];
+              console.log(v);')
+          fi
+          [ -n "$version" ] || { echo "::error::no published version found"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Pin it exactly
+        working-directory: typescript-client
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git checkout -B bot/types-bump origin/master
+          npm install --save-exact --package-lock-only --ignore-scripts "@avarok/citadel-protocol-types@$VERSION"
+          git status --short
+      - name: Commit, push and open or update the PR
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SLUG: ${{ steps.app.outputs.app-slug }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if git diff --quiet; then
+            echo "Already on @avarok/citadel-protocol-types $VERSION; nothing to do."
+            exit 0
+          fi
+          id=$(gh api "/users/${SLUG}[bot]" --jq .id)
+          git config user.name "${SLUG}[bot]"
+          git config user.email "${id}+${SLUG}[bot]@users.noreply.github.com"
+          git commit -am "chore(types): pin @avarok/citadel-protocol-types $VERSION"
+          git push --force origin bot/types-bump
+          if [ -z "$(gh pr list --head bot/types-bump --state open --json number --jq '.[].number')" ]; then
+            gh pr create --base master --head bot/types-bump \
+              --title "chore(types): follow @avarok/citadel-protocol-types" \
+              --body "Opened by the types-bump workflow (TYPES-SYNC D2). Each run moves this branch to the newest published types, pinned exactly; Validate judges whether this repository still compiles against them."
+          fi

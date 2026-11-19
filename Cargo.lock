@@ -967,6 +967,7 @@ dependencies = [
  "custom_debug",
  "serde",
  "serde_json",
+ "sha3",
  "ts-rs",
  "uuid",
  "zeroize",

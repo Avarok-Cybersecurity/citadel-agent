@@ -1,0 +1,22 @@
+# Positional (bincode) formats whose bytes outlive one build, checked by
+# ci/check-persisted-enums-are-append-only.py.
+#
+#   root <Type> <file defining it> <version-constant prefix, or - for none>
+#   opaque <Type>    a type a root reaches in the source but never encodes
+#
+# A root with a prefix may change its layout in a diff that adds the next
+# `<prefix><n>` constant. Every `opaque` line names the code that proves it.
+
+# ILM's two queues in LocalDB, read back after an agent upgrade (the 2026-11-18
+# outage). The quarantine list beside them is Vec<Vec<u8>> and has no enum.
+root StoredMessage citadel-internal-service-connector/src/messenger/stored_map.rs FORMAT_V
+
+# A P2P frame between two agents of any two versions; it is also the bytes the
+# queued messages carry. No version: a deployed peer reads these as they are.
+root WireWrapper citadel-internal-service-connector/src/messenger/wire/mod.rs -
+
+# WireWrapper::ISMAux holds an ILM Payload<WrappedMessage>, but only Ack and
+# Poll: wire/mod.rs `encode` sends Payload::Message down data_request (as
+# WireWrapper::Message, contents as bytes) and only the rest to control_request.
+# Without this line the walk reaches InternalServicePayload, the whole wire API.
+opaque WrappedMessage

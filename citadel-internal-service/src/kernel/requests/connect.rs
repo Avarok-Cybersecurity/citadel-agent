@@ -83,6 +83,28 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         let response = refusal.into_response(&username, &server_address, request_id);
         return Some(HandledRequestResult { response, uuid });
     }
+    // The account's RE-VFS key, before anything is dialled: a session without it could store
+    // nothing, and a refusal after the SDK connect would leave that SDK session behind.
+    let revfs_key = match crate::kernel::revfs_seed::session_key(
+        this.revfs_vault.get(),
+        this.remote(),
+        &username,
+    )
+    .await
+    {
+        Ok(key) => key,
+        Err(err) => {
+            citadel_sdk::logging::warn!(target: "citadel", "[Connect] REFUSED {}: no RE-VFS key: {}", username, err);
+            let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                cid: 0,
+                message: format!("The account's storage key is unavailable: {err}"),
+                request_id: Some(request_id),
+                reason_code: None,
+                admission_challenge: None,
+            });
+            return Some(HandledRequestResult { response, uuid });
+        }
+    };
     let connect_mode = crate::kernel::requests::connect_mode::server_connect_mode(
         connect_mode,
         crate::kernel::requests::connect_mode::LoginOrigin::UserSignIn,
@@ -491,32 +513,6 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     .await
                 }
                 Reauth::NeedsUser(_) => None,
-            };
-
-            // Before the session is recorded: a session without its RE-VFS key could not store
-            // anything, and would fail each push long after this connect reported success.
-            let revfs_key = match crate::kernel::revfs_seed::session_key(
-                this.revfs_vault.get(),
-                remote,
-                cid,
-            )
-            .await
-            {
-                Ok(key) => key,
-                Err(err) => {
-                    citadel_sdk::logging::warn!(target: "citadel", "[Connect] No RE-VFS key for {}: {}", cid, err);
-                    cleanup_username(this, &username_for_cleanup);
-                    let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
-                        cid,
-                        message: format!(
-                            "Connected, but the account's storage key is unavailable: {err}"
-                        ),
-                        request_id: Some(request_id),
-                        reason_code: None,
-                        admission_challenge: None,
-                    });
-                    return Some(HandledRequestResult { response, uuid });
-                }
             };
 
             let subscribers = crate::kernel::session_subscribers::SessionSubscribers::new(uuid);

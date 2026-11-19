@@ -2,8 +2,7 @@
 //! are sealed on this device under a key derived from a root the server never holds.
 //!
 //! The root is the account's `seed_rec`, which this agent draws and seals (D2) until account
-//! recovery shows it as the recovery phrase. A Connect establishes the session's key before the
-//! session is recorded (`session_key`), and the node reads it from the session map
+//! recovery shows it as the recovery phrase. A Connect establishes the account's key before it dials (`session_key`), and the node reads it from the session map
 //! (`key_source`), so a key lives exactly as long as its session.
 
 mod account;
@@ -19,12 +18,17 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// The key of account `cid`'s session, on the server the account is registered to.
+/// The key of this agent's account `username`, on the server it is registered to. The CID is
+/// the account's permanent one (`username_to_cid`), which the sign-in keeps.
 pub(crate) async fn session_key<R: Ratchet>(
     vault: Option<&Vault>,
     remote: &NodeRemote<R>,
-    cid: u64,
+    username: &str,
 ) -> Result<RevfsKey, String> {
+    let cid = remote
+        .account_manager()
+        .get_persistence_handler()
+        .get_cid_by_username(username);
     let vault = vault.ok_or_else(|| {
         "this agent has no RE-VFS vault (CitadelWorkspaceService::revfs_key_source)".to_string()
     })?;

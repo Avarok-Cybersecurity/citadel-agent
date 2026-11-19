@@ -145,20 +145,27 @@ jobs:
           submodules: recursive
       - run: cargo fmt --check
 
+  # The committed wire types are regenerated from the Rust and must not differ:
+  # a changed field, a new or deleted type, or a hand edit fails here. This
+  # replaced a `test -f` on three files, which passed all of those.
+  typescript-bindings-fresh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: Avarok-Cybersecurity/gh-actions-deps@master
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - run: bash ci/check-ts-bindings-fresh.sh
+
   typescript-integration:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    needs: typescript-bindings-fresh
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Verify TypeScript types exist
-        run: |
-          # Types are committed to the repo - verify they exist
-          test -f typescript-client/src/types/index.ts || exit 1
-          test -f typescript-client/src/types/InternalServiceRequest.ts || exit 1
-          test -f typescript-client/src/types/InternalServiceResponse.ts || exit 1
-          echo "TypeScript types verified"
       - name: Run integration tests via Docker Compose
         run: |
           cd ci

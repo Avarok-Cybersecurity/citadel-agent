@@ -16,10 +16,10 @@ fi
 
 echo "🔧 Building Rust crate with TypeScript features..."
 cd citadel-internal-service-types
-cargo build --features typescript
+cargo build --locked --features typescript
 
 echo "📝 Generating TypeScript types with proper imports..."
-TS_RS_EXPORT_DIR=../typescript-client/src/types cargo run --example generate_ts_types --features typescript
+TS_RS_EXPORT_DIR=../typescript-client/src/types cargo run --locked --example generate_ts_types --features typescript
 
 echo "🔧 Fixing missing imports in generated TypeScript files..."
 cd ../typescript-client/src/types

@@ -66,6 +66,7 @@ pub(crate) mod membership;
 mod membership_hosting;
 mod migration_guard;
 pub mod notices;
+pub mod p2p_kex;
 pub(crate) mod private_file;
 pub(crate) mod requests;
 pub(crate) mod responses;
@@ -162,6 +163,9 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     /// The vault each account's RE-VFS seed is sealed under (kernel/revfs_seed), set with the
     /// node's key source; unset, every Connect is refused.
     pub(crate) revfs_vault: Arc<std::sync::OnceLock<revfs_seed::Vault>>,
+    /// The identity key each account pinned for each peer (kernel/p2p_kex), set with the node's
+    /// key-exchange identity; unset, no peer has a pin and every exchange is unsigned.
+    pub(crate) p2p_kex_pins: Arc<std::sync::OnceLock<Arc<p2p_kex::pins::PeerKeyPins>>>,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -195,6 +199,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             identity: self.identity.clone(),
             app_sessions: self.app_sessions.clone(),
             revfs_vault: self.revfs_vault.clone(),
+            p2p_kex_pins: self.p2p_kex_pins.clone(),
             io: self.io.clone(),
         }
     }
@@ -238,6 +243,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             identity: None,
             app_sessions: None,
             revfs_vault: Default::default(),
+            p2p_kex_pins: Default::default(),
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -290,6 +296,24 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             .set(revfs_seed::Vault::new(vault))
             .map_err(|_| "this service already has a RE-VFS vault".to_string())?;
         Ok(revfs_seed::key_source(self.server_connection_map.clone()))
+    }
+
+    /// The node's P2P key-exchange identity (`NodeBuilder::with_p2p_kex_identity`): each
+    /// session's identity key signs its stages, and the peers' keys are pinned in `store`
+    /// (kernel/p2p_kex). Required, once, before the node starts.
+    pub async fn p2p_kex_identity(
+        &self,
+        store: Arc<dyn p2p_kex::PeerKeyStore>,
+    ) -> Result<citadel_sdk::prelude::P2pKexIdentities, String> {
+        let pins = p2p_kex::pins::PeerKeyPins::load(store).await?;
+        self.p2p_kex_pins
+            .set(pins.clone())
+            .map_err(|_| "this service already has a P2P key-exchange identity".to_string())?;
+        Ok(Arc::new(p2p_kex::KexIdentityPort {
+            sessions: self.server_connection_map.clone(),
+            clients: self.tx_to_localhost_clients.clone(),
+            pins,
+        }))
     }
 
     /// Hold apps' `citadel.session`s (kernel/apps/session), discovering their servers by
@@ -467,6 +491,9 @@ pub struct Connection<R: Ratchet> {
     pub(crate) sign_in: sign_in::SessionSignIn<R>,
     /// The account's RE-VFS key, established at Connect (kernel/revfs_seed).
     pub(crate) revfs_key: citadel_sdk::prelude::RevfsKey,
+    /// The identity key's P2P key-exchange signer, for a session `ConnectIdentity` opened;
+    /// `None` for a legacy account, whose exchanges go unsigned (kernel/p2p_kex).
+    pub(crate) p2p_kex_signer: Option<citadel_identity::P2pKexSigner>,
     pub(crate) link: reconnect::LinkState,
     /// The SDK session the link is; a drop report of another is not this link's.
     /// See kernel/reconnect/instance.rs.
@@ -559,6 +586,7 @@ impl<R: Ratchet> Connection<R> {
             reconnect,
             sign_in,
             revfs_key,
+            p2p_kex_signer: None,
             link: reconnect::LinkState::Up,
             handoff: reconnect::Handoff::default(),
         }

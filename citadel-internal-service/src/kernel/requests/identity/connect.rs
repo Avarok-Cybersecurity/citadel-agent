@@ -157,6 +157,11 @@ pub(crate) async fn connect_identity<T: IOInterface + Sync, R: Ratchet>(
     let InternalServiceResponse::ConnectSuccess(mut success) = connected.response else {
         return Some(connected);
     };
+    // The identity signs the session's P2P key exchanges for as long as the session lasts,
+    // whether or not the identity stays unlocked (kernel/p2p_kex).
+    if let Some(session) = this.server_connection_map.write().get_mut(&cid) {
+        session.p2p_kex_signer = Some(identity.p2p_kex_signer());
+    }
     match super::post_connect::challenge(this, &host, &pin, cid).await {
         Ok(key) => {
             let proved = Pin {

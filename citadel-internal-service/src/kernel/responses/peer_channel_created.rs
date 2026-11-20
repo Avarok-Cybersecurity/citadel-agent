@@ -37,6 +37,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     this.peer_path_up(session_cid, peer_cid, channel.p2p_path_cell());
     let (path, upgrading) = path_watch.current();
     let negotiated = channel.session_security_settings();
+    let peer_identity = crate::kernel::p2p_kex::mark(channel.peer_kex_identity());
     this.supervisors
         .set_path_control(session_cid, peer_cid, channel.path_control());
     if let Some(restored) = channel.take_restored_udp() {
@@ -146,6 +147,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     path,
                     upgrading,
                     session_security_settings: negotiated,
+                    peer_identity,
                     request_id: None,
                 },
             ))

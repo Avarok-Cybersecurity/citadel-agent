@@ -90,6 +90,7 @@ pub fn fingerprint_grouped(pk: &MlDsa65Pk) -> String {
 }
 
 /// A deterministic ML-DSA-65 signing key expanded from a 32-byte `xi`; wiped on drop.
+#[derive(Clone)]
 pub(crate) struct Signer {
     key: SigningKey<MlDsa65>,
     pk: MlDsa65Pk,

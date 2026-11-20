@@ -30,6 +30,8 @@ mod app_session;
 pub use app_session::*;
 mod identity;
 pub use identity::*;
+mod peer_identity;
+pub use peer_identity::*;
 mod apps_ihttp;
 mod apps_kv;
 mod apps_net;
@@ -779,6 +781,8 @@ pub struct PeerConnectSuccess {
     /// offer, so these need not be the ones this end asked for, nor any offer this end was shown.
     #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
     pub session_security_settings: SessionSecuritySettings,
+    /// Whether the key exchange was signed by the identity key pinned for the peer.
+    pub peer_identity: PeerIdentityMark,
     pub request_id: Option<Uuid>,
 }
 
@@ -1326,6 +1330,12 @@ pub enum InternalServiceResponse {
     ServerIdentityMismatchNotification(ServerIdentityMismatch),
     /// Results from a batched request, in the same order as input commands
     BatchedResponse(BatchedResponseData),
+    PeerIdentity(PeerIdentityInfo),
+    /// A peer signed with an identity key other than its pinned one; its exchanges are refused
+    /// until the person accepts the key.
+    PeerIdentityKeyChangedNotification(PeerIdentityKeyChanged),
+    PeerIdentityKeyAccepted(PeerIdentityKeyAccepted),
+    PeerIdentityFailure(PeerIdentityFailure),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, RequestId)]
@@ -2250,6 +2260,26 @@ pub enum InternalServiceRequest {
         /// The list of commands to execute in parallel
         commands: Vec<InternalServiceRequest>,
     },
+    /// Both ends' identity fingerprints for the pair, and a changed key waiting for the
+    /// person's acceptance, if any (`PeerIdentityInfo`).
+    GetPeerIdentity {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+    },
+    /// Pin the peer's new identity key, which `PeerIdentityKeyChangedNotification` reported:
+    /// the person compared it and accepted it. `fingerprint` names the key accepted, so a key
+    /// that changed again since is not accepted with it. Never sent without the person's say.
+    AcceptPeerIdentityKey {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        fingerprint: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -2462,6 +2492,8 @@ impl InternalServiceRequest {
     pub fn session_cid(&self) -> Option<u64> {
         match self {
             Self::Message { cid, .. } => Some(*cid),
+            Self::GetPeerIdentity { cid, .. } => Some(*cid),
+            Self::AcceptPeerIdentityKey { cid, .. } => Some(*cid),
             Self::Disconnect { cid, .. } => Some(*cid),
             Self::MediaOpen { cid, .. } => Some(*cid),
             Self::MediaSend { cid, .. } => Some(*cid),

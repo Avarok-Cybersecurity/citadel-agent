@@ -10,6 +10,7 @@ use citadel_identity::{canonical_domain, fingerprint, ServerKey};
 use citadel_internal_service::kernel::identity::{
     IdentityConfig, MemoryIdentityStore, MonotonicClock, SignLimits,
 };
+use citadel_internal_service::kernel::p2p_kex::{MemoryPeerKeyStore, PeerKeyStore};
 use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::connector::{InternalServiceConnector, WrappedSink};
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
@@ -31,6 +32,7 @@ pub use crate::support::{expect, Stream};
 pub const UNLOCK: &str = "a long unlock passphrase";
 
 mod codec;
+pub mod p2p;
 mod requests;
 pub use codec::{JsonCodec, NoFetch};
 pub use requests::*;
@@ -142,9 +144,18 @@ pub async fn spawn_front(
     Ok((port, target))
 }
 
-/// An agent holding an identity (in memory), its accounts under `store`.
+/// An agent holding an identity (in memory), its accounts under `store`, its peers' identity
+/// keys pinned in memory.
 pub async fn spawn_identity_agent(
     store: &std::path::Path,
+) -> Result<(SocketAddr, JoinHandle<()>), Box<dyn Error>> {
+    spawn_identity_agent_pinning(store, Arc::new(MemoryPeerKeyStore::default())).await
+}
+
+/// `spawn_identity_agent`, its peers' identity keys pinned in `pins`.
+pub async fn spawn_identity_agent_pinning(
+    store: &std::path::Path,
+    pins: Arc<dyn PeerKeyStore>,
 ) -> Result<(SocketAddr, JoinHandle<()>), Box<dyn Error>> {
     let bind: SocketAddr = format!("127.0.0.1:{}", common::get_free_port()).parse()?;
     let kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
@@ -161,6 +172,7 @@ pub async fn spawn_identity_agent(
         sign_limits: SignLimits::PROTOCOL,
         clock: Arc::new(MonotonicClock),
     });
+    let kex_identity = kernel.p2p_kex_identity(pins).await?;
     let mut builder = NodeBuilder::<StackedRatchet>::default();
     let node = common::test_stun_servers()
         .apply(&mut builder)
@@ -169,6 +181,7 @@ pub async fn spawn_identity_agent(
         ))
         .with_node_type(NodeType::Peer)
         .as_test_agent(&kernel)
+        .with_p2p_kex_identity(kex_identity)
         .build(kernel)?;
     let handle = tokio::spawn(async move {
         let _ = node.await;

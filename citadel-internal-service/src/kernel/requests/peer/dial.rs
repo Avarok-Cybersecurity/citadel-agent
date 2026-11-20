@@ -167,6 +167,9 @@ pub(crate) async fn dial<T: IOInterface + Sync, R: Ratchet>(
                     this.peer_path_up(cid, peer_cid, cell);
                     let (path, upgrading) = path_watch.current();
                     let negotiated = peer_connect_success.channel.session_security_settings();
+                    let peer_identity = crate::kernel::p2p_kex::mark(
+                        peer_connect_success.channel.peer_kex_identity(),
+                    );
                     this.supervisors.set_path_control(
                         cid,
                         peer_cid,
@@ -222,6 +225,7 @@ pub(crate) async fn dial<T: IOInterface + Sync, R: Ratchet>(
                         path,
                         upgrading,
                         session_security_settings: negotiated,
+                        peer_identity,
                         request_id,
                     })
                 }

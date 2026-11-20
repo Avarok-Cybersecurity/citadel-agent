@@ -66,6 +66,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         citadel_internal_service::BrowserTransferRoot::in_system_temp_dir(),
     );
     let revfs_keys = service.revfs_key_source(std::sync::Arc::new(MemoryRevfsVault::default()))?;
+    let kex_identity = service
+        .p2p_kex_identity(std::sync::Arc::new(
+            citadel_internal_service::kernel::p2p_kex::MemoryPeerKeyStore::default(),
+        ))
+        .await?;
 
     // Build and run the internal service node
     let internal_service_node = stun_servers
@@ -75,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_max_security_level(MaxSecurityLevel::new(SecurityLevel::Custom(10))?)
         .with_link_manager(LinkManagerMode::Legacy)
         .with_revfs_key_source(revfs_keys)
+        .with_p2p_kex_identity(kex_identity)
         .with_insecure_skip_cert_verification()
         .build(service)?;
 

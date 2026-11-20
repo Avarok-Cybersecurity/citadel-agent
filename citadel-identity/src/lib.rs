@@ -20,6 +20,7 @@ mod domain;
 mod identity;
 mod keys;
 mod names;
+mod p2p_kex;
 mod phrase;
 mod pin;
 mod proof;
@@ -69,6 +70,7 @@ pub use keys::{
 pub use names::{
     display_handle, make_username, parse_username, validate_handle, NameError, Username,
 };
+pub use p2p_kex::{P2pKexSigner, P2P_KEX_DOMAIN};
 pub use phrase::{
     match_phrase, phrase_decode, phrase_encode, PhraseError, MATCH_PHRASE_DOMAIN, PHRASE_WORDS,
 };

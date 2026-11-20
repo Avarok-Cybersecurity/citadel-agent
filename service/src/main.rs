@@ -1,6 +1,6 @@
 mod data_format;
 
-use citadel_internal_service::kernel::{revfs_seed, CitadelWorkspaceService};
+use citadel_internal_service::kernel::{p2p_kex, revfs_seed, CitadelWorkspaceService};
 use citadel_internal_service::stun::{StunServers, STUN_SERVERS_ENV};
 use citadel_internal_service::{sweep_stale_browser_transfers, BrowserTransferRoot};
 use citadel_sdk::prelude::{
@@ -75,6 +75,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let revfs_keys = service.revfs_key_source(revfs_seed::vault_for(&backend)?)?;
+    let kex_identity = service
+        .p2p_kex_identity(p2p_kex::peer_key_store_for(&backend)?)
+        .await?;
 
     let mut builder = NodeBuilder::default();
     let mut builder = stun_servers
@@ -85,7 +88,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_max_security_level(MaxSecurityLevel::new(SecurityLevel::Custom(10))?)
         // Managed links are not switched on in this release.
         .with_link_manager(LinkManagerMode::Legacy)
-        .with_revfs_key_source(revfs_keys);
+        .with_revfs_key_source(revfs_keys)
+        .with_p2p_kex_identity(kex_identity);
 
     if opts.dangerous.unwrap_or(false) {
         builder = builder.with_insecure_skip_cert_verification()

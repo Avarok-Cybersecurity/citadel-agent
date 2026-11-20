@@ -296,6 +296,11 @@ where
             peer::list_registered::handle(this, uuid, command).await
         }
 
+        InternalServiceRequest::GetPeerIdentity { .. }
+        | InternalServiceRequest::AcceptPeerIdentityKey { .. } => {
+            peer::identity::handle(this, uuid, command)
+        }
+
         InternalServiceRequest::ListAllPeers { .. } => {
             peer::list_all::handle(this, uuid, command).await
         }
@@ -848,6 +853,22 @@ fn refusal_response(
                 request_id: Some(*request_id),
             })
         }
+        InternalServiceRequest::GetPeerIdentity {
+            request_id,
+            cid,
+            peer_cid,
+        }
+        | InternalServiceRequest::AcceptPeerIdentityKey {
+            request_id,
+            cid,
+            peer_cid,
+            ..
+        } => InternalServiceResponse::PeerIdentityFailure(PeerIdentityFailure {
+            cid: *cid,
+            peer_cid: *peer_cid,
+            message: message.to_string(),
+            request_id: Some(*request_id),
+        }),
         InternalServiceRequest::IdentityBinding { request_id, cid } => {
             InternalServiceResponse::IdentityFailure(
                 citadel_internal_service_types::IdentityFailure {

@@ -177,4 +177,4 @@ prf_output: number[], } } | { "SecurityKeyDecline": { request_id: string, challe
 /**
  * The list of commands to execute in parallel
  */
-commands: Array<InternalServiceRequest>, } };
+commands: Array<InternalServiceRequest>, } } | { "GetPeerIdentity": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "AcceptPeerIdentityKey": { request_id: string, cid: bigint, peer_cid: bigint, fingerprint: string, } };

@@ -2,7 +2,7 @@
 import type { SignInManagementOutcome } from "./SignInManagementOutcome";
 
 /**
- * What a `SignInManagement` request did. For `RegenerateRecoveryCodes` the outcome holds the
- * new codes, which is the only time they can be shown.
+ * What a `SignInManagement` request did. For `RegenerateRecoveryPhrase` the outcome holds the
+ * new phrase, which is the only time it can be shown.
  */
 export type SignInManagementSuccess = { cid: bigint, request_id: string | null, outcome: SignInManagementOutcome, };

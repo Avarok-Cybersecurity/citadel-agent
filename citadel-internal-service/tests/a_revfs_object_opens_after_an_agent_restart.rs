@@ -1,11 +1,11 @@
 //! A RE-VFS object is sealed under the account's key (SA-10) and still opens after the agent
-//! restarts: the account's seed is drawn once, kept sealed in the account's store under the
-//! agent's vault key, and the restarted agent derives the same key from it.
+//! restarts: the account's root (its recovery phrase's seed) is stored at registration, sealed
+//! in the account's store under the agent's vault key, and the restarted agent derives the same
+//! key from it.
 //!
 //! Controls (each turns this test red): drop `with_revfs_key_source` from the test agent (the
 //! push fails `RevfsKeyMissing`); keep the vault in memory across the restart (the sign-in is
-//! refused: the stored seed does not open); draw a new seed at every sign-in (the pull fails:
-//! the object is sealed under another key).
+//! refused: the stored roots do not open).
 
 #[allow(dead_code)]
 #[path = "server_host_support/mod.rs"]

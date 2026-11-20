@@ -155,7 +155,7 @@ pub(crate) async fn handle<T: IOInterface + Sync, R: Ratchet>(
         issued_at_s: plan.issued_at_s,
         id_fp: identity.id_fp(),
     };
-    // The recovery codes reach the window whatever happens next: the server holds the account.
+    // The recovery phrase reaches the window whatever happens next: the server holds the account.
     let pin_stored = pin::store(remote, cid, &pinned).await;
     success.identity = pin_stored.is_ok().then(|| pinned.wire());
     if deliver(
@@ -165,7 +165,7 @@ pub(crate) async fn handle<T: IOInterface + Sync, R: Ratchet>(
     )
     .is_empty()
     {
-        warn!(target: "citadel", "[RegisterIdentity] {cid} registered, but its window left before the recovery codes reached it");
+        warn!(target: "citadel", "[RegisterIdentity] {cid} registered, but its window left before the recovery phrase reached it");
     }
     if let Err(err) = pin_stored {
         let message = format!(

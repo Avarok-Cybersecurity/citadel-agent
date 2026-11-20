@@ -31,23 +31,17 @@ export type InternalServiceRequest = { "Connect": { request_id: string, username
  */
 server_address: string, 
 /**
- * Absent for a `KeyOnly` account and for a recovery-code sign-in.
+ * Absent for a `KeyOnly` account and for a recovery-phrase sign-in.
  */
 password: number[] | null, 
 /**
- * Whether this window can answer a `SecurityKeyChallengeNotification`. A client from
- * before post-quantum sign-in sends neither this nor `recovery_code`.
+ * Whether this window can answer a `SecurityKeyChallengeNotification`.
  */
 security_key?: boolean, 
 /**
- * A recovery code as typed. It signs in once, to a session that may only add a
- * security key, set the sign-in policy or sign out.
- */
-recovery_code?: number[] | null, 
-/**
- * The account's 24-word recovery phrase as typed (any case and spacing). Like a code, it
- * signs in to the recovery console: a session that may only manage how the account
- * signs in. The agent binds it to the account's server (`kernel/recovery_domain.rs`).
+ * The account's 24-word recovery phrase as typed (any case and spacing). It signs in to
+ * the recovery console: a session that may only manage how the account signs in. The
+ * agent binds it to the account's server (`kernel/recovery_domain.rs`).
  */
 recovery_phrase?: number[] | null, 
 /**
@@ -197,6 +191,13 @@ phrase: number[],
  */
 device_label: string, 
 /**
- * A Turnstile token (action `recover`) for a server that asks for one. Never logged.
+ * A Turnstile token for a server that asks for one. Never logged. A token is single-use,
+ * and the server asks for one twice (the recovery, then the phrase sign-in, both checked
+ * as action `recover`): on a device that does not hold the account it admits the
+ * recovery, and the sign-in after it goes without one; on a server that requires the
+ * check, that sign-in answers `ConnectFailure` (`AdmissionRequired`, with the challenge)
+ * under this request id after `RecoverAccountSuccess`, and the window sends
+ * `RecoverAccount` again with a fresh token. On a device that holds the account (the
+ * second send included) nothing is recovered and the token admits the sign-in.
  */
 admission_token?: string | null, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } };

@@ -269,7 +269,6 @@ mod tests {
             server_address: server_bind_address.to_string(),
             password: Some("Password".into()),
             security_key: false,
-            recovery_code: None,
             recovery_phrase: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
@@ -295,7 +294,6 @@ mod tests {
             server_address: server_bind_address.to_string(),
             password: Some("Password".into()),
             security_key: false,
-            recovery_code: None,
             recovery_phrase: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
@@ -321,7 +319,6 @@ mod tests {
             server_address: server_bind_address.to_string(),
             password: Some("Password".into()),
             security_key: false,
-            recovery_code: None,
             recovery_phrase: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
@@ -522,8 +519,8 @@ mod tests {
 
         send(&mut sink, register_command).await?;
 
-        // The registration's own answer comes first (it carries the recovery codes of a
-        // post-quantum server; none here), then the connect's.
+        // The registration's own answer comes first (it carries the recovery phrase), then
+        // the connect's.
         let registered = stream.next().await.unwrap();
         assert!(
             matches!(registered, InternalServiceResponse::RegisterSuccess(_)),

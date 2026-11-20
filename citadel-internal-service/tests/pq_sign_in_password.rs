@@ -21,13 +21,9 @@ fn password(password: &str) -> Offer {
     }
 }
 
-/// A server that recovers accounts issues the 24-word phrase, and no codes: the agent named the
-/// server's canonical domain. Before, it named none, and the account had no recovery credential.
+/// A server that recovers accounts issues the 24-word phrase: the agent named the server's
+/// canonical domain. Before, it named none, and the account had no recovery credential.
 fn assert_a_phrase_and_no_codes(registered: &Registered) {
-    assert!(
-        registered.codes.0.is_empty(),
-        "a phrase registration also returned codes"
-    );
     let typed = registered.typed_phrase();
     assert_eq!(typed.split(' ').count(), 24, "the phrase is 24 words");
     assert!(
@@ -125,11 +121,9 @@ async fn registering_and_connecting_at_once_still_delivers_the_phrase() -> Resul
     let InternalServiceResponse::RegisterSuccess(registered) = first else {
         panic!("the phrase did not come first: {first:?}");
     };
-    assert!(registered.recovery_codes.0.is_empty());
-    let words = registered.recovery_phrase.as_ref().map(|p| p.0.len());
     assert_eq!(
-        words,
-        Some(24),
+        registered.recovery_phrase.0.len(),
+        24,
         "the phrase did not come with the registration"
     );
     let second = window.answer_of(request_id, None).await?.response;

@@ -80,7 +80,12 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 // (handle.source == C2S_IDENTITY_CID).
                 let pending = connection.revfs_correlations.take_pull(peer_cid);
                 let request_id = pending.as_ref().map(|pull| pull.request_id);
-                let pulled_file = pending.map(|pull| pull.file);
+                let (pulled_file, revfs_use) = match pending {
+                    Some(pull) => (Some(pull.file), pull.revfs),
+                    None => (None, Default::default()),
+                };
+                let on_complete =
+                    crate::kernel::revfs_seed::hooks::on_pulled(this, implicated_cid, revfs_use);
                 // The file the pull writes is this session's to send on
                 // (kernel/pulled_files.rs): how an owner shares a file from
                 // peer storage with the peer who holds it. And to read into
@@ -121,6 +126,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     StreamHooks {
                         on_pulled: Some(on_pulled),
                         on_end: None,
+                        on_complete,
                     },
                 );
             } else if matches!(
@@ -240,8 +246,13 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             .get_mut(&implicated_cid)
             .and_then(|conn| conn.send_correlations.take(ticket.0));
         let request_id = send.as_ref().map(|send| send.request_id);
+        let (payload_dir, store) = match send {
+            Some(send) => (send.payload_dir, send.revfs_store),
+            None => (None, None),
+        };
+        let on_complete = crate::kernel::revfs_seed::hooks::on_stored(this, implicated_cid, store);
         // The SDK has the payload open; once the stream ends it is done with it.
-        let on_end = send.and_then(|send| send.payload_dir).map(|dir| {
+        let on_end = payload_dir.map(|dir| {
             Box::new(move || {
                 crate::kernel::requests::file::browser_payload::remove_request_dir_soon(dir)
             }) as Box<dyn FnOnce() + Send>
@@ -256,6 +267,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             StreamHooks {
                 on_pulled: None,
                 on_end,
+                on_complete,
             },
         );
     }

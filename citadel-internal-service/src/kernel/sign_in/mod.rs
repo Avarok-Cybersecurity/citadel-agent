@@ -61,7 +61,7 @@ pub(crate) fn open<R: Ratchet>(
 }
 
 /// How the session can be opened again without its user. Only a password-only sign-in can be
-/// repeated unprompted: a key needs a touch, and a recovery code signs in once.
+/// repeated unprompted: a key needs a touch, and the recovery phrase is typed by the user.
 pub(crate) fn reauth(scope: SessionScope, key_asked: bool, password: Option<SecBuffer>) -> Reauth {
     match (scope, key_asked, password) {
         (SessionScope::Recovery, _, _) => Reauth::NeedsUser(RECOVERY_REAUTH),
@@ -129,7 +129,7 @@ mod tests {
         );
         assert!(
             !is_password(&reauth(SessionScope::Recovery, false, pw())),
-            "a recovery code"
+            "a recovery phrase"
         );
         assert!(
             !is_password(&reauth(SessionScope::Full, false, None)),

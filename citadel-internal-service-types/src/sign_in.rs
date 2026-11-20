@@ -1,13 +1,13 @@
-//! Post-quantum sign-in at the agent's boundary: the recovery codes a registration returns, the
+//! Post-quantum sign-in at the agent's boundary: the recovery phrase a registration returns, the
 //! security-key challenge the agent relays to a window, and the management of an account's
 //! sign-in factors.
 //!
 //! The account-level types (`SignInPolicy`, `SignInManagementOp`, ...) are in
 //! `sign_in_wire.rs`: the SDK's `citadel_types::auth` shapes, in the agent's wire.
 //!
-//! Three things here are secret: recovery codes, a PRF output and a step-up password. None of
-//! them is ever printed: the PRF output and the password are `SecBuffer`s, and the codes are
-//! [`RecoveryCodes`], whose `Debug` shows only how many there are.
+//! Three things here are secret: the recovery phrase, a PRF output and a step-up password. None
+//! of them is ever printed: the PRF output and the password are `SecBuffer`s, and the phrase's
+//! words are [`RecoveryCodes`], whose `Debug` shows only how many there are.
 
 use crate::{plaintext_debug_fmt, SecurityKeyCeremony, SignInManagementOutcome};
 use citadel_types::crypto::SecBuffer;
@@ -19,8 +19,9 @@ use zeroize::Zeroize;
 #[cfg(feature = "typescript")]
 use ts_rs::TS;
 
-/// Recovery codes (or a recovery phrase's words), formatted for display. Shown to the user once;
-/// never logged and never stored by the agent, and wiped from memory when dropped.
+/// A recovery phrase's words, formatted for display. Shown to the user once; never logged and
+/// never stored by the agent as words (only the seed they encode, sealed: kernel/revfs_seed),
+/// and wiped from memory when dropped.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
 #[serde(transparent)]
 #[cfg_attr(feature = "typescript", derive(TS))]
@@ -169,8 +170,8 @@ pub struct SecurityKeyAnswerFailure {
     pub message: String,
 }
 
-/// What a `SignInManagement` request did. For `RegenerateRecoveryCodes` the outcome holds the
-/// new codes, which is the only time they can be shown.
+/// What a `SignInManagement` request did. For `RegenerateRecoveryPhrase` the outcome holds the
+/// new phrase, which is the only time it can be shown.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
@@ -241,11 +242,11 @@ mod tests {
     }
 
     #[test]
-    fn regenerated_codes_never_reach_a_debug_string() {
+    fn a_regenerated_phrase_never_reaches_a_debug_string() {
         let success = SignInManagementSuccess {
             cid: 1,
             request_id: None,
-            outcome: SignInManagementOutcome::RecoveryCodes(RecoveryCodes(vec![CODE.to_string()])),
+            outcome: SignInManagementOutcome::RecoveryPhrase(RecoveryCodes(vec![CODE.to_string()])),
         };
         let printed = format!("{success:?}");
         assert!(!printed.contains(CODE), "{printed}");

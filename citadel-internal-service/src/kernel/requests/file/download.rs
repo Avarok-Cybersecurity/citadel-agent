@@ -1,6 +1,7 @@
 use crate::kernel::pulled_reads::PulledKey;
 use crate::kernel::requests::HandledRequestResult;
-use crate::kernel::revfs_correlation::PendingPull;
+use crate::kernel::revfs_correlation::{PendingPull, PullUse};
+use crate::kernel::revfs_seed::{self, index::Location};
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -45,11 +46,47 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     // reports the download as failed after its 30s timeout.
     // How the pull names its file, kept so the saved output can be read back
     // by that name (ReadPulledFileChunk, kernel/pulled_reads.rs).
+    let refuse = |message: String| {
+        let response = InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
+            cid,
+            message,
+            request_id: Some(request_id),
+        });
+        Some(HandledRequestResult { response, uuid })
+    };
+    // A pull reads under the account's key until it ends, so it holds it; refused while the
+    // account is re-keyed, and for an object that still waits for one (kernel/revfs_seed).
+    let token = match revfs_seed::begin_use(this.revfs_vault.get(), cid) {
+        Ok(token) => token,
+        Err(message) => return refuse(message),
+    };
+    let location = peer_cid.map_or(Location::Server, Location::Peer);
+    let path = virtual_directory.to_string_lossy().into_owned();
+    let current = this
+        .server_connection_map
+        .read()
+        .get(&cid)
+        .map(|conn| conn.revfs_key.clone());
+    if let Some(current) = current {
+        match revfs_seed::awaits_rekey(remote, cid, location, &path, &current).await {
+            Ok(false) => {}
+            Ok(true) => {
+                drop(token);
+                revfs_seed::resume(this, cid);
+                return refuse(revfs_seed::AWAITS_REKEY.to_string());
+            }
+            Err(err) => return refuse(err),
+        }
+    }
     let pending = PendingPull {
         request_id,
         file: PulledKey {
             peer_cid,
             virtual_directory: virtual_directory.clone(),
+        },
+        revfs: PullUse {
+            token,
+            taken: delete_on_pull.then_some((location, path)),
         },
     };
     let pull_request: Result<NodeRequest, NetworkError> = {

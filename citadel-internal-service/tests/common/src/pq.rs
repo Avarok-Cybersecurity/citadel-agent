@@ -72,22 +72,30 @@ impl AdmissionPolicy for Turnstile {
     }
 }
 
+/// What every test server runs: post-quantum sign-in, which issues the recovery phrase the agent
+/// requires of a registration (requests/register.rs). A fresh OPRF seed per server.
+pub fn pq_server_misc() -> ServerMiscSettings {
+    let settings = PqAuthServerSettings::new(
+        OprfSeed::generate(),
+        KsfParams::FLOOR,
+        ThrottlePolicy::RECOMMENDED,
+    )
+    .and_then(|settings| settings.with_security_key_rp_id(RP_ID))
+    .expect("the floor parameters and the relying party are accepted");
+    ServerMiscSettings {
+        pq_sign_in: Some(settings),
+        ..Default::default()
+    }
+}
+
 fn spawn(_kind: Server, admission: Option<Arc<dyn AdmissionPolicy>>) -> SocketAddr {
     let (node, addr) = server_test_node_skip_cert_verification(
         EmptyKernel::<StackedRatchet>::default(),
         |builder| {
-            let settings = PqAuthServerSettings::new(
-                OprfSeed::generate(),
-                KsfParams::FLOOR,
-                ThrottlePolicy::RECOMMENDED,
-            )
-            .and_then(|settings| settings.with_security_key_rp_id(RP_ID))
-            .expect("the floor parameters and the relying party are accepted");
             let _ = builder
                 .with_server_misc_settings(ServerMiscSettings {
-                    pq_sign_in: Some(settings),
                     admission,
-                    ..Default::default()
+                    ..pq_server_misc()
                 })
                 .with_server_argon_settings(ArgonDefaultServerSettings {
                     lanes: 0,

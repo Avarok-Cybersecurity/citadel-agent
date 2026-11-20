@@ -294,7 +294,6 @@ mod tests {
             server_address: server_addr.to_string(),
             password: Some(b"secret_0".to_vec().into()),
             security_key: false,
-            recovery_code: None,
             recovery_phrase: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),

@@ -20,3 +20,7 @@ root WireWrapper citadel-internal-service-connector/src/messenger/wire/mod.rs -
 # WireWrapper::Message, contents as bytes) and only the rest to control_request.
 # Without this line the walk reaches InternalServicePayload, the whole wire API.
 opaque WrappedMessage
+
+# Each account's index of the RE-VFS objects it stored, in its byte map, read back by every
+# later build to re-key them after a phrase regeneration (kernel/revfs_seed/index.rs).
+root RevfsIndex citadel-internal-service/src/kernel/revfs_seed/index.rs INDEX_FORMAT_V

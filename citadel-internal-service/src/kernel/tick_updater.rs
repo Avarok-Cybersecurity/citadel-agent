@@ -21,6 +21,9 @@ pub(crate) struct StreamHooks {
     /// Run once the stream has ended, however it ended (completed, failed, or
     /// the SDK dropped it): e.g. removing the browser payload a send read.
     pub on_end: Option<Box<dyn FnOnce() + Send>>,
+    /// Run once the transfer completed (`TransferComplete` or `ReceptionComplete`), before
+    /// `on_end`: e.g. recording a RE-VFS store in the account's index. Dropped unrun otherwise.
+    pub on_complete: Option<Box<dyn FnOnce() + Send>>,
 }
 
 pub(crate) fn spawn_tick_updater<R: Ratchet>(
@@ -32,7 +35,11 @@ pub(crate) fn spawn_tick_updater<R: Ratchet>(
     request_id: Option<Uuid>,
     hooks: StreamHooks,
 ) {
-    let StreamHooks { on_pulled, on_end } = hooks;
+    let StreamHooks {
+        on_pulled,
+        on_end,
+        on_complete,
+    } = hooks;
     let mut handle_inner = object_transfer_handler.inner;
     if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
         // The REQUEST id is frozen -- it names the request that started the
@@ -46,6 +53,7 @@ pub(crate) fn spawn_tick_updater<R: Ratchet>(
         let route = SessionRoute::new(connection.subscribers.clone(), tcp_connection_map);
         let sender_status_updater = async move {
             let mut on_pulled = on_pulled;
+            let mut on_complete = on_complete;
             let mut pulled = PulledOutput::default();
             while let Some(status) = handle_inner.next().await {
                 if on_pulled.is_some() {
@@ -82,6 +90,9 @@ pub(crate) fn spawn_tick_updater<R: Ratchet>(
                         | ObjectTransferStatus::ReceptionComplete
                 ) {
                     info!(target: "citadel", "File Transfer Completed - Ending Tick Updater");
+                    if let Some(on_complete) = on_complete.take() {
+                        on_complete();
+                    }
                     break;
                 }
             }

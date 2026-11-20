@@ -100,7 +100,6 @@ async fn a_name_held_for_another_server_is_refused_and_that_account_survives(
             server_address: server_a.clone(),
             password: Some(PASSWORD.as_bytes().to_vec().into()),
             security_key: false,
-            recovery_code: None,
             recovery_phrase: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),

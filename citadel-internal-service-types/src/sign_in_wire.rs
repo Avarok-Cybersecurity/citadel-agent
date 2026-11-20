@@ -6,7 +6,8 @@
 //! response is logged whole at debug level, and a credential id identifies a user's key.
 //!
 //! The conversions match every variant with no catch-all, so a variant the SDK adds is a compile
-//! error here rather than a silent gap.
+//! error here rather than a silent gap. The SDK still names recovery codes; the agent signs in
+//! and recovers with the phrase only, so a codes variant converts to [`RecoveryCodesUnsupported`].
 
 use crate::{plaintext_debug_fmt, RecoveryCodes};
 use citadel_types::auth as sdk;
@@ -34,7 +35,6 @@ pub enum SignInPolicy {
 pub enum FactorKind {
     Password,
     SecurityKey,
-    RecoveryCode,
     RecoveryPhrase,
 }
 
@@ -53,7 +53,7 @@ pub struct SignInCredential {
     pub created_ms: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint | null"))]
     pub last_used_ms: Option<u64>,
-    /// A recovery code that has been used. It can never sign in again.
+    /// The SDK's flag for a used single-use factor; no factor the agent offers is single-use.
     pub consumed: bool,
 }
 
@@ -78,7 +78,6 @@ pub enum SignInManagementOp {
     SetSignInPolicy {
         policy: SignInPolicy,
     },
-    RegenerateRecoveryCodes,
     /// Set the account's password: a forgotten one from the recovery console (no step-up), or a
     /// change from a full session (the step-up holds the current password). The SDK turns the
     /// new password into a fresh factor on this device; the server never sees it.
@@ -86,14 +85,14 @@ pub enum SignInManagementOp {
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
         new_password: SecBuffer,
     },
-    /// Replace the recovery phrase (and any recovery codes) with a new one. The agent binds it to
-    /// the canonical domain of the account's server (`kernel/recovery_domain.rs`), so a window
-    /// never names one.
+    /// Replace the recovery phrase with a new one. The agent binds it to the canonical domain of
+    /// the account's server (`kernel/recovery_domain.rs`), so a window never names one. The new
+    /// phrase's seed becomes the root of the account's RE-VFS key: every object the account
+    /// stored is sealed again under it (`kernel/revfs_seed/rekey.rs`).
     RegenerateRecoveryPhrase,
 }
 
-/// What a management change did (`citadel_types::auth::SignInManagementOutcome`). The new
-/// recovery codes are [`RecoveryCodes`], which never print.
+/// What a management change did (`citadel_types::auth::SignInManagementOutcome`).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
@@ -108,7 +107,6 @@ pub enum SignInManagementOutcome {
     Renamed,
     Removed,
     PolicySet,
-    RecoveryCodes(RecoveryCodes),
     PasswordSet,
     /// The new recovery phrase's words, which never print either.
     RecoveryPhrase(RecoveryCodes),
@@ -141,28 +139,41 @@ impl From<sdk::SignInPolicy> for SignInPolicy {
     }
 }
 
-impl From<sdk::FactorKind> for FactorKind {
-    fn from(kind: sdk::FactorKind) -> Self {
+/// The SDK named recovery codes, which the agent does not support: an account holding them, or
+/// a server issuing them, is refused rather than shown a factor nothing here can use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryCodesUnsupported;
+
+impl std::fmt::Display for RecoveryCodesUnsupported {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The server answered with recovery codes; this agent recovers accounts with the recovery phrase only")
+    }
+}
+
+impl TryFrom<sdk::FactorKind> for FactorKind {
+    type Error = RecoveryCodesUnsupported;
+    fn try_from(kind: sdk::FactorKind) -> Result<Self, Self::Error> {
         match kind {
-            sdk::FactorKind::Password => Self::Password,
-            sdk::FactorKind::SecurityKey => Self::SecurityKey,
-            sdk::FactorKind::RecoveryCode => Self::RecoveryCode,
-            sdk::FactorKind::RecoveryPhrase => Self::RecoveryPhrase,
+            sdk::FactorKind::Password => Ok(Self::Password),
+            sdk::FactorKind::SecurityKey => Ok(Self::SecurityKey),
+            sdk::FactorKind::RecoveryCode => Err(RecoveryCodesUnsupported),
+            sdk::FactorKind::RecoveryPhrase => Ok(Self::RecoveryPhrase),
         }
     }
 }
 
-impl From<sdk::SignInCredential> for SignInCredential {
-    fn from(c: sdk::SignInCredential) -> Self {
-        Self {
+impl TryFrom<sdk::SignInCredential> for SignInCredential {
+    type Error = RecoveryCodesUnsupported;
+    fn try_from(c: sdk::SignInCredential) -> Result<Self, Self::Error> {
+        Ok(Self {
             id: c.id,
-            kind: c.kind.into(),
+            kind: c.kind.try_into()?,
             label: c.label,
             credential_id: c.credential_id,
             created_ms: c.created_ms,
             last_used_ms: c.last_used_ms,
             consumed: c.consumed,
-        }
+        })
     }
 }
 
@@ -180,7 +191,6 @@ impl SignInManagementOp {
             Self::SetSignInPolicy { policy } => sdk::SignInManagementOp::SetSignInPolicy {
                 policy: policy.into(),
             },
-            Self::RegenerateRecoveryCodes => sdk::SignInManagementOp::RegenerateRecoveryCodes,
             Self::SetPassword { .. } => sdk::SignInManagementOp::SetPassword,
             Self::RegenerateRecoveryPhrase => sdk::SignInManagementOp::RegenerateRecoveryPhrase {
                 canonical_domain: canonical_domain.to_string(),
@@ -195,28 +205,30 @@ impl SignInManagementOp {
     }
 }
 
-impl From<sdk::SignInManagementOutcome> for SignInManagementOutcome {
-    fn from(outcome: sdk::SignInManagementOutcome) -> Self {
-        match outcome {
+impl TryFrom<sdk::SignInManagementOutcome> for SignInManagementOutcome {
+    type Error = RecoveryCodesUnsupported;
+    fn try_from(outcome: sdk::SignInManagementOutcome) -> Result<Self, Self::Error> {
+        Ok(match outcome {
             sdk::SignInManagementOutcome::Credentials {
                 policy,
                 credentials,
             } => Self::Credentials {
                 policy: policy.into(),
-                credentials: credentials.into_iter().map(Into::into).collect(),
+                credentials: credentials
+                    .into_iter()
+                    .map(TryInto::try_into)
+                    .collect::<Result<_, _>>()?,
             },
             sdk::SignInManagementOutcome::Added { id } => Self::Added { id },
             sdk::SignInManagementOutcome::Renamed => Self::Renamed,
             sdk::SignInManagementOutcome::Removed => Self::Removed,
             sdk::SignInManagementOutcome::PolicySet => Self::PolicySet,
-            sdk::SignInManagementOutcome::RecoveryCodes(codes) => {
-                Self::RecoveryCodes(RecoveryCodes(codes))
-            }
+            sdk::SignInManagementOutcome::RecoveryCodes(_) => return Err(RecoveryCodesUnsupported),
             sdk::SignInManagementOutcome::PasswordSet => Self::PasswordSet,
             sdk::SignInManagementOutcome::RecoveryPhrase(words) => {
                 Self::RecoveryPhrase(RecoveryCodes(words))
             }
-        }
+        })
     }
 }
 

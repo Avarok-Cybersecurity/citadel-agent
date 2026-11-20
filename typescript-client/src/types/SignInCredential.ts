@@ -10,6 +10,6 @@ export type SignInCredential = { id: number, kind: FactorKind, label: string,
  */
 credential_id: Array<number> | null, created_ms: bigint, last_used_ms: bigint | null, 
 /**
- * A recovery code that has been used. It can never sign in again.
+ * The SDK's flag for a used single-use factor; no factor the agent offers is single-use.
  */
 consumed: boolean, };

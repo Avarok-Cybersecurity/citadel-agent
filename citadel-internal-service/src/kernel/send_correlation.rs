@@ -27,6 +27,16 @@ pub struct PendingSend {
     /// The browser payload's request directory, for a `ByteContents` send: removed
     /// when the transfer ends (requests/file/browser_payload.rs).
     pub payload_dir: Option<PathBuf>,
+    /// For a RE-VFS store: the index entry it makes once complete, and its hold on the
+    /// account's key (kernel/revfs_seed).
+    pub(crate) revfs_store: Option<PendingStore>,
+}
+
+/// A RE-VFS store in flight.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingStore {
+    pub entry: crate::kernel::revfs_seed::index::IndexEntry,
+    pub token: Option<crate::kernel::revfs_seed::UseToken>,
 }
 
 #[derive(Default)]
@@ -56,6 +66,7 @@ mod tests {
         PendingSend {
             request_id,
             payload_dir: None,
+            revfs_store: None,
         }
     }
 

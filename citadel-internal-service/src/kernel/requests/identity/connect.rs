@@ -145,7 +145,6 @@ pub(crate) async fn connect_identity<T: IOInterface + Sync, R: Ratchet>(
         server_address,
         password: Some(password.as_str().as_bytes().to_vec().into()),
         security_key: false,
-        recovery_code: None,
         recovery_phrase: None,
         admission_token: None,
         connect_mode: ConnectMode::Standard { force_login: false },

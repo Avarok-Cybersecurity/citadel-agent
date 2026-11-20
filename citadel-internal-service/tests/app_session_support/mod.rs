@@ -114,7 +114,7 @@ pub fn spawn_node(
             // A V2 app account's name, `<id_fp>.app-<install>@<server>`, is longer than the
             // SDK's default 37 bytes; a server that hosts apps raises the limit (the identity's
             // own bound is 255).
-            let mut misc = ServerMiscSettings::default();
+            let mut misc = common::pq::pq_server_misc();
             misc.credential_requirements.max_username_length = u8::MAX;
             builder.with_server_misc_settings(misc);
         },

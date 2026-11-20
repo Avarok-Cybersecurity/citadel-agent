@@ -8,6 +8,7 @@ pub mod node_settings;
 mod ports;
 pub mod pq;
 pub mod pq_accounts;
+pub mod pq_files;
 pub mod pq_window;
 pub use ports::get_free_port;
 
@@ -202,7 +203,6 @@ pub async fn register_and_connect_to_server<
                 server_address: item.server_addr.to_string(),
                 password: Some(password),
                 security_key: false,
-                recovery_code: None,
                 recovery_phrase: None,
                 connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
                 udp_mode: Default::default(),
@@ -811,6 +811,7 @@ pub fn server_test_node_on_listener<'a, K: NetKernel<R> + 'a, R: Ratchet>(
         .with_node_type(NodeType::Server(bind_addr))
         .with_path_policy(citadel_sdk::test_common::localhost_path_policy())
         .with_server_limits(citadel_sdk::test_common::localhost_server_limits())
+        .with_server_misc_settings(crate::pq::pq_server_misc())
         .as_test_node()
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(ServerMode::OrderedReliable(
@@ -840,6 +841,7 @@ pub fn server_test_node_skip_cert_verification_with_password<
         .with_node_type(NodeType::Server(bind_addr))
         .with_path_policy(citadel_sdk::test_common::localhost_path_policy())
         .with_server_limits(citadel_sdk::test_common::localhost_server_limits())
+        .with_server_misc_settings(crate::pq::pq_server_misc())
         .as_test_node()
         .with_server_password(server_password)
         .with_insecure_skip_cert_verification()

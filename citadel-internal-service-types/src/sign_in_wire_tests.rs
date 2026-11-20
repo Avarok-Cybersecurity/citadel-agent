@@ -2,9 +2,9 @@
 
 use super::*;
 
-/// A `Connect` as a client from before post-quantum sign-in sends it: a password, and neither
-/// `security_key` nor `recovery_code` (nor `server_password`, which the UI never sends).
-/// Nor `server_address`: it parses, empty, so the agent can answer that page (connect.rs).
+/// A `Connect` that names only a password: no `security_key`, no `recovery_phrase` (nor
+/// `server_password`, which the UI never sends). Nor `server_address`: it parses, empty, so the
+/// agent can answer that page (connect.rs).
 fn legacy_connect_json() -> String {
     let current = InternalServiceRequest::Connect {
         request_id: Uuid::new_v4(),
@@ -12,7 +12,6 @@ fn legacy_connect_json() -> String {
         server_address: "bench.work.avarok.net".to_string(),
         password: Some(SecBuffer::from("hunter2")),
         security_key: true,
-        recovery_code: None,
         recovery_phrase: None,
         connect_mode: ConnectMode::Standard { force_login: false },
         udp_mode: UdpMode::Enabled,
@@ -25,7 +24,6 @@ fn legacy_connect_json() -> String {
     let fields = value["Connect"].as_object_mut().unwrap();
     for added in [
         "security_key",
-        "recovery_code",
         "recovery_phrase",
         "server_password",
         "admission_token",
@@ -42,7 +40,6 @@ fn an_older_clients_connect_still_parses_as_a_password_sign_in() {
     let InternalServiceRequest::Connect {
         password,
         security_key,
-        recovery_code,
         recovery_phrase,
         server_address,
         ..
@@ -57,7 +54,6 @@ fn an_older_clients_connect_still_parses_as_a_password_sign_in() {
         !security_key,
         "an older client cannot answer a key challenge"
     );
-    assert!(recovery_code.is_none());
     assert!(recovery_phrase.is_none());
 }
 
@@ -75,16 +71,14 @@ fn a_prf_output_never_reaches_a_debug_string() {
 }
 
 #[test]
-fn a_registers_recovery_codes_never_reach_a_debug_string() {
+fn a_registrations_phrase_never_reaches_a_debug_string() {
     let success = InternalServiceResponse::RegisterSuccess(RegisterSuccess {
         cid: 7,
         request_id: None,
-        recovery_codes: RecoveryCodes(vec!["7H3Q-K2M9-PX4D-W8RT".to_string()]),
-        recovery_phrase: Some(RecoveryCodes(vec!["zebra".to_string(); 24])),
+        recovery_phrase: RecoveryCodes(vec!["zebra".to_string(); 24]),
         identity: None,
     });
     let printed = format!("{success:?}");
-    assert!(!printed.contains("7H3Q"), "{printed}");
     assert!(!printed.contains("zebra"), "{printed}");
 }
 
@@ -105,12 +99,11 @@ fn a_typed_phrase_never_reaches_a_debug_string() {
     assert!(!printed.contains("turnstile-secret"), "{printed}");
 }
 
-/// A page from before the phrase reads an older agent's registration, and this one's.
+/// A registration always carries its phrase: an answer without one is not a registration.
 #[test]
-fn a_registration_without_a_phrase_still_parses() {
+fn a_registration_without_a_phrase_does_not_parse() {
     let json = r#"{"cid":1,"request_id":null,"recovery_codes":["A"]}"#;
-    let parsed: RegisterSuccess = serde_json::from_str(json).unwrap();
-    assert!(parsed.recovery_phrase.is_none());
+    assert!(serde_json::from_str::<RegisterSuccess>(json).is_err());
 }
 
 #[test]
@@ -154,7 +147,6 @@ fn an_admission_token_never_reaches_a_debug_string() {
         server_address: "bench.work.avarok.net".to_string(),
         password: None,
         security_key: false,
-        recovery_code: None,
         recovery_phrase: None,
         admission_token: Some("0.turnstile-secret".to_string()),
         connect_mode: ConnectMode::Standard { force_login: false },

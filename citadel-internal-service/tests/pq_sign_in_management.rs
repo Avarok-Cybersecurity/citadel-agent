@@ -48,7 +48,11 @@ async fn each_management_change_works_and_the_last_factor_cannot_be_removed(
         1,
         "a new account's recovery credential is its phrase"
     );
-    assert!(of_kind(&list, FactorKind::RecoveryCode).is_empty());
+    assert_eq!(
+        list.len(),
+        2,
+        "a factor other than the password and the phrase"
+    );
     let password_id = of_kind(&list, FactorKind::Password)[0].id;
 
     // The password is the only way in: removing it is refused.

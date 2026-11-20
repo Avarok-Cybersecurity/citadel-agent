@@ -48,6 +48,15 @@ pub const SERVER_SCOPE: u64 = 0;
 pub struct PendingPull {
     pub request_id: Uuid,
     pub file: PulledKey,
+    /// The pull's hold on the account's RE-VFS key, kept until its transfer ends, and, for a
+    /// take, the object it removes from the account's index (kernel/revfs_seed).
+    pub(crate) revfs: PullUse,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct PullUse {
+    pub token: Option<crate::kernel::revfs_seed::UseToken>,
+    pub taken: Option<(crate::kernel::revfs_seed::index::Location, String)>,
 }
 
 #[derive(Default)]
@@ -128,6 +137,7 @@ mod tests {
 
     fn pull(request_id: Uuid) -> PendingPull {
         PendingPull {
+            revfs: Default::default(),
             request_id,
             file: PulledKey {
                 peer_cid: Some(PEER),

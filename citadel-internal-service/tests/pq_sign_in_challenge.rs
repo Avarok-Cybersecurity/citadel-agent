@@ -33,7 +33,6 @@ async fn challenged(
             server_address: server.to_string(),
             password: Some(SecBuffer::from(PASSWORD)),
             security_key: true,
-            recovery_code: None,
             recovery_phrase: None,
             connect_mode: ConnectMode::Standard { force_login: false },
             udp_mode: UdpMode::Disabled,

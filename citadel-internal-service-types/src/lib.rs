@@ -94,7 +94,8 @@ pub use sign_in::{
 };
 pub use sign_in_ceremony::SecurityKeyCeremony;
 pub use sign_in_wire::{
-    FactorKind, SignInCredential, SignInManagementOp, SignInManagementOutcome, SignInPolicy,
+    FactorKind, RecoveryCodesUnsupported, SignInCredential, SignInManagementOp,
+    SignInManagementOutcome, SignInPolicy,
 };
 pub use supervisor::{SupervisorNotification, SupervisorState};
 pub use turn::{IceServer, P2pPathReport, PeerTurnConfig, TurnPolicy};
@@ -290,15 +291,11 @@ pub struct RegisterSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
     pub request_id: Option<Uuid>,
-    /// The account's recovery codes, to show the user once. Empty for a server without
-    /// post-quantum sign-in. With `connect_after_register` this response is sent before the
-    /// connect's own.
-    pub recovery_codes: RecoveryCodes,
-    /// The account's 24-word recovery phrase, to show the user once: a server at 0.12.4 or later
-    /// issues it instead of `recovery_codes`. Absent from an older server and an older agent.
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
-    pub recovery_phrase: Option<RecoveryCodes>,
+    /// The account's 24-word recovery phrase, to show the user once. It also recovers the
+    /// account's files: its seed is the root of the account's RE-VFS key. A server that issues
+    /// none is a registration failure. With `connect_after_register` this response is sent
+    /// before the connect's own.
+    pub recovery_phrase: RecoveryCodes,
     /// The identity and the server pinned by a `RegisterIdentity`; absent for `Register`.
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
@@ -1363,22 +1360,16 @@ pub enum InternalServiceRequest {
         /// used as an address.
         #[serde(default)]
         server_address: String,
-        /// Absent for a `KeyOnly` account and for a recovery-code sign-in.
+        /// Absent for a `KeyOnly` account and for a recovery-phrase sign-in.
         #[cfg_attr(feature = "typescript", ts(type = "number[] | null"))]
         password: Option<SecBuffer>,
-        /// Whether this window can answer a `SecurityKeyChallengeNotification`. A client from
-        /// before post-quantum sign-in sends neither this nor `recovery_code`.
+        /// Whether this window can answer a `SecurityKeyChallengeNotification`.
         #[serde(default)]
         #[cfg_attr(feature = "typescript", ts(as = "Option<bool>", optional))]
         security_key: bool,
-        /// A recovery code as typed. It signs in once, to a session that may only add a
-        /// security key, set the sign-in policy or sign out.
-        #[serde(default)]
-        #[cfg_attr(feature = "typescript", ts(type = "number[] | null", optional))]
-        recovery_code: Option<SecBuffer>,
-        /// The account's 24-word recovery phrase as typed (any case and spacing). Like a code, it
-        /// signs in to the recovery console: a session that may only manage how the account
-        /// signs in. The agent binds it to the account's server (`kernel/recovery_domain.rs`).
+        /// The account's 24-word recovery phrase as typed (any case and spacing). It signs in to
+        /// the recovery console: a session that may only manage how the account signs in. The
+        /// agent binds it to the account's server (`kernel/recovery_domain.rs`).
         #[serde(default)]
         #[cfg_attr(feature = "typescript", ts(type = "number[] | null", optional))]
         recovery_phrase: Option<SecBuffer>,
@@ -2309,7 +2300,14 @@ pub enum InternalServiceRequest {
         phrase: SecBuffer,
         /// What to call this device among the account's security events (1 to 64 characters).
         device_label: String,
-        /// A Turnstile token (action `recover`) for a server that asks for one. Never logged.
+        /// A Turnstile token for a server that asks for one. Never logged. A token is single-use,
+        /// and the server asks for one twice (the recovery, then the phrase sign-in, both checked
+        /// as action `recover`): on a device that does not hold the account it admits the
+        /// recovery, and the sign-in after it goes without one; on a server that requires the
+        /// check, that sign-in answers `ConnectFailure` (`AdmissionRequired`, with the challenge)
+        /// under this request id after `RecoverAccountSuccess`, and the window sends
+        /// `RecoverAccount` again with a fresh token. On a device that holds the account (the
+        /// second send included) nothing is recovered and the token admits the sign-in.
         #[serde(default)]
         #[debug(with = secret_debug_fmt)]
         #[cfg_attr(feature = "typescript", ts(optional = nullable))]
@@ -2722,7 +2720,6 @@ mod tests {
             server_address: "bench.work.avarok.net".to_string(),
             password: Some(SecBuffer::from(vec![])),
             security_key: false,
-            recovery_code: None,
             recovery_phrase: None,
             connect_mode: ConnectMode::Standard { force_login: false },
             udp_mode: UdpMode::Enabled,

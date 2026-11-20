@@ -34,7 +34,6 @@ pub struct FakeKey {
 pub struct Offer {
     pub password: Option<String>,
     pub key: Option<FakeKey>,
-    pub recovery_code: Option<String>,
     /// The recovery phrase as typed: signs in to the recovery console.
     pub recovery_phrase: Option<String>,
     /// A Turnstile token, for a server that checks fresh sign-ins.
@@ -48,32 +47,30 @@ pub struct Outcome {
     pub challenges: Vec<SecurityKeyChallengeNotification>,
 }
 
-/// What a registration hands the window once: the phrase from a server that recovers accounts,
-/// codes from an older one.
+/// What a registration hands the window once: the recovery phrase.
 #[derive(Debug, Clone)]
 pub struct Registered {
     pub cid: u64,
-    pub codes: RecoveryCodes,
-    pub phrase: Option<RecoveryCodes>,
+    pub phrase: RecoveryCodes,
 }
 
 impl Registered {
     /// The phrase's 24 words as a person would type them.
     pub fn typed_phrase(&self) -> String {
-        self.phrase
-            .as_ref()
-            .expect("the registration issued no phrase")
-            .0
-            .join(" ")
+        self.phrase.0.join(" ")
     }
 }
 
 /// What a `RecoverAccount` answered: whether the account was recovered here (other devices
-/// revoked), and the phrase sign-in's own answer.
+/// revoked), the phrase sign-in's own answer, and, for a refusal, which step refused it, its
+/// reason and whether it published an admission challenge.
 #[derive(Debug)]
 pub struct Recovered {
     pub recovered_cid: Option<u64>,
     pub sign_in: Result<u64, String>,
+    pub refused_by_recovery: bool,
+    pub reason: Option<FailureReason>,
+    pub challenged: bool,
 }
 
 pub struct Window {
@@ -136,7 +133,7 @@ impl Window {
         }
     }
 
-    /// Registers without connecting; the recovery codes, or the refusal.
+    /// Registers without connecting; the recovery phrase, or the refusal.
     pub async fn register(
         &mut self,
         server: SocketAddr,
@@ -172,7 +169,6 @@ impl Window {
         Ok(match self.answer_of(request_id, None).await?.response {
             InternalServiceResponse::RegisterSuccess(success) => Ok(Registered {
                 cid: success.cid,
-                codes: success.recovery_codes.clone(),
                 phrase: success.recovery_phrase.clone(),
             }),
             InternalServiceResponse::RegisterFailure(failure) => {
@@ -196,7 +192,6 @@ impl Window {
             server_address: server.to_string(),
             password: offer.password.as_deref().map(SecBuffer::from),
             security_key: offer.key.is_some(),
-            recovery_code: offer.recovery_code.as_deref().map(SecBuffer::from),
             recovery_phrase: offer.recovery_phrase.as_deref().map(SecBuffer::from),
             admission_token: offer.admission.clone(),
             connect_mode: ConnectMode::Standard { force_login: false },
@@ -233,6 +228,19 @@ impl Window {
         phrase: &str,
         label: &str,
     ) -> Result<Recovered, Box<dyn Error>> {
+        self.recover_admitted(server, username, phrase, label, None)
+            .await
+    }
+
+    /// As `recover`, with an admission (Turnstile) token.
+    pub async fn recover_admitted(
+        &mut self,
+        server: SocketAddr,
+        username: &str,
+        phrase: &str,
+        label: &str,
+        token: Option<&str>,
+    ) -> Result<Recovered, Box<dyn Error>> {
         let request_id = Uuid::new_v4();
         self.send(InternalServiceRequest::RecoverAccount {
             request_id,
@@ -240,37 +248,45 @@ impl Window {
             username: username.to_string(),
             phrase: SecBuffer::from(phrase),
             device_label: label.to_string(),
-            admission_token: None,
+            admission_token: token.map(str::to_string),
             session_security_settings: Default::default(),
             server_password: None,
         })
         .await?;
         let mut recovered_cid = None;
+        let answered =
+            |recovered_cid, sign_in, refused_by_recovery, reason, challenged| Recovered {
+                recovered_cid,
+                sign_in,
+                refused_by_recovery,
+                reason,
+                challenged,
+            };
         loop {
-            match self.answer_of(request_id, None).await?.response {
+            return Ok(match self.answer_of(request_id, None).await?.response {
                 InternalServiceResponse::RecoverAccountSuccess(success) => {
-                    recovered_cid = Some(success.cid)
+                    recovered_cid = Some(success.cid);
+                    continue;
                 }
-                InternalServiceResponse::RecoverAccountFailure(failure) => {
-                    return Ok(Recovered {
-                        recovered_cid,
-                        sign_in: Err(failure.message),
-                    })
-                }
+                InternalServiceResponse::RecoverAccountFailure(failure) => answered(
+                    recovered_cid,
+                    Err(failure.message),
+                    true,
+                    failure.reason_code,
+                    failure.admission_challenge.is_some(),
+                ),
                 InternalServiceResponse::ConnectSuccess(success) => {
-                    return Ok(Recovered {
-                        recovered_cid,
-                        sign_in: Ok(success.cid),
-                    })
+                    answered(recovered_cid, Ok(success.cid), false, None, false)
                 }
-                InternalServiceResponse::ConnectFailure(failure) => {
-                    return Ok(Recovered {
-                        recovered_cid,
-                        sign_in: Err(failure.message),
-                    })
-                }
+                InternalServiceResponse::ConnectFailure(failure) => answered(
+                    recovered_cid,
+                    Err(failure.message),
+                    false,
+                    failure.reason_code,
+                    failure.admission_challenge.is_some(),
+                ),
                 other => return Err(format!("not a recovery answer: {other:?}").into()),
-            }
+            });
         }
     }
 

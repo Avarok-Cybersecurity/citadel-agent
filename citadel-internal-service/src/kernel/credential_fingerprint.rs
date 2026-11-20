@@ -38,7 +38,7 @@
 //! session. If the password changed server-side since, this still matches — the
 //! session it admits you to is the one that password opened, which is the
 //! property that matters here. A session whose sign-in proved more than the
-//! password (a security key, a recovery code) records no fingerprint at all
+//! password (a security key, the recovery phrase) records no fingerprint at all
 //! (requests/connect.rs), so nothing can reach it on a password.
 
 use citadel_sdk::prelude::{NodeRemote, Ratchet, SecBuffer};

@@ -23,6 +23,7 @@
 use crate::kernel::reconnect::sign_in::{self, SignIn};
 use crate::kernel::reconnect::{LinkState, Reauth};
 use crate::kernel::requests::HandledRequestResult;
+use crate::kernel::revfs_seed;
 use crate::kernel::session_route::SessionRoute;
 use crate::kernel::sign_in::factors;
 use crate::kernel::sign_in::key_relay::Asker;
@@ -51,7 +52,6 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         username,
         password,
         security_key,
-        recovery_code,
         recovery_phrase,
         admission_token,
         connect_mode,
@@ -86,28 +86,6 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         let response = refusal.into_response(&username, &server_address, request_id);
         return Some(HandledRequestResult { response, uuid });
     }
-    // The account's RE-VFS key, before anything is dialled: a session without it could store
-    // nothing, and a refusal after the SDK connect would leave that SDK session behind.
-    let revfs_key = match crate::kernel::revfs_seed::session_key(
-        this.revfs_vault.get(),
-        this.remote(),
-        &username,
-    )
-    .await
-    {
-        Ok(key) => key,
-        Err(err) => {
-            citadel_sdk::logging::warn!(target: "citadel", "[Connect] REFUSED {}: no RE-VFS key: {}", username, err);
-            let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
-                cid: 0,
-                message: format!("The account's storage key is unavailable: {err}"),
-                request_id: Some(request_id),
-                reason_code: None,
-                admission_challenge: None,
-            });
-            return Some(HandledRequestResult { response, uuid });
-        }
-    };
     // The phrase is bound to the account's server, which the check above has just confirmed
     // is the one named: read before anything is dialled, so a mistyped word is answered at once.
     let recovery_phrase = match recovery_phrase {
@@ -126,6 +104,30 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
         },
     };
+    // The account's RE-VFS key, before anything is dialled: a session without it could store
+    // nothing, and a refusal after the SDK connect would leave that SDK session behind. A
+    // device that holds the account but no root for it takes the phrase's, once the server has
+    // accepted the phrase (`unrooted`, stored after the sign-in).
+    let (revfs_key, unrooted) = match crate::kernel::revfs_seed::session_key(
+        this.revfs_vault.get(),
+        this.remote(),
+        &username,
+    )
+    .await
+    {
+        Ok(key) => (key, None),
+        Err(err) => match recovery_phrase
+            .as_ref()
+            .filter(|_| err == revfs_seed::NO_ROOT)
+        {
+            Some(phrase) => match revfs_seed::phrase_key(this.remote(), &username, phrase) {
+                Ok(key) => (key, Some(*phrase.seed().as_bytes())),
+                Err(err) => return Some(no_revfs_key(&username, err, request_id, uuid)),
+            },
+            None => return Some(no_revfs_key(&username, err, request_id, uuid)),
+        },
+    };
+    let unrooted = unrooted.map(zeroize::Zeroizing::new);
     let connect_mode = crate::kernel::requests::connect_mode::server_connect_mode(
         connect_mode,
         crate::kernel::requests::connect_mode::LoginOrigin::UserSignIn,
@@ -316,32 +318,17 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         request_id,
     };
     let (challenges, clients) = (&this.key_challenges, &this.tx_to_localhost_clients);
-    let offered = factors::begin(
+    let (factors, underway) = factors::begin(
         challenges,
         clients,
         asker,
         factors::Offer {
             password: password.clone(),
             security_key,
-            recovery_code,
             recovery_phrase,
             admission: admission_token,
         },
     );
-    let (factors, underway) = match offered {
-        Ok(begun) => begun,
-        Err(message) => {
-            cleanup_username(this, &username_for_cleanup);
-            let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
-                cid: 0,
-                message,
-                request_id: Some(request_id),
-                reason_code: None,
-                admission_challenge: None,
-            });
-            return Some(HandledRequestResult { response, uuid });
-        }
-    };
 
     // Proceed with new connection (no existing session or stale session was cleaned)
     match remote
@@ -524,7 +511,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
             // Recorded from the password the SERVER just accepted, so a later
             // reuse request has something to prove itself against -- and only when the
-            // password is all the sign-in proved. A session a key or a recovery code opened
+            // password is all the sign-in proved. A session a key or the recovery phrase opened
             // records none, so neither a reuse nor an attach can reach it on a password.
             let fingerprint = match &reconnect_credentials.reauth {
                 Reauth::Password(password) => {
@@ -577,9 +564,24 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 this.identity.as_ref().map(|id| id.waiters.clone()),
             );
 
-            // A recovery session may not message: the server drops it, so no ILM is hosted.
+            if let Some(seed) = unrooted {
+                let adopted = revfs_seed::adopt_phrase(
+                    this.revfs_vault.get(),
+                    remote,
+                    cid,
+                    &seed,
+                    revfs_seed::Adopt::IfAbsent,
+                )
+                .await;
+                if let Err(err) = adopted {
+                    citadel_sdk::logging::warn!(target: "citadel", "[Connect] {cid}'s phrase signed in, but its RE-VFS root was not stored: {err}");
+                }
+            }
+            // A recovery session may not message or store: the server drops both, so no ILM is
+            // hosted, and a re-key after a phrase regeneration waits for a full session.
             if scope == SessionScope::Full {
                 this.host_ilm_for(cid, uuid).await;
+                revfs_seed::resume(this, cid);
             }
             // Off the Connect's path: the answer to the window must not wait on the server.
             let telemetry = this.clone();
@@ -603,6 +605,18 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             Some(HandledRequestResult { response, uuid })
         }
     }
+}
+
+fn no_revfs_key(username: &str, err: String, request_id: Uuid, uuid: Uuid) -> HandledRequestResult {
+    citadel_sdk::logging::warn!(target: "citadel", "[Connect] REFUSED {}: no RE-VFS key: {}", username, err);
+    let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+        cid: 0,
+        message: format!("The account's storage key is unavailable: {err}"),
+        request_id: Some(request_id),
+        reason_code: None,
+        admission_challenge: None,
+    });
+    HandledRequestResult { response, uuid }
 }
 
 /// The typed phrase, bound to the canonical domain of `username`'s server on this agent.

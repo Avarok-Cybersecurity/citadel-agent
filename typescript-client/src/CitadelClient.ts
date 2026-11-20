@@ -96,7 +96,6 @@ export class CitadelClient {
                 password: Array.from(passwordBytes),
                 // A password sign-in: this client cannot answer a security-key challenge.
                 security_key: false,
-                recovery_code: null,
                 connect_mode: options.connectMode || { Standard: { force_login: false } },
                 udp_mode: options.udpMode || "Disabled",
                 keep_alive_timeout: options.keepAliveTimeout || { secs: 30, nanos: 0 },

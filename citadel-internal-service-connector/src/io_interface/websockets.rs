@@ -633,7 +633,6 @@ mod tests {
             server_address: "bench.work.avarok.net".to_string(),
             password: Some(SecBuffer::from(b"password".to_vec())),
             security_key: false,
-            recovery_code: None,
             recovery_phrase: None,
             connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                 force_login: false,
@@ -707,7 +706,6 @@ mod tests {
             server_address: "bench.work.avarok.net".to_string(),
             password: Some(SecBuffer::from(b"password".to_vec())),
             security_key: false,
-            recovery_code: None,
             recovery_phrase: None,
             connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                 force_login: false,
@@ -803,7 +801,6 @@ mod tests {
                 server_address: "bench.work.avarok.net".to_string(),
                 password: Some(SecBuffer::from(b"password".to_vec())),
                 security_key: false,
-                recovery_code: None,
                 recovery_phrase: None,
                 connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                     force_login: false,
@@ -866,7 +863,6 @@ mod tests {
             server_address: "bench.work.avarok.net".to_string(),
             password: Some(SecBuffer::from(b"password".to_vec())),
             security_key: false,
-            recovery_code: None,
             recovery_phrase: None,
             connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                 force_login: false,

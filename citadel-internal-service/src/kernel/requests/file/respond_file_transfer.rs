@@ -51,6 +51,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                         crate::kernel::tick_updater::StreamHooks {
                             on_pulled: Some(on_received),
                             on_end: None,
+                            on_complete: None,
                         },
                     );
 

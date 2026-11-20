@@ -205,6 +205,8 @@ pub(crate) async fn dial<T: IOInterface + Sync, R: Ratchet>(
                         }
                     }
 
+                    // Objects the account stored with this peer may wait for a re-key.
+                    crate::kernel::revfs_seed::resume(this, cid);
                     let read_route = path_route.clone();
 
                     spawn_read_stream(

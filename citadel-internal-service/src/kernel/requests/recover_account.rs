@@ -3,8 +3,16 @@
 //!
 //! On a device that holds no bundle for the account, the SDK's `recover` installs this device's
 //! in place of every other device's (they are signed out), and the agent records the server host
-//! as a registration does. On a device that already holds it, nothing is revoked: the phrase only
-//! signs in. Either way the phrase sign-in is the ordinary `Connect`, whose answer comes last.
+//! as a registration does, and the phrase's seed as the account's RE-VFS root: the phrase
+//! recovers the files too. On a device that already holds it, nothing is revoked and the root it
+//! stores is kept: the phrase only signs in. Either way the phrase sign-in is the ordinary
+//! `Connect`, whose answer comes last.
+//!
+//! The admission token is single-use, and the server checks both steps (as `recover`). After a
+//! fresh recovery the token is spent, so the sign-in goes without one: a server that requires
+//! the check answers it `AdmissionRequired` with its challenge, and the window sends
+//! `RecoverAccount` again with a fresh token, which this device, now holding the account,
+//! spends on the sign-in.
 
 use crate::kernel::account_server::Refusal;
 use crate::kernel::requests::{handle_request, HandledRequestResult};
@@ -89,7 +97,12 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         }
     };
 
+    let sign_in_admission = match held {
+        true => admission_token.clone(),
+        false => None,
+    };
     if !held {
+        let seed = zeroize::Zeroizing::new(*phrase.seed().as_bytes());
         let recovery = AccountRecovery {
             username: username.clone(),
             phrase,
@@ -148,6 +161,20 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         if let Err(err) = crate::kernel::server_host::store(remote, cid, &server_host).await {
             warn!(target: "citadel", "[Recover] Recovered {cid} but could not record its server host {server_host}: {err}");
         }
+        // The server accepted the phrase: its seed is the account's root on this device, where
+        // nothing was held. Logged on failure, as the server host is: the phrase sign-in below
+        // then answers `NO_ROOT`, and a second `RecoverAccount` (now held) stores it.
+        let adopted = crate::kernel::revfs_seed::adopt_phrase(
+            this.revfs_vault.get(),
+            remote,
+            cid,
+            &seed,
+            crate::kernel::revfs_seed::Adopt::Replace,
+        )
+        .await;
+        if let Err(err) = adopted {
+            warn!(target: "citadel", "[Recover] Recovered {cid} but could not store its RE-VFS root: {err}");
+        }
         let response = InternalServiceResponse::RecoverAccountSuccess(RecoverAccountSuccess {
             cid,
             request_id: Some(request_id),
@@ -163,9 +190,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         server_address: server_host,
         password: None,
         security_key: false,
-        recovery_code: None,
         recovery_phrase: Some(typed),
-        admission_token: None,
+        admission_token: sign_in_admission,
         connect_mode: ConnectMode::Standard { force_login: false },
         udp_mode: Default::default(),
         keep_alive_timeout: None,

@@ -3,4 +3,4 @@
 /**
  * What a factor is derived from (`citadel_types::auth::FactorKind`).
  */
-export type FactorKind = "Password" | "SecurityKey" | "RecoveryCode" | "RecoveryPhrase";
+export type FactorKind = "Password" | "SecurityKey" | "RecoveryPhrase";

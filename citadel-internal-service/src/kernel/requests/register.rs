@@ -32,6 +32,12 @@ use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{ConnectMode, ProtocolRemoteExt, Ratchet};
 use uuid::Uuid;
 
+/// A server that issued no recovery phrase registered an account nothing could recover, and
+/// whose files would have no root (kernel/revfs_seed).
+pub(crate) const NO_PHRASE: &str = "The server registered the account but issued no recovery \
+     phrase. This agent registers only on servers that recover accounts with a phrase; update \
+     the server, then register again under another username";
+
 pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
@@ -179,15 +185,32 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
     match registered {
         Ok(res) => {
-            // The phrase (or, from an older server, the codes) exists only here: the SDK drew it
-            // on this client, and the server keeps only its key. They go to the window that registered, once, and nowhere
-            // else -- not to a log, not to the store.
+            // The phrase exists only here: the SDK drew it on this client, and the server keeps
+            // only its factor's public key. The words go to the window that registered, once,
+            // and nowhere else -- not to a log, not to the store. Their seed is the account's
+            // RE-VFS root, stored sealed before anything can use a key.
+            let Some(words) = res.recovery_phrase.map(RecoveryCodes) else {
+                citadel_sdk::logging::warn!(target: "citadel", "[Register] {} registered at {}, which issued no recovery phrase", res.cid, server_host);
+                return Some(HandledRequestResult {
+                    response: InternalServiceResponse::RegisterFailure(
+                        citadel_internal_service_types::RegisterFailure {
+                            cid: res.cid,
+                            reason_code: None,
+                            admission_challenge: None,
+                            held_for_server: None,
+                            message: NO_PHRASE.to_string(),
+                            request_id: Some(request_id),
+                        },
+                    ),
+                    uuid,
+                });
+            };
+            store_root(this, res.cid, &words).await;
             let response = InternalServiceResponse::RegisterSuccess(
                 citadel_internal_service_types::RegisterSuccess {
                     cid: res.cid,
                     request_id: Some(request_id),
-                    recovery_codes: RecoveryCodes(res.recovery_codes),
-                    recovery_phrase: res.recovery_phrase.map(RecoveryCodes),
+                    recovery_phrase: words,
                     identity: None,
                 },
             );
@@ -196,7 +219,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
             // Sent ahead of the connect's own answer, which keeps the request id.
             if deliver(&this.tx_to_localhost_clients, &[uuid], response).is_empty() {
-                citadel_sdk::logging::warn!(target: "citadel", "[Register] {} registered, but its window left before the recovery codes reached it", res.cid);
+                citadel_sdk::logging::warn!(target: "citadel", "[Register] {} registered, but its window left before the recovery phrase reached it", res.cid);
             }
             let connect_command = InternalServiceRequest::Connect {
                 username,
@@ -204,7 +227,6 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 server_address: server_host,
                 password: Some(proposed_password),
                 security_key: false,
-                recovery_code: None,
                 recovery_phrase: None,
                 keep_alive_timeout: None,
                 udp_mode: Default::default(),
@@ -232,5 +254,27 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
             Some(HandledRequestResult { response, uuid })
         }
+    }
+}
+
+/// The issued phrase's seed becomes the account's RE-VFS root. Logged, not answered as a
+/// failure: the account exists at the server and the words must still reach the window. Without
+/// a stored root the account's sign-ins here are refused (`revfs_seed::NO_ROOT`) until the phrase
+/// recovers it on this device, which stores the root then.
+async fn store_root<T: IOInterface + Sync, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    cid: u64,
+    words: &RecoveryCodes,
+) {
+    use crate::kernel::revfs_seed::{self, Adopt};
+    let stored = match revfs_seed::seed_of_words(&words.0) {
+        Ok(seed) => {
+            let (vault, remote) = (this.revfs_vault.get(), this.remote());
+            revfs_seed::adopt_phrase(vault, remote, cid, &seed, Adopt::Replace).await
+        }
+        Err(err) => Err(err),
+    };
+    if let Err(err) = stored {
+        citadel_sdk::logging::warn!(target: "citadel", "[Register] {cid} registered, but its RE-VFS root was not stored: {err}");
     }
 }

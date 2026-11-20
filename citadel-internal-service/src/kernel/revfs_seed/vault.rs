@@ -1,4 +1,4 @@
-//! The agent's vault key: the one key every account's RE-VFS seed is sealed under at rest. It is
+//! The agent's vault key: the one key every account's RE-VFS roots are sealed under at rest. It is
 //! drawn once, the first time an account needs it, and kept where the binary says: a private
 //! file beside the filesystem backend's accounts (never inside them), or memory for an agent
 //! whose accounts are in memory too. There is no default store.
@@ -65,7 +65,7 @@ impl RevfsVaultStore for FsRevfsVault {
 
 /// Where a vault key is kept: beside a filesystem backend's accounts (`<data dir>/revfs-vault`,
 /// never inside an account), in memory with an in-memory backend. It persists exactly when the
-/// seeds sealed under it do.
+/// roots sealed under it do.
 pub fn vault_for(backend: &BackendType) -> Result<Arc<dyn RevfsVaultStore>, String> {
     match backend {
         BackendType::InMemory => Ok(Arc::new(MemoryRevfsVault::default())),
@@ -78,11 +78,13 @@ pub fn vault_for(backend: &BackendType) -> Result<Arc<dyn RevfsVaultStore>, Stri
     }
 }
 
-/// The vault key, loaded or drawn once per process. Serialised, so two first sign-ins cannot
-/// each draw a key and seal a seed under the one the other overwrites.
+/// The vault key, loaded or drawn once per process. Serialised, so two first registrations
+/// cannot each draw a key and seal roots under the one the other overwrites. Also who is using
+/// each account's key (`usage.rs`), which lives exactly as long as the vault.
 pub(crate) struct Vault {
     store: Arc<dyn RevfsVaultStore>,
     key: tokio::sync::Mutex<Option<Arc<Zeroizing<[u8; VAULT_KEY_LEN]>>>>,
+    pub(crate) accounts: super::usage::Accounts,
 }
 
 impl Vault {
@@ -90,6 +92,7 @@ impl Vault {
         Self {
             store,
             key: tokio::sync::Mutex::new(None),
+            accounts: Default::default(),
         }
     }
 
@@ -132,7 +135,7 @@ mod tests {
         let again = Vault::new(store).key().await.unwrap();
         assert_eq!(
             **first, **again,
-            "a restarted agent must open the seeds it sealed"
+            "a restarted agent must open the roots it sealed"
         );
     }
 

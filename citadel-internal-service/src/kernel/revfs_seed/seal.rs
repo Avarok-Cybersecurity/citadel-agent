@@ -1,8 +1,9 @@
-//! An account's RE-VFS seed at rest: AES-256-GCM under the agent's vault key (symmetric, so
+//! An account's RE-VFS roots at rest: AES-256-GCM under the agent's vault key (symmetric, so
 //! post-quantum safe). Pure: the nonce is the caller's fresh randomness.
 //!
-//! The associated data names the format and the account, so a sealed seed copied into another
-//! account's record does not open there.
+//! The associated data names the format and the account, so a sealed record copied into another
+//! account's record does not open there. The plaintext is one or more 32-byte roots
+//! (`roots.rs`), never anything else.
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
@@ -11,10 +12,10 @@ use zeroize::Zeroizing;
 pub(crate) const SEED_LEN: usize = 32;
 pub(crate) const VAULT_KEY_LEN: usize = 32;
 pub(crate) const NONCE_LEN: usize = 12;
-const VERSION: u8 = 1;
-const SEAL_AD: &[u8] = b"citadel-agent-revfs-seed-v1";
+const VERSION: u8 = 2;
+const SEAL_AD: &[u8] = b"citadel-agent-revfs-roots-v2";
 const TAG_LEN: usize = 16;
-const SEALED_LEN: usize = 1 + NONCE_LEN + SEED_LEN + TAG_LEN;
+const OVERHEAD: usize = 1 + NONCE_LEN + TAG_LEN;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SeedSealError {
@@ -32,23 +33,24 @@ fn cipher(vault_key: &[u8; VAULT_KEY_LEN]) -> Aes256Gcm {
     Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(vault_key))
 }
 
-/// `version ‖ nonce ‖ AES-256-GCM(seed)`.
+/// `version ‖ nonce ‖ AES-256-GCM(roots)`. `roots` is a whole number of 32-byte roots.
 pub(crate) fn seal(
-    seed: &[u8; SEED_LEN],
+    roots: &[u8],
     vault_key: &[u8; VAULT_KEY_LEN],
     cid: u64,
     nonce: [u8; NONCE_LEN],
 ) -> Vec<u8> {
+    debug_assert!(!roots.is_empty() && roots.len().is_multiple_of(SEED_LEN));
     let aad = associated_data(cid);
     let ciphertext = cipher(vault_key)
         .encrypt(
             Nonce::from_slice(&nonce),
             Payload {
-                msg: seed,
+                msg: roots,
                 aad: &aad,
             },
         )
-        .unwrap_or_else(|_| unreachable!("a 32-byte message is within AES-GCM's limit"));
+        .unwrap_or_else(|_| unreachable!("a list of roots is within AES-GCM's limit"));
     [&[VERSION][..], &nonce, &ciphertext].concat()
 }
 
@@ -56,41 +58,38 @@ pub(crate) fn open(
     sealed: &[u8],
     vault_key: &[u8; VAULT_KEY_LEN],
     cid: u64,
-) -> Result<Zeroizing<[u8; SEED_LEN]>, SeedSealError> {
-    if sealed.len() != SEALED_LEN || sealed[0] != VERSION {
+) -> Result<Zeroizing<Vec<u8>>, SeedSealError> {
+    let body = sealed.len().saturating_sub(OVERHEAD);
+    if body == 0 || !body.is_multiple_of(SEED_LEN) || sealed[0] != VERSION {
         return Err(SeedSealError::Malformed);
     }
     let (nonce, ciphertext) = sealed[1..].split_at(NONCE_LEN);
     let aad = associated_data(cid);
-    let plain = Zeroizing::new(
-        cipher(vault_key)
-            .decrypt(
-                Nonce::from_slice(nonce),
-                Payload {
-                    msg: ciphertext,
-                    aad: &aad,
-                },
-            )
-            .map_err(|_| SeedSealError::DoesNotOpen)?,
-    );
-    let mut seed = Zeroizing::new([0u8; SEED_LEN]);
-    seed.copy_from_slice(&plain);
-    Ok(seed)
+    cipher(vault_key)
+        .decrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: ciphertext,
+                aad: &aad,
+            },
+        )
+        .map(Zeroizing::new)
+        .map_err(|_| SeedSealError::DoesNotOpen)
 }
 
 #[cfg(test)]
 mod tests {
-    //! Control: drop `cid` from `associated_data` → a seed sealed for one account opens for
+    //! Control: drop `cid` from `associated_data` → a record sealed for one account opens for
     //! another and `the_seal_binds_the_vault_key_and_the_account` goes red.
     use super::*;
 
-    const SEED: [u8; 32] = [7; 32];
+    const ROOTS: [u8; 64] = [7; 64];
     const KEY: [u8; 32] = [1; 32];
 
     #[test]
     fn the_seal_binds_the_vault_key_and_the_account() {
-        let sealed = seal(&SEED, &KEY, 42, [2; 12]);
-        assert_eq!(*open(&sealed, &KEY, 42).unwrap(), SEED);
+        let sealed = seal(&ROOTS, &KEY, 42, [2; 12]);
+        assert_eq!(open(&sealed, &KEY, 42).unwrap().as_slice(), ROOTS);
         assert_eq!(open(&sealed, &[9; 32], 42), Err(SeedSealError::DoesNotOpen));
         assert_eq!(open(&sealed, &KEY, 43), Err(SeedSealError::DoesNotOpen));
         let mut tampered = sealed.clone();
@@ -99,17 +98,18 @@ mod tests {
     }
 
     #[test]
-    fn the_sealed_record_never_holds_the_seed() {
-        let sealed = seal(&SEED, &KEY, 42, [2; 12]);
-        assert!(!sealed.windows(SEED_LEN).any(|w| w == SEED));
+    fn the_sealed_record_never_holds_a_root() {
+        let sealed = seal(&ROOTS, &KEY, 42, [2; 12]);
+        assert!(!sealed.windows(SEED_LEN).any(|w| w == &ROOTS[..SEED_LEN]));
     }
 
     #[test]
     fn a_record_of_another_shape_is_malformed() {
-        let sealed = seal(&SEED, &KEY, 42, [2; 12]);
+        let sealed = seal(&ROOTS, &KEY, 42, [2; 12]);
         assert_eq!(open(&sealed[1..], &KEY, 42), Err(SeedSealError::Malformed));
+        assert_eq!(open(&sealed[..5], &KEY, 42), Err(SeedSealError::Malformed));
         let mut other_version = sealed;
-        other_version[0] = 2;
+        other_version[0] = 1;
         assert_eq!(
             open(&other_version, &KEY, 42),
             Err(SeedSealError::Malformed)

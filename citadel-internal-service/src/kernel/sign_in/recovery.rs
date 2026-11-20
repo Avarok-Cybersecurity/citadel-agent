@@ -1,5 +1,4 @@
-//! What a recovery console session (signed in with the recovery phrase or a code) may ask the
-//! agent for.
+//! What a recovery console session (signed in with the recovery phrase) may ask the agent for.
 //!
 //! The server already confines such a session: it drops every packet but connect, keep-alive,
 //! disconnect and peer commands, and refuses every signal but the two management changes a
@@ -69,15 +68,11 @@ mod tests {
 
     #[test]
     fn and_nothing_else() {
-        for op in [
-            SignInManagementOp::RenameCredential {
-                id: 1,
-                label: "x".into(),
-            },
-            SignInManagementOp::RegenerateRecoveryCodes,
-        ] {
-            assert!(!allows(&manage(op.clone())), "{op:?}");
-        }
+        let rename = SignInManagementOp::RenameCredential {
+            id: 1,
+            label: "x".into(),
+        };
+        assert!(!allows(&manage(rename)));
         let peers = InternalServiceRequest::ListRegisteredPeers {
             request_id: Uuid::nil(),
             cid: 1,

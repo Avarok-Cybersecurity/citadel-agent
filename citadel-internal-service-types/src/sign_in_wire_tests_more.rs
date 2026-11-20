@@ -36,7 +36,6 @@ fn every_op_crosses_the_wire_as_the_sdk_writes_it() {
         SignInManagementOp::SetSignInPolicy {
             policy: SignInPolicy::KeyOnly,
         },
-        SignInManagementOp::RegenerateRecoveryCodes,
     ];
     for op in ops {
         let ours = serde_json::to_value(&op).unwrap();
@@ -87,16 +86,11 @@ fn the_recovery_console_may_do_what_the_sdk_allows_and_nothing_else() {
     for op in allowed {
         assert!(op.allowed_in_recovery(), "{op:?}");
     }
-    let refused = [
-        SignInManagementOp::RenameCredential {
-            id: 1,
-            label: "x".into(),
-        },
-        SignInManagementOp::RegenerateRecoveryCodes,
-    ];
-    for op in refused {
-        assert!(!op.allowed_in_recovery(), "{op:?}");
-    }
+    let rename = SignInManagementOp::RenameCredential {
+        id: 1,
+        label: "x".into(),
+    };
+    assert!(!rename.allowed_in_recovery());
 }
 
 #[test]
@@ -113,25 +107,48 @@ fn every_outcome_crosses_the_wire_as_the_sdk_writes_it() {
         sdk::SignInManagementOutcome::Renamed,
         sdk::SignInManagementOutcome::Removed,
         sdk::SignInManagementOutcome::PolicySet,
-        sdk::SignInManagementOutcome::RecoveryCodes(vec!["A-B".into()]),
         sdk::SignInManagementOutcome::PasswordSet,
         sdk::SignInManagementOutcome::RecoveryPhrase(vec!["abandon".into()]),
     ];
     for outcome in outcomes {
         let sdk = serde_json::to_value(&outcome).unwrap();
-        let ours = serde_json::to_value(SignInManagementOutcome::from(outcome)).unwrap();
+        let ours =
+            serde_json::to_value(SignInManagementOutcome::try_from(outcome).unwrap()).unwrap();
         assert_eq!(ours, sdk);
     }
 }
 
 #[test]
 fn no_credential_id_reaches_a_debug_string() {
-    let listed = SignInManagementOutcome::from(sdk::SignInManagementOutcome::Credentials {
+    let listed = SignInManagementOutcome::try_from(sdk::SignInManagementOutcome::Credentials {
         policy: sdk::SignInPolicy::KeyOnly,
         credentials: vec![credential()],
-    });
+    })
+    .unwrap();
     let needle = format!("{:?}", CRED.to_vec());
     let printed = format!("{listed:?}");
     assert!(!printed.contains(&needle), "{printed}");
     assert!(!printed.contains("yubikey-5"), "{printed}");
+}
+
+/// Recovery codes are not a supported path: the SDK's codes outcome, and a listed code, are
+/// refused rather than converted.
+#[test]
+fn recovery_codes_from_the_sdk_are_refused() {
+    let codes = sdk::SignInManagementOutcome::RecoveryCodes(vec!["A-B".into()]);
+    assert_eq!(
+        SignInManagementOutcome::try_from(codes),
+        Err(RecoveryCodesUnsupported)
+    );
+    let listed_code = sdk::SignInManagementOutcome::Credentials {
+        policy: sdk::SignInPolicy::Password,
+        credentials: vec![sdk::SignInCredential {
+            kind: sdk::FactorKind::RecoveryCode,
+            ..credential()
+        }],
+    };
+    assert_eq!(
+        SignInManagementOutcome::try_from(listed_code),
+        Err(RecoveryCodesUnsupported)
+    );
 }

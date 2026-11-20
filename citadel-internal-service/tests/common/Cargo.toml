@@ -15,6 +15,8 @@ tokio = { workspace = true, features = ["net", "rt", "macros"] }
 citadel-internal-service = { workspace = true }
 citadel-internal-service-types = { workspace = true }
 citadel-internal-service-connector = { workspace = true }
+# The canonical domain a RE-VFS key is bound to (src/pq_files.rs), as the agent derives it.
+citadel-identity = { workspace = true }
 futures = { workspace = true }
 # Each test's own browser-transfer root (`test_transfers`).
 tempfile = "3"

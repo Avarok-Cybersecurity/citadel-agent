@@ -111,6 +111,7 @@ pub(crate) async fn take_over<T: IOInterface + Sync, R: Ratchet>(
             credentials.keep_alive_timeout,
             settings,
             credentials.server_password.clone(),
+            crate::kernel::server_certificate::SERVER_CERTIFICATE,
         )
         .await;
     let connected = match connect {

@@ -20,6 +20,7 @@ use citadel_internal_service_types::{
     InternalServiceResponse, PeerIdentityKeyChanged, PeerIdentityMark,
 };
 use citadel_sdk::prelude::{KexAuth, P2pKexIdentity, PeerKexIdentity, Ratchet};
+use futures::future::BoxFuture;
 use parking_lot::RwLock;
 use pins::PeerKeyPins;
 use std::collections::HashMap;
@@ -50,8 +51,14 @@ impl<R: Ratchet> P2pKexIdentity for KexIdentityPort<R> {
         self.pins.pinned(local_cid, peer_cid)
     }
 
-    fn pin_first_key(&self, local_cid: u64, peer_cid: u64, identity_key: &[u8]) {
-        self.pins.pin_first(local_cid, peer_cid, identity_key);
+    fn pin_first_key(
+        &self,
+        local_cid: u64,
+        peer_cid: u64,
+        identity_key: &[u8],
+    ) -> BoxFuture<'static, Result<(), String>> {
+        let (pins, key) = (self.pins.clone(), identity_key.to_vec());
+        Box::pin(async move { pins.pin_first(local_cid, peer_cid, &key).await })
     }
 
     fn peer_key_changed(&self, local_cid: u64, peer_cid: u64, presented: &[u8]) {

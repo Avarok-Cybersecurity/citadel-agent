@@ -17,7 +17,7 @@ pub(crate) struct PeerPin {
     pub(crate) pending: Option<Vec<u8>>,
 }
 
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub(crate) struct PinBook {
     pins: BTreeMap<(u64, u64), PeerPin>,
 }

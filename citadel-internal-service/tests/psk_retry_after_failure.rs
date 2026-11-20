@@ -1,170 +1,9 @@
-//! One wrong peer session password must not lock the pair out for good.
+//! One wrong peer session password does not lock the pair out.
 //!
-//! `test_internal_service_peer_with_psk_negative_case` was `#[ignore]`d with the
-//! note "Peer A is never sent a connect notification when the PSK will not
-//! verify — is that intended?". Running it says otherwise: on the FIRST attempt
-//! Peer A is notified and both sides get their expected `PeerConnectFailure`.
-//! It is the SECOND attempt that dies, and it dies on the initiator's own side
-//! before A is involved at all:
-//!
-//!     [PeerConnect] connect_to_peer_custom FAILED:
-//!         NetworkError { code: RekeyUpdate (12), message: "Rekey update error: Encryption failure" }
-//!
-//! So the open question was not about notifications. A failed PSK connect
-//! leaves the peer's session crypto in a state that every later connect between
-//! those two peers fails from — including one carrying the CORRECT password.
-//! `test_internal_service_peer_with_psk` shows a fresh pair with the right
-//! password connects in about two seconds, which is what isolates the cause to
-//! the earlier failure rather than to PSK connects in general.
-//!
-//! In product terms: mistype your peer session password once and you cannot
-//! connect to that peer again, right password or not.
-//!
-//! ## What has been ruled out
-//!
-//! * **The responder is not the problem.** Round one notifies A and both sides
-//!   receive `PeerConnectFailure` correctly. Only round two breaks.
-//! * **It is not PSK connects in general.** `test_internal_service_peer_with_psk`
-//!   connects a fresh pair with the right password in ~2s.
-//! * **It is not a lingering virtual connection.** Calling `disconnect()` on the
-//!   handle in `connect.rs`'s failure arm was tried and changed nothing.
-//! * **It is not a stale password.** `store_session_password` inserts, so round
-//!   two does overwrite round one's value.
-//!
-//! ## Where the residue is
-//!
-//! State left by the failed handshake that is never cleared per peer.
-//! `state_container.peer_kem_states` is inserted on each attempt and only ever
-//! `clear()`ed wholesale in `session_manager`; there is no per-peer removal on
-//! failure. `remove_session_password` exists for the same job and is
-//! `#[allow(dead_code)]` with a TODO — written, never wired.
-//!
-//! ## Also ruled out, by experiment against this reproduction
-//!
-//! * **Not a timing race.** Sleeping 15s between the rounds changes nothing;
-//!   the residue is permanent, not something a cleanup task clears late.
-//! * **Not specific to the initiator.** Swapping the roles for round two, so A
-//!   initiates instead of B, fails identically. Whatever is left over belongs
-//!   to the pair, not to one side's outgoing path.
-//! * **Not the recorded connection.** Removing the peer from the internal
-//!   connection map and calling `disconnect()` in the failure arm was tried
-//!   together: the disconnect returns `Ok(())`, the map removal reports
-//!   `removed_from_map=false` -- the peer is not even there yet at failure
-//!   time -- and round two still fails.
-//!
-//! ## CORRECTION: the pair is not locked out. The PASSWORD path is.
-//!
-//! An earlier reading of this file said a failed attempt leaves the pair
-//! believing it holds a connection, on the strength of a no-password retry
-//! answering "Already connected to peer". That was half the output. Printing
-//! BOTH sides shows:
-//!
-//!     round2 A = PeerConnectFailure { "Already connected to peer ..." }
-//!     round2 B = PeerConnectSuccess { ... }
-//!
-//! B connects. A's refusal is then correct -- B's success established the pair,
-//! so A's redundant attempt has nothing to do. Reading only A's response made a
-//! working retry look like a wedged one.
-//!
-//! So the defect is narrower and stranger than "the pair is locked out":
-//!
-//!   * a retry carrying the CORRECT password fails with
-//!     "Rekey update error: Encryption failure";
-//!   * a retry carrying NO password succeeds.
-//!
-//! Which points away from connection registration entirely -- nothing registers
-//! the peer on a failed attempt, as the eliminations above establish -- and at
-//! state specific to the PSK path. Both sides fail round one symmetrically, so
-//! whatever survives is derived from the password and is not reset when the
-//! attempt using it fails.
-//!
-//! In product terms this is a security downgrade rather than a lockout: two
-//! peers who mistype a peer session password can still connect, but only by
-//! dropping the password. That is worse than it first appears, not better.
-//!
-//! ## The behaviour, stated exactly
-//!
-//! Three runs of this harness, differing only in the passwords:
-//!
-//!   | round 1        | round 2        | outcome                          |
-//!   |----------------|----------------|----------------------------------|
-//!   | both correct   | (not reached)  | BOTH SUCCEED                     |
-//!   | mismatched     | both correct   | fails: Encryption failure        |
-//!   | mismatched     | both absent    | SUCCEEDS                         |
-//!
-//! So a matched password works on a fresh pair, and stops working only after a
-//! mismatched attempt — while dropping the password entirely still works. The
-//! damage is specific to the keyed path.
-//!
-//! ## That mechanism is REFUTED. Kept below with its falsifying test.
-//!
-//! It made a checkable prediction, which is the only reason it was worth
-//! writing down. If the responder validates against its OWN stored password,
-//! then a round two with the roles SWAPPED — A initiating, B responding —
-//! should succeed, because B stored the correct password on its round-one
-//! outgoing path and would be validating against that.
-//!
-//! It fails. The swapped round two times out before the responder is notified
-//! at all, exactly as the unswapped one does. So the surviving state is not
-//! "the responder's stale stored password", and whatever it is does not depend
-//! on which side initiates.
-//!
-//! The hypothesis is left here rather than deleted: it fits three of the four
-//! observations, so the next person will think of it too, and the swap test is
-//! how they can dismiss it in forty seconds.
-//!
-//! ## The refuted mechanism
-//!
-//! `peer_cmd_packet.rs:453` has the RESPONDER validate against
-//! `state_container.get_session_password(peer_cid)` — its own stored value —
-//! rather than anything in the packet it is answering. That store is written on
-//! the OUTGOING path (`session.rs:2220`), and written as
-//! `unwrap_or_default()`, so a peer that connects with no password stores the
-//! EMPTY key rather than nothing.
-//!
-//! That predicts exactly the third row: after round one, the side that answered
-//! without a password holds an empty key; a passwordless round two matches it,
-//! a correct-password round two does not.
-//!
-//! It does NOT yet explain the first row, where a matched first attempt
-//! succeeds even though the responder has stored nothing at all. Either the
-//! ordering differs on a first attempt, or line 453 is not the path taken. That
-//! gap is why this is recorded as a fitting hypothesis rather than the answer.
-//!
-//! `remove_session_password` exists for this job and is `#[allow(dead_code)]`
-//! with a TODO. Wiring it on failure is the obvious next experiment; it was not
-//! run here because it is an SDK change and three fixes in this area have
-//! already been implemented and refuted by this reproduction.
-//!
-//! ## A later round of eliminations, and a correction
-//!
-//! The paragraph above used to say the residue was a registration landing after
-//! the failure. Three more experiments say otherwise:
-//!
-//! * **`PeerChannelCreated` never fires for the failed attempt.** Zero
-//!   occurrences across a whole run with `RUST_LOG=citadel=info`. A fix that
-//!   marked failed attempts and dropped their late channel therefore suppressed
-//!   nothing, and the retry still failed.
-//! * **An explicit `PeerDisconnect` immediately after the failure answers
-//!   "disconnect: Peer connection not found".** At that instant the internal
-//!   map does not hold the peer.
-//! * **Round one fails SYMMETRICALLY.** Both sides return
-//!   "Rekey update error: Encryption failure", so neither took the success path
-//!   that registers a peer. There is no asymmetric outcome to explain it.
-//!
-//! Those three sit awkwardly against the "Already connected to peer" seen when
-//! retrying with NO password, because that branch requires the internal map AND
-//! the SDK to both hold the peer. Something puts it there that is none of:
-//! connect's success path, PeerChannelCreated, or an asymmetric round one. That
-//! is the open question, and it is the one to answer first.
-//!
-//! Seven hypotheses are now eliminated by experiment against this
-//! reproduction. Three separate fixes -- `disconnect()` in the failure arm,
-//! removing the peer from the map there, and dropping the post-failure channel
-//! -- were each implemented, tested, and refuted by it. That is the useful half
-//! of the work: whoever takes this on starts with the dead ends marked and a
-//! 40-second repro, rather than with the plausible reading of the source that
-//! has now been wrong three times.
+//! Round one: B offers a password and A answers with none, so the key exchange fails and both
+//! sides are told. Round two: both present the same, correct password, and the pair connects.
+//! The dials cross in both rounds; a failed round leaves neither side holding half of its
+//! exchange, so the retry is not turned away as one already in progress.
 
 use citadel_internal_service_test_common as common;
 
@@ -238,9 +77,8 @@ mod tests {
     }
 
     /// One connect round: B offers `b_psk`, A answers with `a_psk`. Returns the
-    /// response each side saw. `round` is in every wait message so a timeout
-    /// says WHICH round failed -- the whole point of this test is that round one
-    /// passes and round two does not.
+    /// response each side saw. `round` is in every wait message, so a timeout
+    /// says which round failed.
     async fn connect_round(
         pair: &mut Pair<'_>,
         b_psk: Option<PreSharedKey>,
@@ -251,9 +89,7 @@ mod tests {
             .send(peer_connect(pair.b_cid, pair.a_cid, b_psk))
             .expect("send B connect");
 
-        // A is notified of the inbound attempt. On round two this is where the
-        // defect shows: it never arrives, because B's own attempt failed to
-        // encrypt before any notification could be generated.
+        // A is notified of the inbound attempt.
         let _notification = recv_or_fail(
             pair.a_stream,
             &format!("[{round}] Peer A's connect notification"),
@@ -278,10 +114,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "PROVEN DEFECT, not a flake: a failed PSK connect poisons the pair \
-                so the correct password no longer works. Root cause narrowed but \
-                not fixed -- see the module docs. Ignored to keep CI green while \
-                the fix is outstanding; run with --ignored to reproduce."]
     async fn the_correct_password_still_works_after_a_wrong_one() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
 

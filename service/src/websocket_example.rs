@@ -26,6 +26,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .apply(&mut NodeBuilder::<RatchetType>::default())
         .with_node_type(NodeType::Server(server_addr))
         .with_path_policy(citadel_internal_service::path_policy::every_path_policy()?)
+        // An example server on this machine: the SDK's limits for a localhost server.
+        .with_server_limits(citadel_sdk::test_common::localhost_server_limits())
         .with_max_security_level(MaxSecurityLevel::new(SecurityLevel::Custom(10))?)
         .with_link_manager(LinkManagerMode::Legacy)
         .with_insecure_skip_cert_verification()

@@ -330,6 +330,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             keep_alive_timeout,
             session_security_settings,
             server_password.clone(),
+            crate::kernel::server_certificate::SERVER_CERTIFICATE,
         )
         .await
     {

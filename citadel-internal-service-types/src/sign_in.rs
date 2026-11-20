@@ -19,8 +19,8 @@ use zeroize::Zeroize;
 #[cfg(feature = "typescript")]
 use ts_rs::TS;
 
-/// Recovery codes, formatted for display. Shown to the user once; never logged and never
-/// stored by the agent, and wiped from memory when dropped.
+/// Recovery codes (or a recovery phrase's words), formatted for display. Shown to the user once;
+/// never logged and never stored by the agent, and wiped from memory when dropped.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
 #[serde(transparent)]
 #[cfg_attr(feature = "typescript", derive(TS))]

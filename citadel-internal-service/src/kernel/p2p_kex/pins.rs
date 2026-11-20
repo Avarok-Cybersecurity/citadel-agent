@@ -1,8 +1,9 @@
 //! The pin book, shared with the node and kept where the binary says: a private file beside a
 //! filesystem backend's accounts, or memory beside an in-memory backend. There is no default.
 //!
-//! The node reads and writes pins while it handles a key exchange, so every call here answers
-//! from memory at once; a writer task saves the book after each change, latest state first.
+//! Reads answer from memory. A first-sight pin is saved before it enters the book, so no exchange
+//! is reported verified on a pin a crash could lose; every other change is saved by a writer task
+//! after it is made. One save runs at a time, each writing the book as it then stands.
 
 use super::book::{NotAccepted, PinBook};
 use async_trait::async_trait;
@@ -11,6 +12,10 @@ use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::watch;
+
+#[cfg(test)]
+#[path = "pins_tests.rs"]
+mod tests;
 
 #[async_trait]
 pub trait PeerKeyStore: Send + Sync + 'static {
@@ -80,6 +85,8 @@ pub fn peer_key_store_for(backend: &BackendType) -> Result<Arc<dyn PeerKeyStore>
 pub(crate) struct PeerKeyPins {
     book: Mutex<PinBook>,
     changed: watch::Sender<u64>,
+    store: Arc<dyn PeerKeyStore>,
+    saving: tokio::sync::Mutex<()>,
 }
 
 impl PeerKeyPins {
@@ -94,13 +101,16 @@ impl PeerKeyPins {
         let pins = Arc::new(Self {
             book: Mutex::new(book),
             changed,
+            store,
+            saving: tokio::sync::Mutex::new(()),
         });
         let weak = Arc::downgrade(&pins);
         tokio::spawn(async move {
             while seen.changed().await.is_ok() {
                 let Some(pins) = weak.upgrade() else { break };
+                let _one_save = pins.saving.lock().await;
                 let bytes = pins.book.lock().encode();
-                if let Err(err) = store.save(bytes).await {
+                if let Err(err) = pins.store.save(bytes).await {
                     citadel_sdk::logging::error!(target: "citadel", "[P2pKex] the peer identity keys were not saved: {err}");
                 }
             }
@@ -124,10 +134,20 @@ impl PeerKeyPins {
         }
     }
 
-    pub(crate) fn pin_first(&self, local: u64, peer: u64, key: &[u8]) {
-        if self.book.lock().pin_first(local, peer, key) {
-            self.saved();
-        }
+    /// Pins `key` for a peer with no pin, returning once the book holding it is saved; only then
+    /// is it in the book. `Err` leaves the peer unpinned.
+    pub(crate) async fn pin_first(&self, local: u64, peer: u64, key: &[u8]) -> Result<(), String> {
+        let _one_save = self.saving.lock().await;
+        let bytes = {
+            let mut next = self.book.lock().clone();
+            if !next.pin_first(local, peer, key) {
+                return Ok(());
+            }
+            next.encode()
+        };
+        self.store.save(bytes).await?;
+        self.book.lock().pin_first(local, peer, key);
+        Ok(())
     }
 
     /// `true` if the presented key is newly waiting (the person has not been told of it).

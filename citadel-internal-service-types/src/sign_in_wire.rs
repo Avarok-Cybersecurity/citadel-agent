@@ -34,6 +34,7 @@ pub enum FactorKind {
     Password,
     SecurityKey,
     RecoveryCode,
+    RecoveryPhrase,
 }
 
 /// One enrolled factor (`citadel_types::auth::SignInCredential`).
@@ -96,6 +97,9 @@ pub enum SignInManagementOutcome {
     Removed,
     PolicySet,
     RecoveryCodes(RecoveryCodes),
+    PasswordSet,
+    /// The new recovery phrase's words, which never print either.
+    RecoveryPhrase(RecoveryCodes),
 }
 
 fn optional_bytes_fmt(val: &Option<Vec<u8>>, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -131,6 +135,7 @@ impl From<sdk::FactorKind> for FactorKind {
             sdk::FactorKind::Password => Self::Password,
             sdk::FactorKind::SecurityKey => Self::SecurityKey,
             sdk::FactorKind::RecoveryCode => Self::RecoveryCode,
+            sdk::FactorKind::RecoveryPhrase => Self::RecoveryPhrase,
         }
     }
 }
@@ -182,6 +187,10 @@ impl From<sdk::SignInManagementOutcome> for SignInManagementOutcome {
             sdk::SignInManagementOutcome::PolicySet => Self::PolicySet,
             sdk::SignInManagementOutcome::RecoveryCodes(codes) => {
                 Self::RecoveryCodes(RecoveryCodes(codes))
+            }
+            sdk::SignInManagementOutcome::PasswordSet => Self::PasswordSet,
+            sdk::SignInManagementOutcome::RecoveryPhrase(words) => {
+                Self::RecoveryPhrase(RecoveryCodes(words))
             }
         }
     }

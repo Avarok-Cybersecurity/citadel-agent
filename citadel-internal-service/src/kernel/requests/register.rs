@@ -126,6 +126,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     session_security_settings,
                     server_password.clone(),
                     admission_token,
+                    // No recovery domain: a server that recovers accounts gives this one no recovery
+                    // credential until the person makes a phrase.
+                    None,
+                    crate::kernel::server_certificate::SERVER_CERTIFICATE,
                 )
                 .await
         }
@@ -147,6 +151,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     session_security_settings,
                     server_password.clone(),
                     admission_token,
+                    // No recovery domain: a server that recovers accounts gives this one no recovery
+                    // credential until the person makes a phrase.
+                    None,
+                    crate::kernel::server_certificate::SERVER_CERTIFICATE,
                 )
                 .await
         }

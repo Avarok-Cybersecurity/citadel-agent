@@ -74,6 +74,7 @@ pub(crate) mod revfs_correlation;
 pub mod revfs_seed;
 pub(crate) mod send_correlation;
 pub(crate) mod server_address;
+pub(crate) mod server_certificate;
 pub(crate) mod server_host;
 pub mod server_link;
 pub(crate) mod session_route;

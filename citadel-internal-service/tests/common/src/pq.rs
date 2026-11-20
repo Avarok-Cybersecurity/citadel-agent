@@ -76,9 +76,13 @@ fn spawn(_kind: Server, admission: Option<Arc<dyn AdmissionPolicy>>) -> SocketAd
     let (node, addr) = server_test_node_skip_cert_verification(
         EmptyKernel::<StackedRatchet>::default(),
         |builder| {
-            let settings = PqAuthServerSettings::new(OprfSeed::generate(), KsfParams::FLOOR)
-                .and_then(|settings| settings.with_security_key_rp_id(RP_ID))
-                .expect("the floor parameters and the relying party are accepted");
+            let settings = PqAuthServerSettings::new(
+                OprfSeed::generate(),
+                KsfParams::FLOOR,
+                ThrottlePolicy::RECOMMENDED,
+            )
+            .and_then(|settings| settings.with_security_key_rp_id(RP_ID))
+            .expect("the floor parameters and the relying party are accepted");
             let _ = builder
                 .with_server_misc_settings(ServerMiscSettings {
                     pq_sign_in: Some(settings),

@@ -13,6 +13,7 @@ fn legacy_connect_json() -> String {
         password: Some(SecBuffer::from("hunter2")),
         security_key: true,
         recovery_code: None,
+        recovery_phrase: None,
         connect_mode: ConnectMode::Standard { force_login: false },
         udp_mode: UdpMode::Enabled,
         keep_alive_timeout: None,
@@ -25,6 +26,7 @@ fn legacy_connect_json() -> String {
     for added in [
         "security_key",
         "recovery_code",
+        "recovery_phrase",
         "server_password",
         "admission_token",
         "server_address",
@@ -41,6 +43,7 @@ fn an_older_clients_connect_still_parses_as_a_password_sign_in() {
         password,
         security_key,
         recovery_code,
+        recovery_phrase,
         server_address,
         ..
     } = request
@@ -55,6 +58,7 @@ fn an_older_clients_connect_still_parses_as_a_password_sign_in() {
         "an older client cannot answer a key challenge"
     );
     assert!(recovery_code.is_none());
+    assert!(recovery_phrase.is_none());
 }
 
 #[test]
@@ -76,9 +80,37 @@ fn a_registers_recovery_codes_never_reach_a_debug_string() {
         cid: 7,
         request_id: None,
         recovery_codes: RecoveryCodes(vec!["7H3Q-K2M9-PX4D-W8RT".to_string()]),
+        recovery_phrase: Some(RecoveryCodes(vec!["zebra".to_string(); 24])),
         identity: None,
     });
-    assert!(!format!("{success:?}").contains("7H3Q"));
+    let printed = format!("{success:?}");
+    assert!(!printed.contains("7H3Q"), "{printed}");
+    assert!(!printed.contains("zebra"), "{printed}");
+}
+
+#[test]
+fn a_typed_phrase_never_reaches_a_debug_string() {
+    let recover = InternalServiceRequest::RecoverAccount {
+        request_id: Uuid::nil(),
+        server_addr: "acme.example".into(),
+        username: "alice".into(),
+        phrase: SecBuffer::from("zebra zebra zebra"),
+        device_label: "laptop".into(),
+        admission_token: Some("turnstile-secret".into()),
+        session_security_settings: Default::default(),
+        server_password: None,
+    };
+    let printed = format!("{recover:?}");
+    assert!(!printed.contains("zebra"), "{printed}");
+    assert!(!printed.contains("turnstile-secret"), "{printed}");
+}
+
+/// A page from before the phrase reads an older agent's registration, and this one's.
+#[test]
+fn a_registration_without_a_phrase_still_parses() {
+    let json = r#"{"cid":1,"request_id":null,"recovery_codes":["A"]}"#;
+    let parsed: RegisterSuccess = serde_json::from_str(json).unwrap();
+    assert!(parsed.recovery_phrase.is_none());
 }
 
 #[test]
@@ -123,6 +155,7 @@ fn an_admission_token_never_reaches_a_debug_string() {
         password: None,
         security_key: false,
         recovery_code: None,
+        recovery_phrase: None,
         admission_token: Some("0.turnstile-secret".to_string()),
         connect_mode: ConnectMode::Standard { force_login: false },
         udp_mode: UdpMode::Enabled,

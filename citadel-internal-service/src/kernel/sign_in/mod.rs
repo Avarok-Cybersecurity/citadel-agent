@@ -8,6 +8,7 @@
 pub(crate) mod factors;
 pub(crate) mod key_relay;
 mod key_wire;
+pub(crate) mod phrase;
 pub(crate) mod recovery;
 
 use crate::kernel::reconnect::Reauth;
@@ -30,7 +31,7 @@ pub(crate) struct SessionSignIn<R: Ratchet> {
 }
 
 impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
-    /// Whether `cid` is a session signed in with a recovery code.
+    /// Whether `cid` is a recovery console session (signed in with the phrase or a code).
     pub(crate) fn is_recovery_session(&self, cid: u64) -> bool {
         self.server_connection_map
             .read()
@@ -108,7 +109,7 @@ pub(crate) fn admission_challenge(err: &NetworkError) -> Option<AdmissionChallen
 pub(crate) const KEY_REAUTH: &str =
     "This account signs in with a security key; sign in again to reconnect";
 pub(crate) const RECOVERY_REAUTH: &str =
-    "A recovery-code session cannot be reconnected; sign in again";
+    "A recovery console session cannot be reconnected; sign in again";
 
 #[cfg(test)]
 mod tests {

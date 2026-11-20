@@ -45,6 +45,12 @@ security_key?: boolean,
  */
 recovery_code?: number[] | null, 
 /**
+ * The account's 24-word recovery phrase as typed (any case and spacing). Like a code, it
+ * signs in to the recovery console: a session that may only manage how the account
+ * signs in. The agent binds it to the account's server (`kernel/recovery_domain.rs`).
+ */
+recovery_phrase?: number[] | null, 
+/**
  * A Turnstile token for a server that checks fresh sign-ins (Turnstile action
  * `sign-in`). Never logged.
  */
@@ -177,4 +183,20 @@ prf_output: number[], } } | { "SecurityKeyDecline": { request_id: string, challe
 /**
  * The list of commands to execute in parallel
  */
-commands: Array<InternalServiceRequest>, } } | { "GetPeerIdentity": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "AcceptPeerIdentityKey": { request_id: string, cid: bigint, peer_cid: bigint, fingerprint: string, } };
+commands: Array<InternalServiceRequest>, } } | { "GetPeerIdentity": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "AcceptPeerIdentityKey": { request_id: string, cid: bigint, peer_cid: bigint, fingerprint: string, } } | { "RecoverAccount": { request_id: string, 
+/**
+ * As `Register::server_addr`: `host[:port]` or a `ws(s)://` URL.
+ */
+server_addr: string, username: string, 
+/**
+ * The 24 words as typed. Never logged.
+ */
+phrase: number[], 
+/**
+ * What to call this device among the account's security events (1 to 64 characters).
+ */
+device_label: string, 
+/**
+ * A Turnstile token (action `recover`) for a server that asks for one. Never logged.
+ */
+admission_token?: string | null, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } };

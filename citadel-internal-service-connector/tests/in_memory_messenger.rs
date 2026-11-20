@@ -50,6 +50,7 @@ mod tests {
             password: Some(vec![].into()),
             security_key: false,
             recovery_code: None,
+            recovery_phrase: None,
             connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                 force_login: false,
             },
@@ -98,6 +99,7 @@ mod tests {
             password: Some(vec![].into()),
             security_key: false,
             recovery_code: None,
+            recovery_phrase: None,
             connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                 force_login: false,
             },

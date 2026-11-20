@@ -188,6 +188,8 @@ export * from './PickFileSuccess.js';
 export * from './Reaction.js';
 export * from './ReadPulledFileChunkFailure.js';
 export * from './ReadPulledFileChunkSuccess.js';
+export * from './RecoverAccountFailure.js';
+export * from './RecoverAccountSuccess.js';
 export * from './RecoveryCodes.js';
 export * from './RegisterFailure.js';
 export * from './RegisterSuccess.js';

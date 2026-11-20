@@ -37,6 +37,7 @@ mod identity;
 mod media;
 pub(crate) mod message;
 mod notices;
+mod recover_account;
 mod register;
 mod security_key;
 mod send_reliable;
@@ -208,6 +209,9 @@ where
         }
         InternalServiceRequest::Connect { .. } => connect::handle(this, uuid, command).await,
         InternalServiceRequest::Register { .. } => register::handle(this, uuid, command).await,
+        InternalServiceRequest::RecoverAccount { .. } => {
+            recover_account::handle(this, uuid, command).await
+        }
         InternalServiceRequest::IdentityStatus { .. }
         | InternalServiceRequest::IdentityCreate { .. }
         | InternalServiceRequest::IdentityUnlock { .. }

@@ -1,4 +1,5 @@
-//! What a session signed in with a recovery code may ask the agent for.
+//! What a recovery console session (signed in with the recovery phrase or a code) may ask the
+//! agent for.
 //!
 //! The server already confines such a session: it drops every packet but connect, keep-alive,
 //! disconnect and peer commands, and refuses every signal but the two management changes a
@@ -15,9 +16,7 @@ pub(crate) fn allows(command: &InternalServiceRequest) -> bool {
     match command {
         InternalServiceRequest::Disconnect { .. } => true,
         // The SDK's rule, not a copy of it.
-        InternalServiceRequest::SignInManagement { op, .. } => {
-            citadel_sdk::prelude::SignInManagementOp::from(op.clone()).allowed_in_recovery()
-        }
+        InternalServiceRequest::SignInManagement { op, .. } => op.allowed_in_recovery(),
         _ => false,
     }
 }
@@ -52,6 +51,12 @@ mod tests {
         assert!(allows(&manage(add)));
         assert!(allows(&manage(policy)));
         assert!(allows(&manage(SignInManagementOp::ListCredentials)));
+        assert!(allows(&manage(
+            SignInManagementOp::RegenerateRecoveryPhrase
+        )));
+        assert!(allows(&manage(SignInManagementOp::SetPassword {
+            new_password: "a new password".into(),
+        })));
         assert!(allows(&manage(SignInManagementOp::RemoveCredential {
             id: 1
         })));

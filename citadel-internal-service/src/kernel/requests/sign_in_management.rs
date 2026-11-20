@@ -1,5 +1,6 @@
 //! `SignInManagement`: list, add, rename or remove an account's sign-in factors, set its policy,
-//! or replace its recovery codes, through the SDK's `manage_sign_in`.
+//! set its password, or replace its recovery phrase (or codes), through the SDK's
+//! `manage_sign_in` and `set_password`.
 //!
 //! The step-up is the window's: its password, and the relay to its windows when it can answer
 //! a key challenge (the step-up's own key, or the touch of the key being added). The server
@@ -15,7 +16,7 @@ use citadel_internal_service_types::{
     SignInManagementOp, SignInManagementSuccess,
 };
 use citadel_sdk::logging::info;
-use citadel_sdk::prelude::{Ratchet, SignInManagementExt};
+use citadel_sdk::prelude::{Ratchet, SignInManagementExt, SignInManagementOutcome as SdkOutcome};
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
@@ -66,6 +67,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             password,
             security_key: step_up.security_key,
             recovery_code: None,
+            recovery_phrase: None,
             admission: None,
         },
     );
@@ -76,7 +78,23 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
     let kind = op_name(&op);
     let adds_a_key = matches!(op, SignInManagementOp::AddSecurityKey { .. });
-    let outcome = handle.manage_sign_in(op.into(), factors).await;
+    // The phrase is bound to the account's server, derived here as at registration.
+    let domain = match op {
+        SignInManagementOp::RegenerateRecoveryPhrase => {
+            match crate::kernel::recovery_domain::of_account(this.remote(), cid).await {
+                Ok(domain) => domain.to_string(),
+                Err(message) => return failure(message, None),
+            }
+        }
+        _ => String::new(),
+    };
+    let outcome = match op {
+        SignInManagementOp::SetPassword { new_password } => handle
+            .set_password(new_password, factors)
+            .await
+            .map(|()| SdkOutcome::PasswordSet),
+        op => handle.manage_sign_in(op.to_sdk(&domain), factors).await,
+    };
     drop(underway);
     match outcome {
         Ok(outcome) => {
@@ -107,5 +125,7 @@ fn op_name(op: &SignInManagementOp) -> &'static str {
         Op::RemoveCredential { .. } => "RemoveCredential",
         Op::SetSignInPolicy { .. } => "SetSignInPolicy",
         Op::RegenerateRecoveryCodes => "RegenerateRecoveryCodes",
+        Op::SetPassword { .. } => "SetPassword",
+        Op::RegenerateRecoveryPhrase => "RegenerateRecoveryPhrase",
     }
 }

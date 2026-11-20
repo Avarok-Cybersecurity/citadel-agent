@@ -193,6 +193,39 @@ pub struct SignInManagementFailure {
     pub reason: Option<FailureReason>,
 }
 
+/// A `RecoverAccount` recovered the account on this device: every other device's bundle was
+/// revoked, and those devices are signed out. Sent before the phrase sign-in's own answer
+/// (`ConnectSuccess`, a recovery console session, or `ConnectFailure`), under the same request.
+/// Not sent when this device already held the account: then nothing was revoked.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct RecoverAccountSuccess {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    pub request_id: Option<Uuid>,
+}
+
+/// The recovery was refused. A wrong phrase, an unknown username and a throttled attempt read
+/// alike (the server does not say which); a phrase that is not 24 words of the list, or a server
+/// with no canonical domain, is refused before anything is dialled.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "typescript", derive(TS))]
+#[cfg_attr(feature = "typescript", ts(export))]
+pub struct RecoverAccountFailure {
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub cid: u64,
+    pub request_id: Option<Uuid>,
+    pub message: String,
+    /// `AdmissionRequired` / `AdmissionFailed` when the server's admission check refused it.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub reason_code: Option<FailureReason>,
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub admission_challenge: Option<crate::AdmissionChallengeWire>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,6 +259,14 @@ mod tests {
             outcome: SignInManagementOutcome::Added { id: 4 },
         };
         assert!(format!("{success:?}").contains("Added"));
+    }
+
+    #[test]
+    fn a_registrations_phrase_never_reaches_a_debug_string() {
+        let phrase = RecoveryCodes(vec!["zebra".to_string(); 24]);
+        let printed = format!("{phrase:?}");
+        assert!(!printed.contains("zebra"), "{printed}");
+        assert!(printed.contains("24"), "{printed}");
     }
 
     #[test]

@@ -43,7 +43,12 @@ async fn each_management_change_works_and_the_last_factor_cannot_be_removed(
     );
     assert_eq!(policy, SignInPolicy::Password);
     assert_eq!(of_kind(&list, FactorKind::Password).len(), 1);
-    assert_eq!(of_kind(&list, FactorKind::RecoveryCode).len(), 10);
+    assert_eq!(
+        of_kind(&list, FactorKind::RecoveryPhrase).len(),
+        1,
+        "a new account's recovery credential is its phrase"
+    );
+    assert!(of_kind(&list, FactorKind::RecoveryCode).is_empty());
     let password_id = of_kind(&list, FactorKind::Password)[0].id;
 
     // The password is the only way in: removing it is refused.
@@ -110,12 +115,12 @@ async fn each_management_change_works_and_the_last_factor_cannot_be_removed(
         SignInManagementOutcome::Removed
     );
 
-    let SignInManagementOutcome::RecoveryCodes(codes) = w
-        .manage(cid, SignInManagementOp::RegenerateRecoveryCodes, pw, None)
+    let SignInManagementOutcome::RecoveryPhrase(phrase) = w
+        .manage(cid, SignInManagementOp::RegenerateRecoveryPhrase, pw, None)
         .await??
     else {
-        panic!("no new recovery codes");
+        panic!("no new recovery phrase");
     };
-    assert_eq!(codes.0.len(), 10);
+    assert_eq!(phrase.0.len(), 24);
     Ok(())
 }

@@ -10,6 +10,11 @@ export type RegisterSuccess = { cid: bigint, request_id: string | null,
  */
 recovery_codes: RecoveryCodes, 
 /**
+ * The account's 24-word recovery phrase, to show the user once: a server at 0.12.4 or later
+ * issues it instead of `recovery_codes`. Absent from an older server and an older agent.
+ */
+recovery_phrase?: RecoveryCodes | null, 
+/**
  * The identity and the server pinned by a `RegisterIdentity`; absent for `Register`.
  */
 identity?: AccountIdentity | null, };

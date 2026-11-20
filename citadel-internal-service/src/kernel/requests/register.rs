@@ -95,6 +95,12 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         Err(err) => return refuse(format!("invalid server address {server_addr}: {err}")),
         Ok(server_host) => server_host,
     };
+    // The canonical domain the account's recovery phrase is bound to. Never `None`: a server
+    // that recovers accounts would register this one with no recovery credential at all.
+    let recovery_domain = match crate::kernel::recovery_domain::of_server(&server_host) {
+        Err(err) => return refuse(format!("Cannot register at {server_addr}: {err}")),
+        Ok(domain) => domain.to_string(),
+    };
 
     // One agent holds one account per username: the SDK stores an account by
     // `username_to_cid(username)` and saves a new registration over whatever is there.
@@ -126,9 +132,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     session_security_settings,
                     server_password.clone(),
                     admission_token,
-                    // No recovery domain: a server that recovers accounts gives this one no recovery
-                    // credential until the person makes a phrase.
-                    None,
+                    Some(recovery_domain.clone()),
                     crate::kernel::server_certificate::SERVER_CERTIFICATE,
                 )
                 .await
@@ -151,9 +155,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     session_security_settings,
                     server_password.clone(),
                     admission_token,
-                    // No recovery domain: a server that recovers accounts gives this one no recovery
-                    // credential until the person makes a phrase.
-                    None,
+                    Some(recovery_domain.clone()),
                     crate::kernel::server_certificate::SERVER_CERTIFICATE,
                 )
                 .await
@@ -177,14 +179,15 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
     match registered {
         Ok(res) => {
-            // The codes exist only here: the SDK derived them on this client, and the server
-            // keeps only their keys. They go to the window that registered, once, and nowhere
+            // The phrase (or, from an older server, the codes) exists only here: the SDK drew it
+            // on this client, and the server keeps only its key. They go to the window that registered, once, and nowhere
             // else -- not to a log, not to the store.
             let response = InternalServiceResponse::RegisterSuccess(
                 citadel_internal_service_types::RegisterSuccess {
                     cid: res.cid,
                     request_id: Some(request_id),
                     recovery_codes: RecoveryCodes(res.recovery_codes),
+                    recovery_phrase: res.recovery_phrase.map(RecoveryCodes),
                     identity: None,
                 },
             );
@@ -202,6 +205,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 password: Some(proposed_password),
                 security_key: false,
                 recovery_code: None,
+                recovery_phrase: None,
                 keep_alive_timeout: None,
                 udp_mode: Default::default(),
                 // The Connect handler sets force_login by origin (requests/connect_mode.rs).

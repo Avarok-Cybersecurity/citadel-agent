@@ -35,6 +35,8 @@ pub struct Offer {
     pub password: Option<String>,
     pub key: Option<FakeKey>,
     pub recovery_code: Option<String>,
+    /// The recovery phrase as typed: signs in to the recovery console.
+    pub recovery_phrase: Option<String>,
     /// A Turnstile token, for a server that checks fresh sign-ins.
     pub admission: Option<String>,
 }
@@ -44,6 +46,34 @@ pub struct Offer {
 pub struct Outcome {
     pub response: InternalServiceResponse,
     pub challenges: Vec<SecurityKeyChallengeNotification>,
+}
+
+/// What a registration hands the window once: the phrase from a server that recovers accounts,
+/// codes from an older one.
+#[derive(Debug, Clone)]
+pub struct Registered {
+    pub cid: u64,
+    pub codes: RecoveryCodes,
+    pub phrase: Option<RecoveryCodes>,
+}
+
+impl Registered {
+    /// The phrase's 24 words as a person would type them.
+    pub fn typed_phrase(&self) -> String {
+        self.phrase
+            .as_ref()
+            .expect("the registration issued no phrase")
+            .0
+            .join(" ")
+    }
+}
+
+/// What a `RecoverAccount` answered: whether the account was recovered here (other devices
+/// revoked), and the phrase sign-in's own answer.
+#[derive(Debug)]
+pub struct Recovered {
+    pub recovered_cid: Option<u64>,
+    pub sign_in: Result<u64, String>,
 }
 
 pub struct Window {
@@ -112,7 +142,7 @@ impl Window {
         server: SocketAddr,
         username: &str,
         password: &str,
-    ) -> Result<Result<(u64, RecoveryCodes), String>, Box<dyn Error>> {
+    ) -> Result<Result<Registered, String>, Box<dyn Error>> {
         self.register_admitted(server, username, password, None)
             .await
             .map(|registered| registered.map_err(|(message, _)| message))
@@ -125,7 +155,7 @@ impl Window {
         username: &str,
         password: &str,
         token: Option<&str>,
-    ) -> Result<Result<(u64, RecoveryCodes), (String, Option<FailureReason>)>, Box<dyn Error>> {
+    ) -> Result<Result<Registered, (String, Option<FailureReason>)>, Box<dyn Error>> {
         let request_id = Uuid::new_v4();
         self.send(InternalServiceRequest::Register {
             request_id,
@@ -140,9 +170,11 @@ impl Window {
         })
         .await?;
         Ok(match self.answer_of(request_id, None).await?.response {
-            InternalServiceResponse::RegisterSuccess(success) => {
-                Ok((success.cid, success.recovery_codes.clone()))
-            }
+            InternalServiceResponse::RegisterSuccess(success) => Ok(Registered {
+                cid: success.cid,
+                codes: success.recovery_codes.clone(),
+                phrase: success.recovery_phrase.clone(),
+            }),
             InternalServiceResponse::RegisterFailure(failure) => {
                 Err((failure.message, failure.reason_code))
             }
@@ -165,6 +197,7 @@ impl Window {
             password: offer.password.as_deref().map(SecBuffer::from),
             security_key: offer.key.is_some(),
             recovery_code: offer.recovery_code.as_deref().map(SecBuffer::from),
+            recovery_phrase: offer.recovery_phrase.as_deref().map(SecBuffer::from),
             admission_token: offer.admission.clone(),
             connect_mode: ConnectMode::Standard { force_login: false },
             udp_mode: UdpMode::Disabled,
@@ -190,6 +223,55 @@ impl Window {
                 other => Err(format!("{other:?}")),
             },
         )
+    }
+
+    /// Recovers `username` on `server` with `phrase` (as typed), naming this device `label`.
+    pub async fn recover(
+        &mut self,
+        server: SocketAddr,
+        username: &str,
+        phrase: &str,
+        label: &str,
+    ) -> Result<Recovered, Box<dyn Error>> {
+        let request_id = Uuid::new_v4();
+        self.send(InternalServiceRequest::RecoverAccount {
+            request_id,
+            server_addr: server.to_string(),
+            username: username.to_string(),
+            phrase: SecBuffer::from(phrase),
+            device_label: label.to_string(),
+            admission_token: None,
+            session_security_settings: Default::default(),
+            server_password: None,
+        })
+        .await?;
+        let mut recovered_cid = None;
+        loop {
+            match self.answer_of(request_id, None).await?.response {
+                InternalServiceResponse::RecoverAccountSuccess(success) => {
+                    recovered_cid = Some(success.cid)
+                }
+                InternalServiceResponse::RecoverAccountFailure(failure) => {
+                    return Ok(Recovered {
+                        recovered_cid,
+                        sign_in: Err(failure.message),
+                    })
+                }
+                InternalServiceResponse::ConnectSuccess(success) => {
+                    return Ok(Recovered {
+                        recovered_cid,
+                        sign_in: Ok(success.cid),
+                    })
+                }
+                InternalServiceResponse::ConnectFailure(failure) => {
+                    return Ok(Recovered {
+                        recovered_cid,
+                        sign_in: Err(failure.message),
+                    })
+                }
+                other => return Err(format!("not a recovery answer: {other:?}").into()),
+            }
+        }
     }
 
     pub async fn manage(

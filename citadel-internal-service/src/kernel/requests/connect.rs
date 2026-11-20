@@ -32,7 +32,9 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     ConnectFailure, InternalServiceRequest, InternalServiceResponse,
 };
-use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt, Ratchet, SessionScope};
+use citadel_sdk::prelude::{
+    AuthenticationRequest, ProtocolRemoteExt, Ratchet, SecBuffer, SessionScope,
+};
 use uuid::Uuid;
 
 /// Shown by a page too old to name the server: it can only be fixed by loading the current page.
@@ -50,6 +52,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         password,
         security_key,
         recovery_code,
+        recovery_phrase,
         admission_token,
         connect_mode,
         udp_mode,
@@ -104,6 +107,24 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             });
             return Some(HandledRequestResult { response, uuid });
         }
+    };
+    // The phrase is bound to the account's server, which the check above has just confirmed
+    // is the one named: read before anything is dialled, so a mistyped word is answered at once.
+    let recovery_phrase = match recovery_phrase {
+        None => None,
+        Some(typed) => match read_phrase(this, &username, &typed).await {
+            Ok(phrase) => Some(phrase),
+            Err(message) => {
+                let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                    cid: 0,
+                    message,
+                    request_id: Some(request_id),
+                    reason_code: None,
+                    admission_challenge: None,
+                });
+                return Some(HandledRequestResult { response, uuid });
+            }
+        },
     };
     let connect_mode = crate::kernel::requests::connect_mode::server_connect_mode(
         connect_mode,
@@ -303,6 +324,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             password: password.clone(),
             security_key,
             recovery_code,
+            recovery_phrase,
             admission: admission_token,
         },
     );
@@ -581,4 +603,19 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             Some(HandledRequestResult { response, uuid })
         }
     }
+}
+
+/// The typed phrase, bound to the canonical domain of `username`'s server on this agent.
+async fn read_phrase<T: IOInterface + Sync, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    username: &str,
+    typed: &SecBuffer,
+) -> Result<citadel_sdk::prelude::RecoveryPhrase, String> {
+    let remote = this.remote();
+    let cid = remote
+        .account_manager()
+        .get_persistence_handler()
+        .get_cid_by_username(username);
+    let domain = crate::kernel::recovery_domain::of_account(remote, cid).await?;
+    crate::kernel::sign_in::phrase::read(typed, &domain)
 }

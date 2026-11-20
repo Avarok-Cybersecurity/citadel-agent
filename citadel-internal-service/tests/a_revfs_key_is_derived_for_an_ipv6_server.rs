@@ -1,5 +1,6 @@
 //! A server reached by an IPv6 literal gets a RE-VFS key, and a server address with no
-//! canonical domain still refuses the sign-in (owner, 2026-11-19).
+//! canonical domain is refused (owner, 2026-11-19): at registration, before anything is dialled,
+//! since the account's recovery phrase is bound to that domain too.
 //!
 //! The account's RE-VFS key is derived over its server's canonical domain. `canonical_domain`
 //! split the port at the last `:` and allowed only `[a-z0-9-.]` labels, so `[::1]:<port>` had
@@ -9,8 +10,9 @@
 //!
 //! Controls: send bracketed input down the name path in `citadel-identity`'s `split_authority`
 //! (`an_ipv6_literal_server_gets_a_revfs_key` fails at the Connect: "has no canonical domain");
-//! in `revfs_seed::session_key`, derive over the address as typed when it has no canonical
-//! domain (`a_server_with_no_canonical_domain_refuses_the_sign_in` signs in).
+//! in `requests/register.rs`, register with no recovery domain when there is none
+//! (`a_server_with_no_canonical_domain_refuses_the_registration` reaches the sign-in, which
+//! refuses for the storage key instead, and the assertion on "Cannot register" fails).
 
 #[allow(dead_code)]
 #[path = "server_host_support/mod.rs"]
@@ -94,19 +96,20 @@ async fn an_ipv6_literal_server_gets_a_revfs_key() -> Result<(), Box<dyn Error>>
 }
 
 #[tokio::test]
-async fn a_server_with_no_canonical_domain_refuses_the_sign_in() -> Result<(), Box<dyn Error>> {
+async fn a_server_with_no_canonical_domain_refuses_the_registration() -> Result<(), Box<dyn Error>>
+{
     common::setup_log();
     let port = spawn_storing_server("127.0.0.1:0")?;
     let store = temp_store();
     let (agent, _node) = spawn_agent(&store).await?;
     let (mut sink, mut stream) = open(agent).await?;
     // A leading zero dials (the port parses) but is not canonical, so there is no domain to
-    // derive the account's key over, and nothing may be stored unsealed.
+    // bind the account's recovery phrase or derive its RE-VFS key over.
     let typed = format!("127.0.0.1:0{port}");
     let refused = register(&mut sink, &mut stream, &typed, &username()).await?;
-    let why = refused.expect_err("signed in with no RE-VFS key");
+    let why = refused.expect_err("registered with no canonical domain");
     assert!(
-        why.contains("storage key is unavailable") && why.contains("has no canonical domain"),
+        why.contains("Cannot register") && why.contains("has no canonical domain"),
         "the refusal names its cause: {why}"
     );
     let _ = std::fs::remove_dir_all(&store);

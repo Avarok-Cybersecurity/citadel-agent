@@ -88,9 +88,9 @@ pub use server_link::{
     ServerConnectionLost, ServerReconnectFailed, ServerReconnected, SignedOutSession,
 };
 pub use sign_in::{
-    FailureReason, RecoveryCodes, SecurityKeyAnswerFailure, SecurityKeyAnswerSuccess,
-    SecurityKeyChallengeNotification, SecurityKeyPurpose, SignInManagementFailure,
-    SignInManagementSuccess, StepUp,
+    FailureReason, RecoverAccountFailure, RecoverAccountSuccess, RecoveryCodes,
+    SecurityKeyAnswerFailure, SecurityKeyAnswerSuccess, SecurityKeyChallengeNotification,
+    SecurityKeyPurpose, SignInManagementFailure, SignInManagementSuccess, StepUp,
 };
 pub use sign_in_ceremony::SecurityKeyCeremony;
 pub use sign_in_wire::{
@@ -294,6 +294,11 @@ pub struct RegisterSuccess {
     /// post-quantum sign-in. With `connect_after_register` this response is sent before the
     /// connect's own.
     pub recovery_codes: RecoveryCodes,
+    /// The account's 24-word recovery phrase, to show the user once: a server at 0.12.4 or later
+    /// issues it instead of `recovery_codes`. Absent from an older server and an older agent.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub recovery_phrase: Option<RecoveryCodes>,
     /// The identity and the server pinned by a `RegisterIdentity`; absent for `Register`.
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
@@ -1336,6 +1341,8 @@ pub enum InternalServiceResponse {
     PeerIdentityKeyChangedNotification(PeerIdentityKeyChanged),
     PeerIdentityKeyAccepted(PeerIdentityKeyAccepted),
     PeerIdentityFailure(PeerIdentityFailure),
+    RecoverAccountSuccess(RecoverAccountSuccess),
+    RecoverAccountFailure(RecoverAccountFailure),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, RequestId)]
@@ -1369,6 +1376,12 @@ pub enum InternalServiceRequest {
         #[serde(default)]
         #[cfg_attr(feature = "typescript", ts(type = "number[] | null", optional))]
         recovery_code: Option<SecBuffer>,
+        /// The account's 24-word recovery phrase as typed (any case and spacing). Like a code, it
+        /// signs in to the recovery console: a session that may only manage how the account
+        /// signs in. The agent binds it to the account's server (`kernel/recovery_domain.rs`).
+        #[serde(default)]
+        #[cfg_attr(feature = "typescript", ts(type = "number[] | null", optional))]
+        recovery_phrase: Option<SecBuffer>,
         /// A Turnstile token for a server that checks fresh sign-ins (Turnstile action
         /// `sign-in`). Never logged.
         #[serde(default)]
@@ -2280,6 +2293,32 @@ pub enum InternalServiceRequest {
         peer_cid: u64,
         fingerprint: String,
     },
+    /// Recover `username` at `server_addr` with its recovery phrase, on a device that may hold no
+    /// bundle for it, then sign in with the phrase to the recovery console. When this agent does
+    /// not hold the account, the server installs this device's bundle in place of every other
+    /// device's (`RecoverAccountSuccess`, sent first); when it does, nothing is revoked and only
+    /// the sign-in's answer comes. Either way the last answer is `ConnectSuccess` (a recovery
+    /// console session) or a failure.
+    RecoverAccount {
+        request_id: Uuid,
+        /// As `Register::server_addr`: `host[:port]` or a `ws(s)://` URL.
+        server_addr: String,
+        username: String,
+        /// The 24 words as typed. Never logged.
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        phrase: SecBuffer,
+        /// What to call this device among the account's security events (1 to 64 characters).
+        device_label: String,
+        /// A Turnstile token (action `recover`) for a server that asks for one. Never logged.
+        #[serde(default)]
+        #[debug(with = secret_debug_fmt)]
+        #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+        admission_token: Option<String>,
+        #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
+        session_security_settings: SessionSecuritySettings,
+        #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
+        server_password: Option<PreSharedKey>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -2566,7 +2605,8 @@ impl InternalServiceRequest {
             // reliable place to catch it.
             //
             // These six legitimately precede or span a session:
-            //   Connect / Register     — there is no session yet.
+            //   Connect / Register /
+            //   RecoverAccount         — there is no session yet.
             //   Batched                — the inner requests are gated one by one.
             //   ConnectionManagement   — carries its target inside
             //                            `management_command`; gated in
@@ -2589,6 +2629,7 @@ impl InternalServiceRequest {
             //                            session yet (kernel/identity).
             Self::Connect { .. }
             | Self::Register { .. }
+            | Self::RecoverAccount { .. }
             | Self::IdentityStatus { .. }
             | Self::IdentityCreate { .. }
             | Self::IdentityUnlock { .. }
@@ -2682,6 +2723,7 @@ mod tests {
             password: Some(SecBuffer::from(vec![])),
             security_key: false,
             recovery_code: None,
+            recovery_phrase: None,
             connect_mode: ConnectMode::Standard { force_login: false },
             udp_mode: UdpMode::Enabled,
             keep_alive_timeout: None,

@@ -3,15 +3,14 @@
 //! the account), and choose a policy.
 
 use crate::pq::{username, PASSWORD};
-use crate::pq_window::{FakeKey, Offer, Window};
-use citadel_internal_service_types::RecoveryCodes;
+use crate::pq_window::{FakeKey, Offer, Registered, Window};
 use citadel_internal_service_types::{SignInManagementOp, SignInManagementOutcome, SignInPolicy};
 use std::error::Error;
 use std::net::SocketAddr;
 
 pub struct Account {
     pub username: String,
-    pub codes: RecoveryCodes,
+    pub registered: Registered,
 }
 
 pub fn password_offer() -> Offer {
@@ -36,7 +35,7 @@ pub async fn account(
     key: &FakeKey,
 ) -> Result<Account, Box<dyn Error>> {
     let username = username("acct");
-    let (_, codes) = window.register(server, &username, PASSWORD).await??;
+    let registered = window.register(server, &username, PASSWORD).await??;
     let cid = window
         .sign_in(server, &username, &password_offer())
         .await??;
@@ -53,5 +52,8 @@ pub async fn account(
         assert_eq!(set, SignInManagementOutcome::PolicySet);
     }
     window.disconnect(cid).await?;
-    Ok(Account { username, codes })
+    Ok(Account {
+        username,
+        registered,
+    })
 }

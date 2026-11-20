@@ -32,11 +32,7 @@ pub(crate) async fn session_key<R: Ratchet>(
     let vault = vault.ok_or_else(|| {
         "this agent has no RE-VFS vault (CitadelWorkspaceService::revfs_key_source)".to_string()
     })?;
-    let server = crate::kernel::account_server::account_server(remote, cid)
-        .await?
-        .ok_or_else(|| format!("this agent holds no account {cid}"))?;
-    let domain = citadel_identity::canonical_domain(&server.as_requested())
-        .map_err(|err| format!("the server of account {cid} has no canonical domain: {err}"))?;
+    let domain = crate::kernel::recovery_domain::of_account(remote, cid).await?;
     let vault_key = vault.key().await?;
     account::establish(remote, &vault_key, cid, &domain.to_string()).await
 }

@@ -1,6 +1,7 @@
 //! The agent's sign-in wire types: the SDK's JSON exactly, and no credential id under `{:?}`.
 
 use super::*;
+use citadel_types::crypto::SecBuffer;
 
 const CRED: &[u8] = b"yubikey-5-credential-id";
 
@@ -39,8 +40,62 @@ fn every_op_crosses_the_wire_as_the_sdk_writes_it() {
     ];
     for op in ops {
         let ours = serde_json::to_value(&op).unwrap();
-        let sdk = serde_json::to_value(sdk::SignInManagementOp::from(op)).unwrap();
+        let sdk = serde_json::to_value(op.to_sdk("acme.example")).unwrap();
         assert_eq!(ours, sdk);
+    }
+}
+
+/// The two changes whose wire is the agent's own: the new password rides with `SetPassword`
+/// (the SDK takes it beside the op), and the phrase's domain is the agent's to derive.
+#[test]
+fn the_agents_own_ops_name_the_sdks_changes() {
+    let set = SignInManagementOp::SetPassword {
+        new_password: SecBuffer::from("a new password"),
+    };
+    assert_eq!(set.to_sdk("x"), sdk::SignInManagementOp::SetPassword);
+    assert_eq!(
+        SignInManagementOp::RegenerateRecoveryPhrase.to_sdk("acme.example"),
+        sdk::SignInManagementOp::RegenerateRecoveryPhrase {
+            canonical_domain: "acme.example".into()
+        }
+    );
+}
+
+#[test]
+fn a_new_password_never_reaches_a_debug_string() {
+    let set = SignInManagementOp::SetPassword {
+        new_password: SecBuffer::from("hunter2-new"),
+    };
+    let printed = format!("{set:?}");
+    assert!(!printed.contains("hunter2"), "{printed}");
+}
+
+#[test]
+fn the_recovery_console_may_do_what_the_sdk_allows_and_nothing_else() {
+    let allowed = [
+        SignInManagementOp::ListCredentials,
+        add(),
+        SignInManagementOp::RemoveCredential { id: 1 },
+        SignInManagementOp::SetSignInPolicy {
+            policy: SignInPolicy::KeyOnly,
+        },
+        SignInManagementOp::SetPassword {
+            new_password: SecBuffer::from("x"),
+        },
+        SignInManagementOp::RegenerateRecoveryPhrase,
+    ];
+    for op in allowed {
+        assert!(op.allowed_in_recovery(), "{op:?}");
+    }
+    let refused = [
+        SignInManagementOp::RenameCredential {
+            id: 1,
+            label: "x".into(),
+        },
+        SignInManagementOp::RegenerateRecoveryCodes,
+    ];
+    for op in refused {
+        assert!(!op.allowed_in_recovery(), "{op:?}");
     }
 }
 
@@ -59,6 +114,8 @@ fn every_outcome_crosses_the_wire_as_the_sdk_writes_it() {
         sdk::SignInManagementOutcome::Removed,
         sdk::SignInManagementOutcome::PolicySet,
         sdk::SignInManagementOutcome::RecoveryCodes(vec!["A-B".into()]),
+        sdk::SignInManagementOutcome::PasswordSet,
+        sdk::SignInManagementOutcome::RecoveryPhrase(vec!["abandon".into()]),
     ];
     for outcome in outcomes {
         let sdk = serde_json::to_value(&outcome).unwrap();

@@ -34,6 +34,7 @@ async fn challenged(
             password: Some(SecBuffer::from(PASSWORD)),
             security_key: true,
             recovery_code: None,
+            recovery_phrase: None,
             connect_mode: ConnectMode::Standard { force_login: false },
             udp_mode: UdpMode::Disabled,
             keep_alive_timeout: None,

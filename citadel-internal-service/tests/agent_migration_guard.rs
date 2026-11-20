@@ -33,6 +33,7 @@ mod tests {
             password: Some(SecBuffer::from(ALICE_PASSWORD.as_bytes().to_vec())),
             security_key: false,
             recovery_code: None,
+            recovery_phrase: None,
             connect_mode: ConnectMode::Standard { force_login: true },
             udp_mode: Default::default(),
             keep_alive_timeout: None,

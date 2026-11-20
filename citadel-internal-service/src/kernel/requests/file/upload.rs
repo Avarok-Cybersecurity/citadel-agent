@@ -1,5 +1,6 @@
 use super::transfer_root::BrowserTransferRoot;
 use crate::kernel::requests::HandledRequestResult;
+use crate::kernel::send_correlation::PendingStore;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -866,19 +867,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     let ticket = subscription.callback_key().ticket.0;
                     if let Some(conn) = this.server_connection_map.write().get_mut(&cid) {
                         let revfs_store = revfs_store.map(|(path, level, token)| {
-                            crate::kernel::send_correlation::PendingStore {
-                                entry: crate::kernel::revfs_seed::index::IndexEntry {
-                                    location: peer_cid.map_or(
-                                        crate::kernel::revfs_seed::index::Location::Server,
-                                        crate::kernel::revfs_seed::index::Location::Peer,
-                                    ),
-                                    path: path.to_string_lossy().into_owned(),
-                                    level: level.value(),
-                                    key_id: conn.revfs_key.id(),
-                                    stage: crate::kernel::revfs_seed::index::Stage::Settled,
-                                },
-                                token,
-                            }
+                            PendingStore::settled(&path, level, peer_cid, &conn.revfs_key, token)
                         });
                         conn.send_correlations.register(
                             ticket,

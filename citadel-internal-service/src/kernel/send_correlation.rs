@@ -39,6 +39,30 @@ pub(crate) struct PendingStore {
     pub token: Option<crate::kernel::revfs_seed::UseToken>,
 }
 
+impl PendingStore {
+    /// A store of `path` at `level` to the server (`peer_cid` `None`) or to that peer, sealed
+    /// under `key`.
+    pub(crate) fn settled(
+        path: &std::path::Path,
+        level: citadel_sdk::prelude::SecurityLevel,
+        peer_cid: Option<u64>,
+        key: &citadel_sdk::prelude::RevfsKey,
+        token: Option<crate::kernel::revfs_seed::UseToken>,
+    ) -> Self {
+        use crate::kernel::revfs_seed::index::{IndexEntry, Location, Stage};
+        Self {
+            entry: IndexEntry {
+                location: peer_cid.map_or(Location::Server, Location::Peer),
+                path: path.to_string_lossy().into_owned(),
+                level: level.value(),
+                key_id: key.id(),
+                stage: Stage::Settled,
+            },
+            token,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct SendCorrelations {
     by_ticket: HashMap<u128, PendingSend>,

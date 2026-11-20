@@ -7,8 +7,8 @@
 
 use citadel_internal_service_types::InternalServiceRequest;
 
-pub(crate) const RECOVERY_ONLY: &str = "This session signed in with a recovery code: it can \
-     only add a security key, set the sign-in policy, or sign out";
+pub(crate) const RECOVERY_ONLY: &str = "This session signed in to recover the account: it can \
+     only manage how the account signs in, or sign out";
 
 /// Whether a recovery session may make this request.
 pub(crate) fn allows(command: &InternalServiceRequest) -> bool {
@@ -42,7 +42,7 @@ mod tests {
     }
 
     #[test]
-    fn a_recovery_session_may_add_a_key_set_the_policy_and_sign_out() {
+    fn a_recovery_session_may_manage_its_sign_in_methods_and_sign_out() {
         let add = SignInManagementOp::AddSecurityKey {
             label: "key".into(),
         };
@@ -51,6 +51,10 @@ mod tests {
         };
         assert!(allows(&manage(add)));
         assert!(allows(&manage(policy)));
+        assert!(allows(&manage(SignInManagementOp::ListCredentials)));
+        assert!(allows(&manage(SignInManagementOp::RemoveCredential {
+            id: 1
+        })));
         let disconnect = InternalServiceRequest::Disconnect {
             request_id: Uuid::nil(),
             cid: 1,
@@ -61,8 +65,6 @@ mod tests {
     #[test]
     fn and_nothing_else() {
         for op in [
-            SignInManagementOp::ListCredentials,
-            SignInManagementOp::RemoveCredential { id: 1 },
             SignInManagementOp::RenameCredential {
                 id: 1,
                 label: "x".into(),

@@ -493,7 +493,10 @@ pub struct Connection<R: Ratchet> {
     /// The account's RE-VFS key, established at Connect (kernel/revfs_seed).
     pub(crate) revfs_key: citadel_sdk::prelude::RevfsKey,
     /// The identity key's P2P key-exchange signer, for a session `ConnectIdentity` opened;
-    /// `None` for a legacy account, whose exchanges go unsigned (kernel/p2p_kex).
+    /// `None` for a legacy account, whose exchanges go unsigned (kernel/p2p_kex). Held for the
+    /// session's whole life: an open session keeps signing after the identity's idle lock, which
+    /// gates only new sign-ins, registrations and export -- otherwise every verified chat would
+    /// fail after the idle period (owner's decision, 2026-11-20).
     pub(crate) p2p_kex_signer: Option<citadel_identity::P2pKexSigner>,
     pub(crate) link: reconnect::LinkState,
     /// The SDK session the link is; a drop report of another is not this link's.

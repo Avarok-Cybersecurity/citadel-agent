@@ -51,7 +51,7 @@ pub fn register_identity(
         discovery: IdentityDiscovery::Pinned {
             server_fp: server.fp(),
         },
-        session_security_settings: Default::default(),
+        session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
         server_password: None,
         admission_token: None,
     }
@@ -61,7 +61,7 @@ pub fn connect_identity(request_id: Uuid, cid: u64) -> InternalServiceRequest {
     InternalServiceRequest::ConnectIdentity {
         request_id,
         cid,
-        session_security_settings: Default::default(),
+        session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
         server_password: None,
     }
 }

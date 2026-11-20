@@ -881,7 +881,8 @@ mod tests {
                 cid: *cid_a,
                 peer_cid: *cid_b,
                 udp_mode: Default::default(),
-                session_security_settings: SessionSecuritySettings::default(),
+                session_security_settings: citadel_sdk::prelude::default_session_security_settings(
+                ),
                 peer_session_password: None,
                 turn: None,
             })
@@ -892,7 +893,7 @@ mod tests {
                     Some(r) = from_service_b.recv() => if let InternalServiceResponse::PeerConnectNotification(n) = r {
                         to_service_b.send(InternalServiceRequest::PeerConnectAccept {
                             request_id: Uuid::new_v4(), cid: *cid_b, peer_cid: n.peer_cid, accept: true, udp_mode: Default::default(),
-                            session_security_settings: SessionSecuritySettings::default(), peer_session_password: None, turn: None,
+                            session_security_settings: citadel_sdk::prelude::default_session_security_settings(), peer_session_password: None, turn: None,
                         }).unwrap();
                     },
                     Some(r) = from_service_a.recv() => match r {

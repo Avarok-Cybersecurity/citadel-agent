@@ -16,7 +16,7 @@ fn legacy_connect_json() -> String {
         connect_mode: ConnectMode::Standard { force_login: false },
         udp_mode: UdpMode::Enabled,
         keep_alive_timeout: None,
-        session_security_settings: SessionSecuritySettings::default(),
+        session_security_settings: crate::test_session_security_settings(),
         server_password: None,
         admission_token: None,
     };
@@ -91,7 +91,7 @@ fn a_typed_phrase_never_reaches_a_debug_string() {
         phrase: SecBuffer::from("zebra zebra zebra"),
         device_label: "laptop".into(),
         admission_token: Some("turnstile-secret".into()),
-        session_security_settings: Default::default(),
+        session_security_settings: crate::test_session_security_settings(),
         server_password: None,
     };
     let printed = format!("{recover:?}");
@@ -114,7 +114,7 @@ fn the_new_notification_is_a_notification_and_the_failures_are_errors() {
             request_id: None,
             challenge_id: Uuid::nil(),
             purpose: SecurityKeyPurpose::SignIn,
-            rp_id: Some("work.avarok.net".to_string()),
+            rp_id: "work.avarok.net".to_string(),
             ceremony: SecurityKeyCeremony::Authenticate {
                 credential_ids: vec![],
             },
@@ -152,7 +152,7 @@ fn an_admission_token_never_reaches_a_debug_string() {
         connect_mode: ConnectMode::Standard { force_login: false },
         udp_mode: UdpMode::Enabled,
         keep_alive_timeout: None,
-        session_security_settings: SessionSecuritySettings::default(),
+        session_security_settings: crate::test_session_security_settings(),
         server_password: None,
     };
     let printed = format!("{connect:?}");
@@ -177,7 +177,7 @@ fn a_key_challenge_and_its_answer_never_print_their_bytes() {
         request_id: None,
         challenge_id: Uuid::nil(),
         purpose: SecurityKeyPurpose::SignIn,
-        rp_id: Some("work.avarok.net".to_string()),
+        rp_id: "work.avarok.net".to_string(),
         ceremony: SecurityKeyCeremony::Authenticate {
             credential_ids: vec![credential.clone()],
         },

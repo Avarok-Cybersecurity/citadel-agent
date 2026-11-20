@@ -99,7 +99,8 @@ pub async fn sign_in_after_restart(
                 connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
                 udp_mode: Default::default(),
                 keep_alive_timeout: None,
-                session_security_settings: Default::default(),
+                session_security_settings: citadel_sdk::prelude::default_session_security_settings(
+                ),
                 server_password: None,
                 admission_token: None,
             },
@@ -153,7 +154,14 @@ pub async fn register(
     server_addr: &str,
     username: &str,
 ) -> Result<Result<u64, String>, Box<dyn Error>> {
-    register_with(sink, stream, server_addr, username, Default::default()).await
+    register_with(
+        sink,
+        stream,
+        server_addr,
+        username,
+        citadel_sdk::prelude::default_session_security_settings(),
+    )
+    .await
 }
 
 pub async fn register_with(

@@ -128,7 +128,7 @@ async fn peer_register(
         request_id: Uuid::new_v4(),
         cid,
         peer_cid,
-        session_security_settings: Default::default(),
+        session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
         connect_after_register: false,
         peer_session_password: None,
     };
@@ -157,7 +157,7 @@ pub fn peer_connect(cid: u64, peer_cid: u64) -> InternalServiceRequest {
         cid,
         peer_cid,
         udp_mode: UdpMode::Disabled,
-        session_security_settings: Default::default(),
+        session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
         peer_session_password: None,
         turn: None,
     }

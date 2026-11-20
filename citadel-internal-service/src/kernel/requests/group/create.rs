@@ -44,7 +44,7 @@ pub(super) async fn create_with<T: IOInterface, R: Ratchet>(
     let client_to_server_remote = ClientServerRemote::new(
         VirtualTargetType::LocalGroupServer { session_cid: cid },
         remote.clone(),
-        Default::default(),
+        citadel_sdk::prelude::default_session_security_settings(),
         None,
         None,
     );

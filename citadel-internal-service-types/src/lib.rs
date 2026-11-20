@@ -2659,6 +2659,26 @@ impl InternalServiceRequest {
 #[path = "pending_invites_tests.rs"]
 mod pending_invites_tests;
 
+/// The session settings the wire tests send. Chosen here, not defaulted: the SDK has no default
+/// for them, and what a test sends should be what it says.
+#[cfg(test)]
+pub(crate) fn test_session_security_settings() -> SessionSecuritySettings {
+    use citadel_types::crypto::{
+        CryptoParameters, EncryptionAlgorithm, HeaderObfuscatorSettings, KemAlgorithm, SecrecyMode,
+        SecurityLevel, SigAlgorithm,
+    };
+    SessionSecuritySettings {
+        security_level: SecurityLevel::Standard,
+        secrecy_mode: SecrecyMode::BestEffort,
+        crypto_params: CryptoParameters::new(
+            EncryptionAlgorithm::AES_GCM_256,
+            KemAlgorithm::MlKem1024Fips203,
+            SigAlgorithm::None,
+        ),
+        header_obfuscator_settings: HeaderObfuscatorSettings::default(),
+    }
+}
+
 #[cfg(test)]
 mod browser_console_wire_tests;
 #[cfg(test)]
@@ -2724,7 +2744,7 @@ mod tests {
             connect_mode: ConnectMode::Standard { force_login: false },
             udp_mode: UdpMode::Enabled,
             keep_alive_timeout: None,
-            session_security_settings: SessionSecuritySettings::default(),
+            session_security_settings: test_session_security_settings(),
             server_password: None,
             admission_token: None,
         };

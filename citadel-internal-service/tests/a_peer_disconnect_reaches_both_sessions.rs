@@ -62,7 +62,7 @@ mod tests {
             &mut tx_b,
             &mut rx_b,
             cid_b,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -74,7 +74,7 @@ mod tests {
                 &mut tx_b,
                 &mut rx_b,
                 cid_b,
-                SessionSecuritySettings::default(),
+                citadel_sdk::prelude::default_session_security_settings(),
                 None::<PreSharedKey>,
             )
             .await?;
@@ -86,7 +86,7 @@ mod tests {
                 &mut tx_a,
                 &mut rx_a,
                 cid_a,
-                SessionSecuritySettings::default(),
+                citadel_sdk::prelude::default_session_security_settings(),
                 None::<PreSharedKey>,
             )
             .await?;
@@ -130,7 +130,8 @@ mod tests {
                 cid: cid_b,
                 peer_cid: cid_a,
                 udp_mode: Default::default(),
-                session_security_settings: SessionSecuritySettings::default(),
+                session_security_settings: citadel_sdk::prelude::default_session_security_settings(
+                ),
                 peer_session_password: None,
                 turn: None,
             })?;
@@ -147,7 +148,7 @@ mod tests {
                                     peer_cid: n.peer_cid,
                                     accept: false,
                                     udp_mode: Default::default(),
-                                    session_security_settings: SessionSecuritySettings::default(),
+                                    session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
                                     peer_session_password: None,
                                     turn: None,
                                 }).expect("A's service is up");
@@ -226,7 +227,7 @@ mod tests {
             cid: cid_a,
             peer_cid: cid_b,
             udp_mode: Default::default(),
-            session_security_settings: SessionSecuritySettings::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             peer_session_password: None,
             turn: None,
         })?;
@@ -242,7 +243,7 @@ mod tests {
                                 peer_cid: n.peer_cid,
                                 accept: true,
                                 udp_mode: Default::default(),
-                                session_security_settings: SessionSecuritySettings::default(),
+                                session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
                                 peer_session_password: None,
                                 turn: None,
                             }).expect("B's service is up");

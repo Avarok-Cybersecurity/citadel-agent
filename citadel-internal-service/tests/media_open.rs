@@ -70,7 +70,7 @@ mod tests {
             &mut tx1,
             &mut rx1,
             cid1,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -81,7 +81,7 @@ mod tests {
             &mut tx1,
             &mut rx1,
             cid1,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
             UdpMode::Enabled,
         )
@@ -120,7 +120,7 @@ mod tests {
             &mut tx1m,
             &mut rx1,
             cid1,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -131,7 +131,7 @@ mod tests {
             cid: cid0,
             peer_cid: cid1,
             udp_mode: UdpMode::Enabled,
-            session_security_settings: SessionSecuritySettings::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             peer_session_password: None::<PreSharedKey>,
             turn: None,
         })
@@ -159,7 +159,7 @@ mod tests {
             accept: true,
             // Discarded by accept.rs; the SDK reads the mode from the signal.
             udp_mode: UdpMode::Enabled,
-            session_security_settings: SessionSecuritySettings::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             peer_session_password: None::<PreSharedKey>,
             turn: None,
         })

@@ -55,7 +55,8 @@ mod tests {
             },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
-            session_security_settings: Default::default(),
+            session_security_settings:
+                citadel_internal_service_test_common::default_session_security_settings(),
             server_password: None,
             request_id,
             admission_token: None,
@@ -103,7 +104,8 @@ mod tests {
             },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
-            session_security_settings: Default::default(),
+            session_security_settings:
+                citadel_internal_service_test_common::default_session_security_settings(),
             server_password: None,
             request_id,
             admission_token: None,

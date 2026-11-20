@@ -132,7 +132,7 @@ async fn an_app_session_reconnects_under_its_cid() -> Result<(), Box<dyn Error>>
         discovery: IdentityDiscovery::Pinned {
             server_fp: member_server.fp(),
         },
-        session_security_settings: Default::default(),
+        session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
         server_password: None,
         admission_token: None,
     };

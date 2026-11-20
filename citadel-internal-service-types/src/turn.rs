@@ -107,7 +107,7 @@ mod tests {
             cid: 1,
             peer_cid: 2,
             udp_mode: Default::default(),
-            session_security_settings: Default::default(),
+            session_security_settings: crate::test_session_security_settings(),
             peer_session_password: None,
             turn: None,
         };

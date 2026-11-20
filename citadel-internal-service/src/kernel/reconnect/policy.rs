@@ -163,9 +163,9 @@ impl ReconnectPolicy {
 
 /// The account errors a retry cannot fix. From the SDK's registry, not copied strings.
 ///
-/// `PreconnectCidNotRegistered` is the server saying it has no such account: after a
-/// server that lost its accounts restarts, every attempt got it, and retrying it for
-/// ten minutes kept the user on "Reconnecting" for an account that no longer exists.
+/// `PreconnectRefused` is the server not going on with the connect's first packet: an account
+/// it does not hold (a server that restarted without its accounts) or a packet that does not
+/// open under the account's keys. Asking again with the same keys gets the same answer.
 ///
 /// The admission refusals are the server's Turnstile check: a reconnect cannot show the
 /// widget, so retrying asked the same question every attempt for ten minutes. The user has
@@ -176,7 +176,7 @@ const REFUSALS: [ErrorCode; 8] = [
     ErrorCode::AccountInvalidUsername,
     ErrorCode::AccountInvalidPassword,
     ErrorCode::AccountDisengaged,
-    ErrorCode::PreconnectCidNotRegistered,
+    ErrorCode::PreconnectRefused,
     ErrorCode::PqSignInAdmissionRequired,
     ErrorCode::PqSignInAdmissionFailed,
 ];

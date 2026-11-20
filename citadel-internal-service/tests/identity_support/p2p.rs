@@ -50,7 +50,8 @@ pub async fn peer_register(a: &mut End, b: &mut End) -> Result<(), Box<dyn Error
                 request_id: Uuid::new_v4(),
                 cid: from,
                 peer_cid: to,
-                session_security_settings: Default::default(),
+                session_security_settings: citadel_sdk::prelude::default_session_security_settings(
+                ),
                 connect_after_register: false,
                 peer_session_password: None,
             },
@@ -74,7 +75,7 @@ pub fn accept(cid: u64, peer_cid: u64) -> InternalServiceRequest {
         peer_cid,
         accept: true,
         udp_mode: Default::default(),
-        session_security_settings: Default::default(),
+        session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
         peer_session_password: None,
         turn: None,
     }
@@ -86,7 +87,7 @@ pub fn dial(cid: u64, peer_cid: u64) -> InternalServiceRequest {
         cid,
         peer_cid,
         udp_mode: Default::default(),
-        session_security_settings: Default::default(),
+        session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
         peer_session_password: None,
         turn: None,
     }

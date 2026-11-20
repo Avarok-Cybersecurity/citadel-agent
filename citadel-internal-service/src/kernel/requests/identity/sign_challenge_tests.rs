@@ -138,7 +138,7 @@ async fn an_issuer_only_server_is_refused_no_citadel_endpoint() {
         handle: "alice".into(),
         full_name: "Alice".into(),
         discovery: citadel_internal_service_types::IdentityDiscovery::WellKnown,
-        session_security_settings: Default::default(),
+        session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
         server_password: None,
         admission_token: None,
     };

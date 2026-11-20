@@ -639,7 +639,8 @@ mod tests {
             },
             udp_mode: Default::default(),
             keep_alive_timeout: Some(Duration::from_secs(30)),
-            session_security_settings: Default::default(),
+            session_security_settings:
+                citadel_internal_service_test_common::default_session_security_settings(),
             server_password: None,
             admission_token: None,
         });
@@ -712,7 +713,8 @@ mod tests {
             },
             udp_mode: Default::default(),
             keep_alive_timeout: Some(Duration::from_secs(30)),
-            session_security_settings: Default::default(),
+            session_security_settings:
+                citadel_internal_service_test_common::default_session_security_settings(),
             server_password: None,
             admission_token: None,
         });
@@ -807,7 +809,8 @@ mod tests {
                 },
                 udp_mode: Default::default(),
                 keep_alive_timeout: Some(Duration::from_secs(30)),
-                session_security_settings: Default::default(),
+                session_security_settings:
+                    citadel_internal_service_test_common::default_session_security_settings(),
                 server_password: None,
                 admission_token: None,
             });
@@ -869,7 +872,8 @@ mod tests {
             },
             udp_mode: Default::default(),
             keep_alive_timeout: Some(Duration::from_secs(30)),
-            session_security_settings: Default::default(),
+            session_security_settings:
+                citadel_internal_service_test_common::default_session_security_settings(),
             server_password: None,
             admission_token: None,
         });

@@ -37,7 +37,7 @@ fn any_other_refusal_is_a_failure() {
 fn opened_at(security_level: SecurityLevel) -> SessionSecuritySettings {
     SessionSecuritySettings {
         security_level,
-        ..Default::default()
+        ..citadel_sdk::prelude::default_session_security_settings()
     }
 }
 

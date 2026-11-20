@@ -63,7 +63,7 @@ pub async fn two_registered_agents() -> Result<Vec<PeerReturnHandle>, Box<dyn Er
         tx_b,
         rx_b,
         *cid_b,
-        SessionSecuritySettings::default(),
+        citadel_sdk::prelude::default_session_security_settings(),
         None,
     )
     .await?;
@@ -86,7 +86,7 @@ pub async fn connect(
             tx_b,
             rx_b,
             *cid_b,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None,
             UdpMode::Enabled,
             turn,
@@ -226,7 +226,7 @@ pub async fn connect_by_accept(
         cid: cid_a,
         peer_cid: cid_b,
         udp_mode: UdpMode::Enabled,
-        session_security_settings: SessionSecuritySettings::default(),
+        session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
         peer_session_password: None,
         turn: turn_a,
     })
@@ -242,7 +242,7 @@ pub async fn connect_by_accept(
         peer_cid: cid_a,
         accept: true,
         udp_mode: UdpMode::Enabled,
-        session_security_settings: SessionSecuritySettings::default(),
+        session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
         peer_session_password: None,
         turn: turn_b,
     })

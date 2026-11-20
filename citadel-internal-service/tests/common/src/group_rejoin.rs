@@ -62,7 +62,7 @@ pub async fn sign_in_again(
         connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
         udp_mode: Default::default(),
         keep_alive_timeout: None,
-        session_security_settings: Default::default(),
+        session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
         request_id: connect_id,
         server_password: None,
         admission_token: None,

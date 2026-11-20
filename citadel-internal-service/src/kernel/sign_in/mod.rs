@@ -82,8 +82,8 @@ pub(crate) fn failure_reason(code: citadel_io::ErrorCode) -> Option<FailureReaso
 }
 
 /// The reason a refused management change carries for the UI, when it has one: an
-/// `AddSecurityKey` the SDK found it cannot send (a 0.12.2 server cannot enrol a key whose
-/// credential the client creates) or that the server cannot take (it names no relying party).
+/// `AddSecurityKey` the server cannot take, because it has not enabled security keys (it names
+/// no relying party).
 pub(crate) fn management_failure_reason(
     adds_a_key: bool,
     code: citadel_io::ErrorCode,

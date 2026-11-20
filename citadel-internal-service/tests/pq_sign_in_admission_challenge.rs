@@ -38,7 +38,7 @@ async fn refused_registration(
             username: user.to_string(),
             proposed_password: PASSWORD.into(),
             connect_after_register: false,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             server_password: None,
             admission_token: token.map(str::to_string),
         })

@@ -10,6 +10,9 @@ pub mod pq;
 pub mod pq_accounts;
 pub mod pq_files;
 pub mod pq_window;
+/// The session settings a test names when the test is not about them: the SDK's named choice
+/// for a session whose application chooses none.
+pub use citadel_sdk::prelude::default_session_security_settings;
 pub use ports::get_free_port;
 
 /// The launch token every test agent's notice plane admits (kernel/notices).

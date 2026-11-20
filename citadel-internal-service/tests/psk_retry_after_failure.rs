@@ -59,7 +59,7 @@ mod tests {
             cid,
             peer_cid,
             udp_mode: Default::default(),
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             peer_session_password,
             turn: None,
         }
@@ -70,7 +70,7 @@ mod tests {
             request_id: Uuid::new_v4(),
             cid,
             peer_cid,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             connect_after_register: false,
             peer_session_password: None,
         }

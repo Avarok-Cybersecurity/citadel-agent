@@ -76,7 +76,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -88,7 +88,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -153,7 +153,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -165,7 +165,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -266,7 +266,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -278,7 +278,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -414,7 +414,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -426,7 +426,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;

@@ -46,7 +46,7 @@ pub async fn two_connected_accounts(tag: &str) -> Result<TwoAccounts, Box<dyn Er
         &mut bob.0,
         &mut bob.1,
         bob.2,
-        SessionSecuritySettings::default(),
+        citadel_sdk::prelude::default_session_security_settings(),
         None::<PreSharedKey>,
     )
     .await?;
@@ -57,7 +57,7 @@ pub async fn two_connected_accounts(tag: &str) -> Result<TwoAccounts, Box<dyn Er
         &mut bob.0,
         &mut bob.1,
         bob.2,
-        SessionSecuritySettings::default(),
+        citadel_sdk::prelude::default_session_security_settings(),
         None::<PreSharedKey>,
     )
     .await?;

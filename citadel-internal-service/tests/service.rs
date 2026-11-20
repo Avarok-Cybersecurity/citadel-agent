@@ -201,7 +201,7 @@ mod tests {
             full_name: "Full Name".into(),
             username: "Username".into(),
             proposed_password: "Password".into(),
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             connect_after_register: false,
             server_password: None,
             admission_token: None,
@@ -223,7 +223,7 @@ mod tests {
             full_name: "Full Name".into(),
             username: "Username".into(),
             proposed_password: "Password".into(),
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             connect_after_register: false,
             server_password: Some(PreSharedKey::from("IncorrectPassword".as_bytes())),
             admission_token: None,
@@ -245,7 +245,7 @@ mod tests {
             full_name: "Full Name".into(),
             username: "Username".into(),
             proposed_password: "Password".into(),
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             connect_after_register: false,
             server_password: Some(PreSharedKey::from("SecretPassword".as_bytes())),
             admission_token: None,
@@ -273,7 +273,7 @@ mod tests {
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             server_password: None,
             admission_token: None,
         };
@@ -298,7 +298,7 @@ mod tests {
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             server_password: Some(PreSharedKey::from("IncorrectPassword".as_bytes())),
             admission_token: None,
         };
@@ -323,7 +323,7 @@ mod tests {
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             server_password: Some(PreSharedKey::from("SecretPassword".as_bytes())),
             admission_token: None,
         };
@@ -510,7 +510,7 @@ mod tests {
             full_name: String::from("John"),
             username: String::from("john_doe"),
             proposed_password: String::from("test12345").into_bytes().into(),
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             connect_after_register: true,
             request_id: Uuid::new_v4(),
             server_password: None,
@@ -658,7 +658,7 @@ mod tests {
             cid: peer_b_cid,
             peer_cid: peer_a_cid,
             udp_mode: Default::default(),
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             peer_session_password: expected_psk,
             turn: None,
         };
@@ -675,7 +675,7 @@ mod tests {
             cid: peer_a_cid,
             peer_cid: peer_b_cid,
             udp_mode: Default::default(),
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             peer_session_password: given_psk,
             turn: None,
         };
@@ -812,7 +812,7 @@ mod tests {
             request_id: Uuid::new_v4(),
             cid: *peer_b_cid,
             peer_cid: *peer_a_cid,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             connect_after_register: false,
             peer_session_password: None,
         };
@@ -828,7 +828,7 @@ mod tests {
             request_id: Uuid::new_v4(),
             cid: *peer_a_cid,
             peer_cid: *peer_b_cid,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             connect_after_register: false,
             peer_session_password: None,
         };
@@ -1156,7 +1156,7 @@ mod tests {
                     to_service_b,
                     from_service_b,
                     *cid_b,
-                    SessionSecuritySettings::default(),
+                    citadel_sdk::prelude::default_session_security_settings(),
                     None::<PreSharedKey>,
                 )
                 .await?;
@@ -1167,7 +1167,7 @@ mod tests {
                     to_service_b,
                     from_service_b,
                     *cid_b,
-                    SessionSecuritySettings::default(),
+                    citadel_sdk::prelude::default_session_security_settings(),
                     None::<PreSharedKey>,
                 )
                 .await?;

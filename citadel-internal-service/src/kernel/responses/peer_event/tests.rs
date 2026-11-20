@@ -13,8 +13,7 @@ use super::handle;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::in_memory::InMemoryInterface;
 use citadel_sdk::prelude::{
-    PeerConnectionType, PeerEvent, PeerResponse, PeerSignal, SessionSecuritySettings,
-    StackedRatchet, Ticket, UdpMode,
+    PeerConnectionType, PeerEvent, PeerResponse, PeerSignal, StackedRatchet, Ticket, UdpMode,
 };
 
 type Svc = CitadelWorkspaceService<InMemoryInterface, StackedRatchet>;
@@ -34,7 +33,7 @@ fn post_connect_to_dialler(invitee_response: Option<PeerResponse>) -> PeerEvent 
             },
             ticket_opt: Some(Ticket(7)),
             invitee_response,
-            session_security_settings: SessionSecuritySettings::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             udp_mode: UdpMode::Disabled,
             session_password: None,
         },

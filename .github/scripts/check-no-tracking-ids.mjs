@@ -4,12 +4,15 @@
  *
  * Reads the message of every commit the pull request adds (merge-base..HEAD, so commits
  * already on the base branch are never judged) and the pull request's title and body, passed
- * in through PR_TITLE and PR_BODY, and fails naming each line that carries one.
+ * in through PR_TITLE and PR_BODY, and fails naming each line that carries one. A commit whose
+ * full SHA is listed in `.github/tracking-id-exemptions` (already public, accepted as is) is not
+ * judged; the list holds SHAs only and refuses any other line.
  *
  * Run from the repository root: `node .github/scripts/check-no-tracking-ids.mjs <base ref>`.
  */
 import { execFileSync } from 'node:child_process';
-import { findings, parseLog } from './tracking-ids.mjs';
+import { readFileSync } from 'node:fs';
+import { EXEMPTIONS_FILE, findings, parseExemptions, parseLog } from './tracking-ids.mjs';
 
 const base = process.argv[2];
 if (!base) {
@@ -24,7 +27,8 @@ for (const name of ['TITLE', 'BODY']) {
   if (text !== undefined) sources.push({ where: `pull request ${name.toLowerCase()}`, text });
 }
 
-const found = findings(sources);
+const exempt = parseExemptions(readFileSync(EXEMPTIONS_FILE, 'utf8'));
+const found = findings(sources, exempt);
 if (found.length) {
   for (const f of found) console.error(`::error::${f}`);
   console.error('\n  Keep internal tracking identifiers out of public history: reword the commit message (or the pull request text) without them.\n');

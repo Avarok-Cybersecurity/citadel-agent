@@ -37,14 +37,10 @@ pub enum FormatVerdict {
     Refuse(String),
 }
 
-/// Decide from what was found, without touching the filesystem.
-///
-/// Takes only the parsed marker. Whether the directory already holds data does
-/// NOT change the answer — a fresh directory and one written before the marker
-/// existed are both stamped — and threading it in anyway would have implied a
-/// distinction the code does not make. (Clippy noticed it was unused; the
-/// honest fix was to drop it, not to underscore it.)
-pub fn verdict(found: Option<u32>) -> FormatVerdict {
+/// Decide from what was found, without touching the filesystem: the parsed marker, and whether
+/// the directory already holds anything. Only an empty directory is stamped; data with no marker
+/// was written by a build before the marker, which this one does not read.
+pub fn verdict(found: Option<u32>, holds_data: bool) -> FormatVerdict {
     match found {
         Some(version) if version == AGENT_DATA_FORMAT => FormatVerdict::Proceed,
 
@@ -69,11 +65,13 @@ pub fn verdict(found: Option<u32>) -> FormatVerdict {
              INTERNAL_SERVICE_DATA_DIR at a different directory."
         )),
 
-        // No marker. Either a fresh directory, or one written before the marker
-        // existed — and the second is the common case on an upgrade, so it must
-        // not be read as "unknown format, refuse". Back-filling matches what
-        // the workspace server does for state that predates its own markers.
-        None => FormatVerdict::Stamp(AGENT_DATA_FORMAT),
+        None if !holds_data => FormatVerdict::Stamp(AGENT_DATA_FORMAT),
+
+        None => FormatVerdict::Refuse(format!(
+            "This data directory holds data but no format marker, so it was written by a              Citadel agent older than any this build reads (it writes v{AGENT_DATA_FORMAT}).
+             
+             The agent will not start rather than read it and risk misinterpreting account              and key material. Run the image that wrote it, or point              INTERNAL_SERVICE_DATA_DIR at a different directory."
+        )),
     }
 }
 
@@ -101,7 +99,8 @@ pub fn check_data_dir(dir: &Path) -> Result<(), std::io::Error> {
         Err(e) => return Err(e),
     };
 
-    match verdict(found) {
+    let holds_data = std::fs::read_dir(dir)?.next().is_some();
+    match verdict(found, holds_data) {
         FormatVerdict::Proceed => Ok(()),
         FormatVerdict::Stamp(version) => std::fs::write(&marker, version.to_string()),
         FormatVerdict::Refuse(message) => Err(std::io::Error::new(
@@ -117,25 +116,33 @@ mod tests {
 
     #[test]
     fn a_matching_version_proceeds() {
-        assert_eq!(verdict(Some(AGENT_DATA_FORMAT)), FormatVerdict::Proceed);
+        assert_eq!(verdict(Some(AGENT_DATA_FORMAT), true), FormatVerdict::Proceed);
     }
 
     #[test]
     fn a_fresh_directory_is_stamped() {
-        assert_eq!(verdict(None), FormatVerdict::Stamp(AGENT_DATA_FORMAT));
+        assert_eq!(verdict(None, false), FormatVerdict::Stamp(AGENT_DATA_FORMAT));
     }
 
     #[test]
-    fn a_directory_that_predates_the_marker_is_adopted_not_refused() {
-        // The common upgrade case. Refusing here would brick every existing
-        // agent the moment this check shipped, which is a worse bug than the
-        // one it is here to prevent.
-        assert_eq!(verdict(None), FormatVerdict::Stamp(AGENT_DATA_FORMAT));
+    fn a_directory_that_predates_the_marker_is_refused() {
+        assert!(matches!(verdict(None, true), FormatVerdict::Refuse(_)));
+    }
+
+    #[test]
+    fn data_without_a_marker_is_refused_on_disk_and_left_unstamped() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("accounts.db"), b"older agent").unwrap();
+        assert!(check_data_dir(dir.path()).is_err());
+        assert!(!dir.path().join(FORMAT_MARKER).exists());
+        let empty = tempfile::tempdir().unwrap();
+        check_data_dir(empty.path()).unwrap();
+        assert!(empty.path().join(FORMAT_MARKER).exists());
     }
 
     #[test]
     fn a_newer_format_refuses_and_says_not_to_delete_it() {
-        let FormatVerdict::Refuse(message) = verdict(Some(AGENT_DATA_FORMAT + 1)) else {
+        let FormatVerdict::Refuse(message) = verdict(Some(AGENT_DATA_FORMAT + 1), true) else {
             panic!("a newer format must refuse");
         };
         assert!(
@@ -146,13 +153,13 @@ mod tests {
 
     #[test]
     fn an_older_format_refuses_rather_than_guessing() {
-        assert!(matches!(verdict(Some(0)), FormatVerdict::Refuse(_)));
+        assert!(matches!(verdict(Some(0), true), FormatVerdict::Refuse(_)));
     }
 
     #[test]
     fn every_refusal_names_a_way_out() {
-        for found in [Some(0), Some(AGENT_DATA_FORMAT + 1)] {
-            let FormatVerdict::Refuse(message) = verdict(found) else {
+        for found in [Some(0), Some(AGENT_DATA_FORMAT + 1), None] {
+            let FormatVerdict::Refuse(message) = verdict(found, true) else {
                 panic!("expected a refusal for {found:?}");
             };
             assert!(

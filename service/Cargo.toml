@@ -42,3 +42,7 @@ libc = "0.2"
 name = "websocket_internal_service"
 path = "src/websocket_example.rs"
 required-features = ["websockets"]
+
+[dev-dependencies]
+# data_format tests write real data directories.
+tempfile = "3"

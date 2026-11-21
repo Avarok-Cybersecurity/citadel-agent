@@ -102,12 +102,11 @@ async fn a_connect_signs_in_only_the_account_on_the_server_it_names() -> Result<
         "{nobody:?}"
     );
 
-    // Naming none (a page built before the field): answered, untyped so that page can read
-    // it, telling it to reload -- not dropped to a 30-second timeout.
-    let outdated = sign_in(&mut sink, &mut stream, &name, "").await?;
+    // Naming an empty server: refused as an invalid server, and nothing signed in.
+    let empty = sign_in(&mut sink, &mut stream, &name, "").await?;
     assert!(
-        matches!(&outdated, Err((None, message)) if message.contains("Reload the page")),
-        "{outdated:?}"
+        matches!(&empty, Err((None, message)) if message.starts_with("Cannot sign in to")),
+        "{empty:?}"
     );
 
     // Naming A, however it is written: the account, signed in.

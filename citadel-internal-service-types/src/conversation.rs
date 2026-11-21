@@ -198,9 +198,8 @@ pub struct MessagePatch {
 pub struct ConversationMetadata {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub peer_cid: u64,
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript", ts(optional, type = "bigint"))]
-    pub owner_cid: Option<u64>,
+    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+    pub owner_cid: u64,
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional))]
     pub peer_username: Option<String>,

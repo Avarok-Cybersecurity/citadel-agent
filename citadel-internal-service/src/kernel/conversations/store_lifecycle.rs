@@ -3,44 +3,20 @@
 //! retention.ts and load-all-metadata.ts.
 
 use super::kv::KvResult;
-use super::store::{legacy, scoped, Store, PAGINATED_PREFIX};
+use super::store::{own_prefix, scoped, Store};
 use super::stored;
-use citadel_internal_service_types::ConversationMetadata;
 
 impl Store<'_> {
-    /// Delete the conversation, if this account may: a record stamped for it,
-    /// or an unstamped one when `include_unattributed`. Both key shapes go.
-    pub(crate) async fn delete(&self, peer: u64, include_unattributed: bool) -> KvResult<bool> {
-        let may = |m: &ConversationMetadata| match m.owner_cid {
-            None => include_unattributed,
-            Some(owner) => owner == self.own,
-        };
+    /// Delete this account's conversation with the peer; false if it has none.
+    pub(crate) async fn delete(&self, peer: u64) -> KvResult<bool> {
         let Some(metadata) = self.load_metadata(peer).await? else {
             return Ok(false);
         };
-        if !may(&metadata) {
-            return Ok(false);
-        }
         let scoped_prefix = scoped(self.own, peer);
         for number in 0..=metadata.latest_page {
             self.kv.delete(&format!("{scoped_prefix}_{number}")).await?;
         }
         self.kv.delete(&format!("{scoped_prefix}_metadata")).await?;
-        let legacy_prefix = legacy(peer);
-        let legacy_meta = match self.kv.get(&format!("{legacy_prefix}_metadata")).await? {
-            Some(bytes) => Some(stored::decode_metadata(&bytes).map_err(|e| e.0)?),
-            None => None,
-        };
-        let (legacy_pages, allowed) = match &legacy_meta {
-            Some(m) => (m.latest_page, may(m)),
-            None => (metadata.latest_page, include_unattributed),
-        };
-        if allowed {
-            for number in 0..=legacy_pages {
-                self.kv.delete(&format!("{legacy_prefix}_{number}")).await?;
-            }
-            self.kv.delete(&format!("{legacy_prefix}_metadata")).await?;
-        }
         Ok(true)
     }
 
@@ -88,19 +64,19 @@ impl Store<'_> {
         Ok(removed)
     }
 
-    /// Every conversation of this account: its own records and unstamped ones,
-    /// the account-scoped record winning over a legacy one for the same peer.
-    pub(crate) async fn list(&self) -> KvResult<Vec<ConversationMetadata>> {
-        let mut found: Vec<ConversationMetadata> = Vec::new();
-        let mut keys: Vec<String> = self
+    /// Every conversation of this account: the records under its own keys.
+    pub(crate) async fn list(
+        &self,
+    ) -> KvResult<Vec<citadel_internal_service_types::ConversationMetadata>> {
+        let mut found = Vec::new();
+        let prefix = own_prefix(self.own);
+        let keys: Vec<String> = self
             .kv
             .keys()
             .await?
             .into_iter()
-            .filter(|k| k.starts_with(PAGINATED_PREFIX) && k.ends_with("_metadata"))
+            .filter(|k| k.starts_with(&prefix) && k.ends_with("_metadata"))
             .collect();
-        // Scoped keys (with `_with_`) first, so they win the de-duplication.
-        keys.sort_by_key(|k| !k.contains("_with_"));
         for key in keys {
             let Some(bytes) = self.kv.get(&key).await? else {
                 continue;
@@ -108,10 +84,9 @@ impl Store<'_> {
             let Ok(metadata) = stored::decode_metadata(&bytes) else {
                 continue;
             };
-            let ours = metadata.owner_cid.is_none_or(|owner| owner == self.own);
-            let scoped_to_other =
-                key.contains("_with_") && !key.starts_with(&scoped(self.own, metadata.peer_cid));
-            if ours && !scoped_to_other && !found.iter().any(|m| m.peer_cid == metadata.peer_cid) {
+            if metadata.owner_cid == self.own
+                && key == format!("{}_metadata", scoped(self.own, metadata.peer_cid))
+            {
                 found.push(metadata);
             }
         }

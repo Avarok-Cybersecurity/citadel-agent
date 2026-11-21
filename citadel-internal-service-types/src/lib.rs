@@ -2021,15 +2021,13 @@ pub enum InternalServiceRequest {
         message_id: String,
         patch: Box<MessagePatch>,
     },
-    /// Delete the conversation's history. `include_unattributed` also removes a
-    /// record that predates ownership stamps (an explicit "Clear Chat History").
+    /// Delete this account's history with the peer.
     ConversationClear {
         request_id: Uuid,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         peer_cid: u64,
-        include_unattributed: bool,
     },
     ConversationList {
         request_id: Uuid,

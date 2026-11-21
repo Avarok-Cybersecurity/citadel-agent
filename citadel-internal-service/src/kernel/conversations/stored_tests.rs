@@ -60,12 +60,11 @@ fn the_agent_writes_the_same_json_the_ui_wrote() {
 }
 
 #[test]
-fn metadata_with_and_without_an_owner_stamp() {
+fn metadata_carries_its_owner_and_a_record_without_one_is_refused() {
     let owned = decode_metadata(&fixture("metadata.json")).unwrap();
-    assert_eq!((owned.peer_cid, owned.owner_cid), (2002, Some(1001)));
+    assert_eq!((owned.peer_cid, owned.owner_cid), (2002, 1001));
     assert_eq!(owned.peer_username.as_deref(), Some("bob"));
-    let unattributed = decode_metadata(&fixture("metadata-unattributed.json")).unwrap();
-    assert_eq!(unattributed.owner_cid, None);
+    assert!(decode_metadata(&fixture("metadata-unattributed.json")).is_err());
 }
 
 #[test]

@@ -114,13 +114,10 @@ async fn a_conversation_is_deleted_only_by_its_owner() {
     let s = store(&kv);
     append(&s, &message("a", PEER, 1.0, MessageStatus::Delivered)).await;
     assert!(
-        !Store { kv: &kv, own: 777 }
-            .delete(PEER, true)
-            .await
-            .unwrap(),
+        !Store { kv: &kv, own: 777 }.delete(PEER).await.unwrap(),
         "another account deleted it"
     );
-    assert!(s.delete(PEER, false).await.unwrap());
+    assert!(s.delete(PEER).await.unwrap());
     assert!(
         kv.keys().await.unwrap().is_empty(),
         "records were left behind"

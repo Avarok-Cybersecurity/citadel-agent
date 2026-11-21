@@ -1,10 +1,8 @@
 //! The storage logic is the same whatever carries its requests.
 //!
-//! The agent hosts ILM with its own channel (answering LocalDB requests
-//! in-process) where a browser uses `RequestChannel` over its socket. An
-//! account's state written through one must read back through the other, so
-//! the keys and encodings are pinned here through a channel that is a plain
-//! map -- the shape of the agent's store, with no socket.
+//! The agent hosts ILM with its own channel, answering LocalDB requests
+//! in-process. The keys and encodings are pinned here through a channel that
+//! is a plain map -- the shape of the agent's store, with no socket.
 
 use super::*;
 use citadel_internal_service_types::{

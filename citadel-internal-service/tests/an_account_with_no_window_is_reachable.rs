@@ -8,19 +8,18 @@
 //! The agent now answers for an account it hosts, by the UI's rules.
 //!
 //! Over the real SDK: two agents on one in-process server, registered to each
-//! other. `B` is hosted (its window declared `agent_ilm`); its window never
+//! other. Both are hosted, as every signed-in account is; `B`'s window never
 //! answers anything.
 use citadel_internal_service_test_common as common;
 
 #[cfg(test)]
 mod tests {
-    use crate::common::agent_ilm::declare_agent_ilm;
+    use crate::common::agent_ilm::{pause, require_level};
     use crate::common::setup_log;
     use crate::common::turn_harness::{next_matching, two_registered_agents};
     use crate::common::PeerReturnHandle;
     use citadel_internal_service_types::{
-        AccountPreferences, ChatSecurityLevel, InternalServiceRequest, InternalServiceResponse,
-        PeerSecurityMinimum,
+        ChatSecurityLevel, InternalServiceRequest, InternalServiceResponse,
     };
     use citadel_sdk::prelude::*;
     use std::error::Error;
@@ -45,14 +44,6 @@ mod tests {
             peer_session_password: None,
             turn: None,
         }
-    }
-
-    async fn host(agent: &mut PeerReturnHandle) {
-        agent.0.send(declare_agent_ilm()).unwrap();
-        next_matching(&mut agent.1, "AgentCapabilities", |r| {
-            matches!(r, InternalServiceResponse::AgentCapabilities(_)).then_some(())
-        })
-        .await;
     }
 
     /// What the initiator's PeerConnect came to: Ok on a channel, Err on a refusal.
@@ -93,7 +84,6 @@ mod tests {
     async fn an_account_with_every_window_closed_accepts_a_connect() -> Result<(), Box<dyn Error>> {
         setup_log();
         let mut agents = two_registered_agents().await?;
-        host(&mut agents[1]).await;
         let (cid_a, cid_b) = (agents[0].2, agents[1].2);
         drop(agents.pop()); // B's window closes; the session stays signed in.
 
@@ -110,21 +100,9 @@ mod tests {
         setup_log();
         let mut agents = two_registered_agents().await?;
         let ((tx_a, rx_a, cid_a), b) = split(&mut agents);
-        host(b).await;
         tx_a.send(peer_connect(*cid_a, b.2, SecurityLevel::Standard))?;
         assert!(answered_by_agent(&mut b.1).await);
         outcome(rx_a, b.2).await?;
-        Ok(())
-    }
-
-    /// An account the agent does not host is still the window's to answer.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn an_unhosted_account_leaves_the_answer_to_its_window() -> Result<(), Box<dyn Error>> {
-        setup_log();
-        let mut agents = two_registered_agents().await?;
-        let ((tx_a, _, cid_a), b) = split(&mut agents);
-        tx_a.send(peer_connect(*cid_a, b.2, SecurityLevel::Standard))?;
-        assert!(!answered_by_agent(&mut b.1).await);
         Ok(())
     }
 
@@ -134,14 +112,7 @@ mod tests {
         setup_log();
         let mut agents = two_registered_agents().await?;
         let ((tx_a, rx_a, cid_a), b) = split(&mut agents);
-        host(b).await;
-        b.0.send(InternalServiceRequest::LocalDBSetKV {
-            request_id: Uuid::new_v4(),
-            cid: b.2,
-            peer_cid: None,
-            key: format!("p2p_paused_peer_{cid_a}"),
-            value: b"paused".to_vec(),
-        })?;
+        b.0.send(pause(b.2, *cid_a))?;
         next_matching(&mut b.1, "LocalDBSetKVSuccess", |r| {
             matches!(r, InternalServiceResponse::LocalDBSetKVSuccess(_)).then_some(())
         })
@@ -160,19 +131,7 @@ mod tests {
         setup_log();
         let mut agents = two_registered_agents().await?;
         let ((tx_a, rx_a, cid_a), b) = split(&mut agents);
-        host(b).await;
-        let preferences = AccountPreferences {
-            security_minimums: vec![PeerSecurityMinimum {
-                peer_cid: *cid_a,
-                level: ChatSecurityLevel::Reinforced,
-            }],
-            ..AccountPreferences::UI_DEFAULTS
-        };
-        b.0.send(InternalServiceRequest::SetAccountPreferences {
-            request_id: Uuid::new_v4(),
-            cid: b.2,
-            preferences: Box::new(preferences),
-        })?;
+        b.0.send(require_level(b.2, *cid_a, ChatSecurityLevel::Reinforced))?;
         next_matching(&mut b.1, "AccountPreferencesResponse", |r| {
             matches!(r, InternalServiceResponse::AccountPreferencesResponse(_)).then_some(())
         })
@@ -195,8 +154,6 @@ mod tests {
         setup_log();
         let mut agents = two_registered_agents().await?;
         let (a, b) = split(&mut agents);
-        host(a).await;
-        host(b).await;
         a.0.send(peer_connect(a.2, b.2, SecurityLevel::Standard))?;
         b.0.send(peer_connect(b.2, a.2, SecurityLevel::Standard))?;
         let (at_a, at_b) = tokio::join!(outcome(&mut a.1, b.2), outcome(&mut b.1, a.2));

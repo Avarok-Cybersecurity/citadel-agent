@@ -222,10 +222,6 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
         };
 
-        if let Some(refused) = this.refuse_older_connect(authorized, cid, uuid, request_id) {
-            cleanup_username(this, &username);
-            return Some(refused);
-        }
         match sign_in::on_sign_in(tracked, authorized) {
             SignIn::Refuse => {
                 citadel_sdk::logging::warn!(target: "citadel", "[Connect] REFUSED reuse of session {} for user {}: the password does not match the one that opened it", cid, username);
@@ -246,7 +242,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             SignIn::AlreadyActive => {
                 citadel_sdk::logging::info!(target: "citadel", "[Connect] Session {} already active for user {} - returning SessionAlreadyActive", cid, username);
                 crate::kernel::membership::take_over(this, cid, uuid);
-                this.host_ilm_for(cid, uuid).await;
+                this.host_ilm_for(cid).await;
                 // Lets the frontend handle it gracefully (e.g. redirect to the workspace).
                 let response = InternalServiceResponse::SessionAlreadyActive(
                     citadel_internal_service_types::SessionAlreadyActive {
@@ -563,7 +559,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             // A recovery session may not message or store: the server drops both, so no ILM is
             // hosted, and a re-key after a phrase regeneration waits for a full session.
             if scope == SessionScope::Full {
-                this.host_ilm_for(cid, uuid).await;
+                this.host_ilm_for(cid).await;
                 revfs_seed::resume(this, cid);
             }
             // Off the Connect's path: the answer to the window must not wait on the server.

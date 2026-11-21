@@ -8,7 +8,7 @@ use citadel_internal_service::{SupervisorPolicy, SERVER_RECONNECT};
 use citadel_internal_service_connector::connector::WrappedSink;
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
 use citadel_internal_service_test_common as common;
-use citadel_internal_service_test_common::agent_ilm::declare_agent_ilm;
+use citadel_internal_service_test_common::agent_ilm::declaration;
 use citadel_internal_service_test_common::node_settings::TestNode;
 use citadel_internal_service_types::{
     AgentCapabilities, ConfigCommand, InternalServiceRequest, InternalServiceResponse,
@@ -69,9 +69,9 @@ pub async fn spawn_agent(
     ))
 }
 
-/// Declares the window hosted, and returns what the agent says it does.
+/// Declares the window's capabilities, and returns what the agent says it does.
 pub async fn declare(window: &mut (WrappedSink<TcpIOInterface>, Stream)) -> AgentCapabilities {
-    common::send(&mut window.0, declare_agent_ilm())
+    common::send(&mut window.0, declaration())
         .await
         .expect("the agent is up");
     expect(&mut window.1, |r| match r {

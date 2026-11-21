@@ -63,9 +63,9 @@ pub mod supervisor;
 use reconnect::policy::ReconnectPolicy;
 pub(crate) mod account_server;
 pub(crate) mod attach_tokens;
+mod hosted_records;
 pub(crate) mod membership;
 mod membership_hosting;
-mod migration_guard;
 pub mod notices;
 pub mod p2p_kex;
 pub(crate) mod private_file;
@@ -129,8 +129,7 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) reconnect_policy: ReconnectPolicy,
     /// Sessions a reconnect gave up on, until they sign in again (reconnect/signed_out.rs).
     pub(crate) signed_out: reconnect::signed_out::SignedOut,
-    /// The ILM the agent hosts per account, for clients that declared
-    /// `agent_ilm` (kernel/ilm).
+    /// The ILM the agent hosts for every signed-in account (kernel/ilm).
     pub(crate) ilm_hosts: Arc<ilm::IlmRegistry>,
     /// How the agent keeps each hosted account's links alive (kernel/supervisor); `None`
     /// is a service that does not supervise, and so does not declare `supervises_p2p`.

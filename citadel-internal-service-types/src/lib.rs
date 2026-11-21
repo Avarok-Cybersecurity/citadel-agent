@@ -334,55 +334,33 @@ pub struct ServiceConnectionAccepted {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
     pub request_id: Option<Uuid>,
-    /// This agent hosts a session's ILM and conversations for a connection that
-    /// declares `agent_ilm` (multi-window, 0.8.6). Said in the greeting, the
-    /// first thing on every socket, so a client knows at once whether to
-    /// declare: an older agent does not answer a declaration at all. Its
-    /// greeting has no such field, which is what `false` means here.
-    #[serde(default)]
-    pub agent_ilm: bool,
     /// This agent supervises its hosted accounts' peer connections (redialling them with
     /// no window open), so a window must not auto-connect for them: it sends
-    /// `ConfigCommand::Interest` instead. Absent from an older agent's greeting, which is
-    /// what `false` means.
-    #[serde(default)]
+    /// `ConfigCommand::Interest` instead.
     pub supervises_p2p: bool,
     /// This agent stages a browser file in chunks (`StageUploadChunk`) and sends it with
-    /// `FileSource::StagedUpload`, up to its staging ceiling. Absent from an older agent's
-    /// greeting, which is what `false` means: such an agent takes a browser file only
-    /// inline, as `ByteContents`, up to 16 MiB.
-    #[serde(default)]
+    /// `FileSource::StagedUpload`, up to its staging ceiling.
     pub stages_uploads: bool,
     /// This agent can open a native file dialog (`PickFile`). A build without the
     /// `native-dialogs` feature refuses every `PickFile`, so a UI that knows this up front
-    /// shows its in-page picker instead of a button that cannot work. Absent from an older
-    /// agent's greeting, which is what `false` means.
-    #[serde(default)]
+    /// shows its in-page picker instead of a button that cannot work.
     pub native_picker: bool,
     /// This agent takes a window's console lines (`BrowserConsole`) into the session's opt-in
-    /// diagnostic logs. Absent from an older agent's greeting, which is what `false` means: a
-    /// window never sends that agent a request it cannot parse.
-    #[serde(default)]
+    /// diagnostic logs.
     pub browser_console: bool,
     /// This agent answers the Citadel apps requests (`AppFetch`, `AppKv`, `IhttpSend` and
-    /// their companions). Absent from an older agent's greeting, which is what `false` means:
-    /// a window never sends that agent a request it cannot parse.
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript", ts(as = "Option<bool>", optional))]
+    /// their companions).
     pub apps: bool,
     /// This agent's `TYPES_HASH`. A page compares it with its WASM client's and,
     /// when they differ, says the two are out of step before anything fails to
-    /// decode. Absent from an agent older than the field; the page then cannot
-    /// tell, and says that instead.
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
-    pub types_hash: Option<String>,
+    /// decode.
+    pub types_hash: String,
 }
 
 impl ServiceConnectionAccepted {
-    /// What this agent says first on every socket: it hosts (0.8.6), stages browser
-    /// uploads, supervises peer connections when `supervises_p2p`, and offers a native
-    /// file dialog when `native_picker`, and takes console lines when `browser_console`.
+    /// What this agent says first on every socket: it stages browser uploads, supervises
+    /// peer connections when `supervises_p2p`, offers a native file dialog when
+    /// `native_picker`, and takes console lines when `browser_console`.
     pub fn greeting(
         connection: Uuid,
         supervises_p2p: bool,
@@ -392,13 +370,12 @@ impl ServiceConnectionAccepted {
         InternalServiceResponse::ServiceConnectionAccepted(Self {
             cid: 0,
             request_id: Some(connection),
-            agent_ilm: true,
             supervises_p2p,
             stages_uploads: true,
             native_picker,
             browser_console,
             apps: true,
-            types_hash: Some(TYPES_HASH.to_string()),
+            types_hash: TYPES_HASH.to_string(),
         })
     }
 }

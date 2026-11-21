@@ -23,6 +23,7 @@ use citadel_internal_service_test_common as common;
 
 #[cfg(test)]
 mod tests {
+    use crate::common::agent_ilm::{answered, pause};
     use crate::common::group::recv_until;
     use crate::common::{setup_log, two_sessions_on_one_service};
     use citadel_internal_service_types::{
@@ -121,7 +122,13 @@ mod tests {
             other => panic!("unexpected {other:?}"),
         }
 
-        // B's auto-connect redials; A (paused) declines every time it is asked.
+        let paused = answered(&tx_a, &mut rx_a, pause(cid_a, cid_b)).await;
+        assert!(
+            matches!(paused, InternalServiceResponse::LocalDBSetKVSuccess(_)),
+            "{paused:?}"
+        );
+
+        // B's auto-connect redials; A's agent declines every time.
         // Each attempt must fail, and none may find the channel still up.
         for attempt in 0..3 {
             let dial_id: Uuid = Uuid::new_v4();
@@ -135,26 +142,15 @@ mod tests {
                 peer_session_password: None,
                 turn: None,
             })?;
-            // A declines if asked; B's answer may also come without A being asked.
+            // A's agent answers each offer; A's window must not have to.
             let dialled: InternalServiceResponse = tokio::time::timeout(Duration::from_secs(60), async {
                 loop {
                     tokio::select! {
                         Some(r) = rx_a.recv() => {
                             if let InternalServiceResponse::PeerConnectNotification(n) = &r {
-                                info!(target: "citadel", "[test] redial {attempt}: A asked, declining");
-                                tx_a.send(InternalServiceRequest::PeerConnectAccept {
-                                    request_id: Uuid::new_v4(),
-                                    cid: cid_a,
-                                    peer_cid: n.peer_cid,
-                                    accept: false,
-                                    udp_mode: Default::default(),
-                                    session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
-                                    peer_session_password: None,
-                                    turn: None,
-                                }).expect("A's service is up");
-                            } else {
-                                info!(target: "citadel", "[test] A got {r:?}");
+                                assert!(n.answered_by_agent, "redial {attempt}: left to A's window");
                             }
+                            info!(target: "citadel", "[test] A got {r:?}");
                         }
                         Some(r) = rx_b.recv() => match &r {
                             InternalServiceResponse::PeerConnectFailure(f) if f.request_id == Some(dial_id) => return r,

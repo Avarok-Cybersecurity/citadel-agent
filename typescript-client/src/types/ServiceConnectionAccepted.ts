@@ -2,50 +2,35 @@
 
 export type ServiceConnectionAccepted = { cid: bigint, request_id: string | null, 
 /**
- * This agent hosts a session's ILM and conversations for a connection that
- * declares `agent_ilm` (multi-window, 0.8.6). Said in the greeting, the
- * first thing on every socket, so a client knows at once whether to
- * declare: an older agent does not answer a declaration at all. Its
- * greeting has no such field, which is what `false` means here.
- */
-agent_ilm: boolean, 
-/**
  * This agent supervises its hosted accounts' peer connections (redialling them with
  * no window open), so a window must not auto-connect for them: it sends
- * `ConfigCommand::Interest` instead. Absent from an older agent's greeting, which is
- * what `false` means.
+ * `ConfigCommand::Interest` instead.
  */
 supervises_p2p: boolean, 
 /**
  * This agent stages a browser file in chunks (`StageUploadChunk`) and sends it with
- * `FileSource::StagedUpload`, up to its staging ceiling. Absent from an older agent's
- * greeting, which is what `false` means: such an agent takes a browser file only
- * inline, as `ByteContents`, up to 16 MiB.
+ * `FileSource::StagedUpload`, up to its staging ceiling.
  */
 stages_uploads: boolean, 
 /**
  * This agent can open a native file dialog (`PickFile`). A build without the
  * `native-dialogs` feature refuses every `PickFile`, so a UI that knows this up front
- * shows its in-page picker instead of a button that cannot work. Absent from an older
- * agent's greeting, which is what `false` means.
+ * shows its in-page picker instead of a button that cannot work.
  */
 native_picker: boolean, 
 /**
  * This agent takes a window's console lines (`BrowserConsole`) into the session's opt-in
- * diagnostic logs. Absent from an older agent's greeting, which is what `false` means: a
- * window never sends that agent a request it cannot parse.
+ * diagnostic logs.
  */
 browser_console: boolean, 
 /**
  * This agent answers the Citadel apps requests (`AppFetch`, `AppKv`, `IhttpSend` and
- * their companions). Absent from an older agent's greeting, which is what `false` means:
- * a window never sends that agent a request it cannot parse.
+ * their companions).
  */
-apps?: boolean, 
+apps: boolean, 
 /**
  * This agent's `TYPES_HASH`. A page compares it with its WASM client's and,
  * when they differ, says the two are out of step before anything fails to
- * decode. Absent from an agent older than the field; the page then cannot
- * tell, and says that instead.
+ * decode.
  */
-types_hash?: string | null, };
+types_hash: string, };

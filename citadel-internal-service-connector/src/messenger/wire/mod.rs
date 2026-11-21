@@ -2,15 +2,14 @@
 //!
 //! Three shapes, and which one a peer receives is decided by ILM, never here:
 //!
-//! * `WireWrapper::Message` -- the legacy data frame. Sent whenever ILM asks
-//!   for no extensions, so with every option off the wire is byte-identical
-//!   to a build that predates them.
-//! * `WireWrapper::ISMAux` -- the legacy Ack/Poll frame, optionally followed
-//!   by an advertisement that legacy peers do not read (see `advertisement`).
+//! * `WireWrapper::Message` -- the plain data frame: no piggybacked ACK, no
+//!   compression. Sent before a peer has advertised, and whenever compression
+//!   does not pay and nothing rides along, because it is the smaller frame.
+//! * `WireWrapper::ISMAux` -- an Ack or Poll, always followed by the sender's
+//!   capability advertisement (see `advertisement`). One without it is refused.
 //! * `WireWrapper::MessageV2` -- a data frame with a piggybacked ACK and/or
-//!   compressed contents. A legacy peer cannot decode it and would hand the
-//!   bytes to its UI as a plain message, which is why ILM produces it only
-//!   for a peer that has advertised everything it uses.
+//!   compressed contents, sent only to a peer that has advertised everything
+//!   it uses.
 
 mod advertisement;
 mod decode;
@@ -39,8 +38,8 @@ pub enum WireWrapper {
     ISMAux {
         signal: Box<InternalMessage>,
     },
-    /// Appended, never inserted: bincode tags variants by index, so the two
-    /// above keep the encodings every deployed peer already reads.
+    /// Appended, never inserted: bincode tags variants by index, and the
+    /// indices are the wire format (`wire/tests/variant_indices.rs`).
     MessageV2 {
         source: u64,
         destination: u64,
@@ -137,7 +136,7 @@ fn data_request(
             };
             if encoded.codec == Codec::Identity && piggybacked_ack.is_none() {
                 // Compression did not pay and nothing else rides along: the
-                // legacy frame is smaller and says exactly the same thing.
+                // plain frame is smaller and says exactly the same thing.
                 WireWrapper::Message {
                     source: source_id,
                     destination: destination_id,
@@ -177,9 +176,15 @@ fn control_request(
 ) -> Result<InternalServiceRequest, EncodeError> {
     let cid = control.source_id();
     let peer_cid = control.destination_id();
-    let advertised = match extensions {
-        FrameExtensions::None => None,
-        FrameExtensions::Advertise(capabilities) => Some(capabilities),
+    let capabilities = match extensions {
+        FrameExtensions::Advertise(capabilities) => capabilities,
+        // A peer refuses an Ack or Poll that does not advertise, so one is
+        // never sent: an ILM configured to advertise nothing is a defect.
+        FrameExtensions::None => {
+            return Err(EncodeError::Unencodable(
+                "an Ack or Poll carries no capability advertisement".to_string(),
+            ))
+        }
         FrameExtensions::Negotiated { .. } => {
             return Err(EncodeError::Unencodable(
                 "an Ack or Poll carries data-frame extensions".to_string(),
@@ -189,9 +194,7 @@ fn control_request(
     let mut bytes = serialize(&WireWrapper::ISMAux {
         signal: Box::new(control),
     })?;
-    if let Some(capabilities) = advertised {
-        advertisement::append(&mut bytes, capabilities);
-    }
+    advertisement::append(&mut bytes, capabilities);
     Ok(InternalServiceRequest::Message {
         request_id: Uuid::new_v4(),
         message: bytes,

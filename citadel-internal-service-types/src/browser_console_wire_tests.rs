@@ -1,6 +1,5 @@
-//! A window forwards console lines only to an agent whose greeting offers it, so an older
-//! agent -- whose greeting never mentions it -- must read as "no", and the request must keep
-//! its JSON shape (the agent's WebSocket speaks JSON).
+//! A window forwards console lines only to an agent whose greeting offers it, and the request
+//! must keep its JSON shape (the agent's WebSocket speaks JSON).
 
 use crate::{
     BrowserConsoleEntry, BrowserConsoleSource, InternalServicePayload, InternalServiceRequest,
@@ -21,13 +20,6 @@ fn greeting(browser_console: bool) -> ServiceConnectionAccepted {
 fn the_greeting_offers_console_capture_only_when_told() {
     assert!(greeting(true).browser_console);
     assert!(!greeting(false).browser_console);
-}
-
-#[test]
-fn an_older_agent_s_greeting_does_not_offer_it() {
-    let older = r#"{"cid":0,"request_id":null,"agent_ilm":true,"stages_uploads":true}"#;
-    let greeting: ServiceConnectionAccepted = serde_json::from_str(older).unwrap();
-    assert!(!greeting.browser_console);
 }
 
 #[test]

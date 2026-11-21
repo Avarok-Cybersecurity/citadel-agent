@@ -1,93 +1,82 @@
-//! Two agents on one server, P2P-connected: Alice's agent hosts her ILM, Bob's
-//! window runs ILM itself (the browser's messenger, natively).
+//! Two agents on one server, P2P-connected. Each hosts its account's ILM, as
+//! every agent does for every signed-in account; neither window declares.
 
 use crate::group::recv_until;
 use crate::{
     connect_every_pair, get_free_port, server_info_skip_cert_verification,
     services_connected_to_server_at, PeerHandle,
 };
-use citadel_internal_service_connector::connector::InternalServiceConnector;
-use citadel_internal_service_connector::io_interface::in_memory::InMemoryInterface;
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
-use citadel_internal_service_connector::messenger::backend::CitadelWorkspaceBackend;
-use citadel_internal_service_connector::messenger::{
-    CitadelWorkspaceMessenger, IlmOptions, MessengerTx,
-};
 use citadel_internal_service_types::{
-    ClientCapabilities, ConfigCommand, InternalServiceRequest, InternalServiceResponse,
-    SecurityLevel,
+    AccountPreferences, ChatSecurityLevel, ClientCapabilities, ConfigCommand,
+    ConversationEventKind, ConversationMessage, InternalServiceRequest, InternalServiceResponse,
+    MessageType, PeerSecurityMinimum, SecurityLevel,
 };
 use citadel_sdk::prelude::StackedRatchet;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
-pub type BrowserTx = MessengerTx<CitadelWorkspaceBackend>;
-
-pub struct BrowserSide {
-    pub messenger: CitadelWorkspaceMessenger<CitadelWorkspaceBackend>,
-    pub tx: BrowserTx,
-    pub rx: UnboundedReceiver<InternalServiceResponse>,
-    pub cid: u64,
-    /// Raw bytes of every peer message Bob's agent handed his window.
-    pub arrived: Arc<Mutex<Vec<Vec<u8>>>>,
-}
-
-pub struct MixedHosting {
-    pub alice_addr: SocketAddr,
-    pub alice: PeerHandle,
-    pub bob: BrowserSide,
-}
-
-pub fn declare_agent_ilm() -> InternalServiceRequest {
+/// What a window that hosts no Citadel apps declares. Nothing about hosting:
+/// the agent hosts every account's ILM whether or not a window declares.
+pub fn declaration() -> InternalServiceRequest {
     InternalServiceRequest::ConnectionManagement {
         request_id: Uuid::new_v4(),
         management_command: ConfigCommand::DeclareCapabilities {
-            capabilities: ClientCapabilities {
-                agent_ilm: true,
-                ihttp: false,
-            },
+            capabilities: ClientCapabilities { ihttp: false },
         },
     }
 }
 
-/// Declare on a new window that the agent hosts its sessions' ILM, and wait for
-/// the answer, as the web UI does: requests are handled in parallel, so a claim
-/// sent straight after could overtake the declaration and be refused.
-pub async fn declared(window: &mut crate::multi_window::Window) {
-    window
-        .0
-        .send(declare_agent_ilm())
-        .expect("the window is open");
-    recv_until(&mut window.1, "capabilities", |r| {
-        matches!(r, InternalServiceResponse::AgentCapabilities(_))
-    })
-    .await;
+/// `cid` pauses `peer` as the UI's "Pause connection" does: a record the
+/// agent, which answers `cid`'s offers, reads before each answer.
+pub fn pause(cid: u64, peer: u64) -> InternalServiceRequest {
+    InternalServiceRequest::LocalDBSetKV {
+        request_id: Uuid::new_v4(),
+        cid,
+        peer_cid: None,
+        key: format!("p2p_paused_peer_{peer}"),
+        value: b"paused".to_vec(),
+    }
 }
 
-/// Declare on `alice`'s window that the agent hosts her ILM, and wait for the answer.
-pub async fn host_alice(alice: &mut PeerHandle) {
-    alice.0.send(declare_agent_ilm()).expect("alice open");
-    recv_until(&mut alice.1, "capabilities", |r| {
-        matches!(r, InternalServiceResponse::AgentCapabilities(_))
-    })
-    .await;
+/// `cid` requires at least `level` of `peer`; the agent declines a lower offer.
+pub fn require_level(cid: u64, peer: u64, level: ChatSecurityLevel) -> InternalServiceRequest {
+    let preferences = AccountPreferences {
+        security_minimums: vec![PeerSecurityMinimum {
+            peer_cid: peer,
+            level,
+        }],
+        ..AccountPreferences::UI_DEFAULTS
+    };
+    InternalServiceRequest::SetAccountPreferences {
+        request_id: Uuid::new_v4(),
+        cid,
+        preferences: Box::new(preferences),
+    }
 }
 
-pub async fn mixed_hosting(bob_options: IlmOptions) -> MixedHosting {
+/// Send `request` and wait for the answer carrying its id.
+pub async fn answered(
+    tx: &UnboundedSender<InternalServiceRequest>,
+    rx: &mut UnboundedReceiver<InternalServiceResponse>,
+    request: InternalServiceRequest,
+) -> InternalServiceResponse {
+    let id = *request.request_id().expect("a request id");
+    tx.send(request).expect("the window is open");
+    recv_until(rx, "the answer", |r| r.request_id() == Some(&id)).await
+}
+
+pub struct HostedPair {
+    pub alice_addr: SocketAddr,
+    pub alice: PeerHandle,
+    pub bob: PeerHandle,
+}
+
+pub async fn hosted_pair() -> HostedPair {
     let (server, server_addr) = server_info_skip_cert_verification::<StackedRatchet>();
     tokio::task::spawn(server);
-    mixed_hosting_reaching(server_addr, bob_options).await
-}
-
-/// As [`mixed_hosting`], against a server the caller runs at `server_addr`; both accounts
-/// (`peer.0` on Alice's agent, `peer.1` on Bob's) are registered to it.
-pub async fn mixed_hosting_reaching(
-    server_addr: SocketAddr,
-    bob_options: IlmOptions,
-) -> MixedHosting {
     let addresses: Vec<SocketAddr> = (0..2)
         .map(|_| {
             format!("127.0.0.1:{}", get_free_port())
@@ -105,65 +94,29 @@ pub async fn mixed_hosting_reaching(
     let mut handles = connect_every_pair(services, None, Default::default())
         .await
         .expect("two connected peers");
-    let (bob_to_service, bob_from_service, bob_cid) = handles.remove(1);
-    let mut alice = handles.remove(0);
-
-    let arrived = Arc::new(Mutex::new(Vec::new()));
-    let observed = {
-        let (tx, rx) = unbounded_channel();
-        let arrived = arrived.clone();
-        let mut from = bob_from_service;
-        tokio::spawn(async move {
-            while let Some(response) = from.recv().await {
-                if let InternalServiceResponse::MessageNotification(n) = &response {
-                    arrived.lock().expect("lock").push(n.message.clone());
-                }
-                if tx.send(response).is_err() {
-                    return;
-                }
-            }
-        });
-        rx
-    };
-    let io = InMemoryInterface::from_request_response_pair(bob_to_service, observed);
-    let connector = InternalServiceConnector::from_io(io)
-        .await
-        .expect("connector");
-    let (messenger, rx) = CitadelWorkspaceMessenger::new(connector, bob_options);
-    let tx = messenger.multiplex(bob_cid).await.expect("multiplex");
-    tx.wait_for_peer_to_connect(alice.2)
-        .await
-        .expect("bob sees alice");
-
-    host_alice(&mut alice).await;
-    MixedHosting {
+    let bob = handles.remove(1);
+    let alice = handles.remove(0);
+    HostedPair {
         alice_addr: addresses[0],
         alice,
-        bob: BrowserSide {
-            messenger,
-            tx,
-            rx,
-            cid: bob_cid,
-            arrived,
-        },
+        bob,
     }
 }
 
-/// Alice sends through her agent's ILM; `Ok` once ILM has the message.
-pub async fn alice_sends(alice: &mut PeerHandle, bob: u64, body: &[u8]) {
+/// `from` sends through its agent's ILM; returns once ILM has the message.
+pub async fn sends(from: &mut PeerHandle, to: u64, body: &[u8]) {
     let request_id = Uuid::new_v4();
-    alice
-        .0
+    from.0
         .send(InternalServiceRequest::SendReliable {
             request_id,
-            cid: alice.2,
-            peer_cid: bob,
+            cid: from.2,
+            peer_cid: to,
             message: body.to_vec(),
             security_level: SecurityLevel::Standard,
             compression_hint: Some("text".to_string()),
         })
-        .expect("alice open");
-    let answer = recv_until(&mut alice.1, "the send's answer", |r| {
+        .expect("the window is open");
+    let answer = recv_until(&mut from.1, "the send's answer", |r| {
         r.request_id() == Some(&request_id)
     })
     .await;
@@ -202,27 +155,38 @@ pub async fn quiet(
     seen
 }
 
-/// The username the agent at `addr` holds `cid` under, asked as any page would.
-pub async fn username_of(addr: SocketAddr, cid: u64) -> String {
-    let mut window = crate::open_localhost_connection(addr)
-        .await
-        .expect("a window");
+/// A text `ConversationSend` from `cid` to `peer`, and the request id it carries.
+pub fn conversation_send(cid: u64, peer: u64, content: &str) -> (Uuid, InternalServiceRequest) {
     let request_id = Uuid::new_v4();
-    window
-        .0
-        .send(InternalServiceRequest::GetSessions { request_id })
-        .expect("open");
-    match recv_until(&mut window.1, "sessions", |r| {
-        r.request_id() == Some(&request_id)
+    let request = InternalServiceRequest::ConversationSend {
+        request_id,
+        cid,
+        peer_cid: peer,
+        content: content.into(),
+        message_type: MessageType::Text,
+        reply_to: None,
+        mentions: None,
+        attachments: None,
+        document_id: None,
+        document_title: None,
+        security_level: SecurityLevel::Standard,
+    };
+    (request_id, request)
+}
+
+/// The next `ConversationEvent` of `kind` on `rx` whose message passes `keep`.
+pub async fn event_of(
+    rx: &mut UnboundedReceiver<InternalServiceResponse>,
+    kind: ConversationEventKind,
+    keep: impl Fn(&ConversationMessage) -> bool,
+) -> ConversationMessage {
+    let event = recv_until(rx, "the event", |r| {
+        matches!(r, InternalServiceResponse::ConversationEvent(e)
+            if e.kind == kind && e.message.as_ref().is_some_and(&keep))
     })
-    .await
-    {
-        InternalServiceResponse::GetSessionsResponse(sessions) => sessions
-            .sessions
-            .into_iter()
-            .find(|s| s.cid == cid)
-            .map(|s| s.username)
-            .expect("the session is listed"),
-        other => panic!("no session list: {other:?}"),
-    }
+    .await;
+    let InternalServiceResponse::ConversationEvent(event) = event else {
+        unreachable!()
+    };
+    event.message.expect("the message")
 }

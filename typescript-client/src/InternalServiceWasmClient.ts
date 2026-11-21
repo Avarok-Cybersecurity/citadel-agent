@@ -14,10 +14,11 @@ import { loadWasmModule } from './wasm-module.js';
 // WASM module will be loaded dynamically
 
 /**
- * What a reliable P2P payload is, so the WASM client can decide whether to
- * compress it. "json", "text" and "yjs-update" are compressed toward a peer
- * that supports it; "opaque" and "cbor-command" are sent as they are. The WASM
- * client rejects any other string. Omit it and nothing is compressed.
+ * What a reliable P2P payload is, so the agent's ILM can decide whether to
+ * compress it (`SendReliable { compression_hint }`). "json", "text" and
+ * "yjs-update" are compressed toward a peer that supports it; "opaque" and
+ * "cbor-command" are sent as they are. The agent refuses any other string.
+ * Omit it and nothing is compressed.
  */
 export type CompressionHint = 'opaque' | 'text' | 'json' | 'yjs-update' | 'cbor-command';
 
@@ -31,7 +32,6 @@ export interface WasmModule {
     open_p2p_connection(cid: string): Promise<void>;
     next_message(): Promise<any>;
     send_p2p_message(cid: string, message: any): Promise<void>;
-    send_p2p_message_reliable(localCid: string, peerCid: string, message: Uint8Array, securityLevel: string | null, compressionHint?: string | null): Promise<void>;
     send_direct_to_internal_service(message: any): Promise<void>;
     close_connection(): Promise<void>;
     /** ML-DSA-65 app signature check (citadel-app-signature); needs no connection. */
@@ -219,33 +219,6 @@ export class InternalServiceWasmClient {
         };
 
         await this.wasmModule!.send_p2p_message(peerCidStr, messageRequest);
-    }
-
-    /**
-     * Send a reliable P2P message using ISM layer for guaranteed delivery.
-     * This method uses the ISM (InterSession Messaging) layer instead of bypassing it.
-     * @param localCid - The local user's CID
-     * @param peerCid - The target peer's CID
-     * @param message - The message bytes to send
-     * @param securityLevel - Optional security level: 'Standard', 'Reinforced', 'High', or 'Extreme'
-     * @param compressionHint - Optional: what `message` is; see `CompressionHint`. Omitted means no compression.
-     */
-    async sendP2PMessageReliable(
-        localCid: string,
-        peerCid: string,
-        message: Uint8Array,
-        securityLevel?: 'Standard' | 'Reinforced' | 'High' | 'Extreme',
-        compressionHint?: CompressionHint
-    ): Promise<void> {
-        this.ensureInitialized();
-
-        await this.wasmModule!.send_p2p_message_reliable(
-            localCid,
-            peerCid,
-            message,
-            securityLevel || null,
-            compressionHint ?? null
-        );
     }
 
     /**

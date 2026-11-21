@@ -593,35 +593,39 @@ pub async fn connect_p2p_with_turn(
 
     // Service B Receives Connect Request from Service A
     let inbound_response = from_service_b.recv().await.unwrap();
-    match inbound_response {
+    let answered_by_agent = match inbound_response {
         InternalServiceResponse::PeerConnectNotification(PeerConnectNotification {
             cid,
             peer_cid,
             session_security_settings: _,
             udp_mode: _,
             request_id: _,
-            answered_by_agent: _,
+            answered_by_agent,
         }) => {
             assert_eq!(cid, cid_b);
             assert_eq!(peer_cid, cid_a);
+            answered_by_agent
         }
         _ => {
             panic!("Peer B didn't get the PeerConnectNotification");
         }
-    }
+    };
 
-    // Service B Sends Connect Request to Accept
-    to_service_b
-        .send(InternalServiceRequest::PeerConnect {
-            request_id: Uuid::new_v4(),
-            cid: cid_b,
-            peer_cid: cid_a,
-            udp_mode,
-            session_security_settings,
-            peer_session_password: session_password,
-            turn: turn_b,
-        })
-        .unwrap();
+    // Service B's window accepts, unless B's agent answers the offer itself: a window
+    // answering too would race the agent's own answer.
+    if !answered_by_agent {
+        to_service_b
+            .send(InternalServiceRequest::PeerConnect {
+                request_id: Uuid::new_v4(),
+                cid: cid_b,
+                peer_cid: cid_a,
+                udp_mode,
+                session_security_settings,
+                peer_session_password: session_password,
+                turn: turn_b,
+            })
+            .unwrap();
+    }
 
     // Receive Connect Success Responses
     let mut paths = Vec::with_capacity(2);

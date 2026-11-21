@@ -15,6 +15,7 @@
  */
 
 import { CitadelClient } from './CitadelClient.js';
+import { defaultKemAlgorithm } from '@avarok/citadel-protocol-types';
 import { MessageNotification } from './types/index.js';
 
 async function runTests() {
@@ -51,7 +52,7 @@ async function runTests() {
                 secrecy_mode: "BestEffort",
                 crypto_params: {
                     encryption_algorithm: "AES_GCM_256",
-                    kem_algorithm: "MlKem",
+                    kem_algorithm: defaultKemAlgorithm(),
                     sig_algorithm: "None"
                 },
                 header_obfuscator_settings: "Disabled"

@@ -1,3 +1,4 @@
+import { defaultKemAlgorithm } from '@avarok/citadel-protocol-types';
 import { InternalServiceWasmClient, InternalServiceResponse, isResponseType } from './index.js';
 
 /**
@@ -46,7 +47,7 @@ async function wasmClientExample() {
                 secrecy_mode: 'BestEffort',
                 crypto_params: {
                     encryption_algorithm: 'AES_GCM_256',
-                    kem_algorithm: 'Kyber',
+                    kem_algorithm: defaultKemAlgorithm(),
                     sig_algorithm: 'None'
                 },
                 header_obfuscator_settings: 'Disabled'
@@ -146,7 +147,7 @@ async function p2pExample() {
                 secrecy_mode: 'BestEffort',
                 crypto_params: {
                     encryption_algorithm: 'AES_GCM_256',
-                    kem_algorithm: 'Kyber',
+                    kem_algorithm: defaultKemAlgorithm(),
                     sig_algorithm: 'None'
                 },
                 header_obfuscator_settings: 'Disabled'
@@ -166,7 +167,7 @@ async function p2pExample() {
                 secrecy_mode: 'BestEffort',
                 crypto_params: {
                     encryption_algorithm: 'AES_GCM_256',
-                    kem_algorithm: 'Kyber',
+                    kem_algorithm: defaultKemAlgorithm(),
                     sig_algorithm: 'None'
                 },
                 header_obfuscator_settings: 'Disabled'

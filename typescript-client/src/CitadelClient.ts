@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import { v4 as uuidv4 } from 'uuid';
+import { defaultKemAlgorithm } from '@avarok/citadel-protocol-types';
 import {
     InternalServicePayload,
     InternalServiceRequest,
@@ -104,7 +105,7 @@ export class CitadelClient {
                     secrecy_mode: "BestEffort",
                     crypto_params: {
                         encryption_algorithm: "AES_GCM_256",
-                        kem_algorithm: "MlKem",
+                        kem_algorithm: defaultKemAlgorithm(),
                         sig_algorithm: "None"
                     },
                     header_obfuscator_settings: "Disabled"

@@ -5,7 +5,7 @@ import type { FailureReason } from "./FailureReason";
 export type ConnectFailure = { cid: bigint, message: string, request_id: string | null, 
 /**
  * Why, when the UI can act on it: the server's admission check (a Turnstile token) refused
- * the attempt. Absent for every other failure, and from an older agent.
+ * the attempt. Absent for every other failure.
  */
 reason_code?: FailureReason | null, 
 /**

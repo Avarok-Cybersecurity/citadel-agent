@@ -5,6 +5,6 @@ export type ServerReconnectFailed = { cid: bigint, reason: string, request_id: s
 /**
  * Why, when the UI can act on it: the server's admission check (a Turnstile token)
  * refused the reconnect, so the user must sign in again and pass it. Absent for every
- * other failure, and from an older agent.
+ * other failure.
  */
 reason_code?: FailureReason | null, };

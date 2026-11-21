@@ -18,7 +18,7 @@ use ts_rs::TS;
 pub enum PeerIdentityMark {
     /// Signed by the peer's pinned identity key, whose fingerprint this is.
     Verified { fingerprint: String },
-    /// Not signed: the peer runs an older agent, or its account has no identity key.
+    /// Not signed: the peer's account has no identity key.
     Unverified,
 }
 

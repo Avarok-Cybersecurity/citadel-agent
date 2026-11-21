@@ -1,6 +1,7 @@
 use super::*;
 use crate::kernel::conversations::kv::{ConversationKv, MemoryKv};
 use crate::kernel::conversations::store::{scoped, MESSAGES_PER_PAGE, PAGINATED_PREFIX};
+use crate::kernel::conversations::stored;
 use citadel_internal_service_types::{MessageType, Reaction};
 
 const ME: u64 = 1001;
@@ -95,21 +96,20 @@ async fn a_redelivered_message_is_stored_once_across_a_page_boundary() {
 /// account: it is not read, listed or adopted, and a write starts a new one.
 #[tokio::test]
 async fn an_unscoped_record_is_never_read() {
-    let fixture = |name: &str| {
-        std::fs::read(format!(
-            "{}/tests/fixtures/conversation_store/{name}",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .unwrap()
-    };
     let kv = MemoryKv::default();
     let unscoped = format!("{PAGINATED_PREFIX}{PEER}");
-    kv.set(&format!("{unscoped}_metadata"), fixture("metadata.json"))
-        .await
-        .unwrap();
-    kv.set(&format!("{unscoped}_0"), fixture("page-0.json"))
-        .await
-        .unwrap();
+    kv.set(
+        &format!("{unscoped}_metadata"),
+        stored::encode_metadata(&stored::tests::metadata(PEER, ME)).unwrap(),
+    )
+    .await
+    .unwrap();
+    kv.set(
+        &format!("{unscoped}_0"),
+        stored::encode_page(&stored::tests::page(PEER, ME)).unwrap(),
+    )
+    .await
+    .unwrap();
     let s = store(&kv);
     assert!(s.load_metadata(PEER).await.unwrap().is_none());
     assert!(s.load_page(PEER, 0).await.unwrap().is_none());

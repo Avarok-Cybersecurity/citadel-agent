@@ -5,7 +5,6 @@ export type PeerConnectNotification = { cid: bigint, peer_cid: bigint, session_s
 /**
  * The agent answers this offer itself -- accepts, declines, or leaves it
  * unanswered by the UI's own rules -- so no window may answer it. Set for an
- * account the agent hosts, which is reachable with no window open. An
- * agent that predates this never sends it, which is what `false` means.
+ * account the agent hosts, which is reachable with no window open.
  */
 answered_by_agent: boolean, };

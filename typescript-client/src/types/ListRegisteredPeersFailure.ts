@@ -5,6 +5,6 @@ export type ListRegisteredPeersFailure = { cid: bigint, message: string, request
 /**
  * Why, when the UI can act on it: `Reconnecting` means the agent is bringing the session
  * back and will answer once it is up, so the poll should pause rather than report an
- * error. Absent for every other failure, and from an older agent.
+ * error. Absent for every other failure.
  */
 reason?: PeerListFailureReason | null, };

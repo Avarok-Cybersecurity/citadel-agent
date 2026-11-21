@@ -2,9 +2,7 @@
 //!
 //! The agent is the only writer of the conversation store (citadel-workspace
 //! `docs/plans/multi-window-sessions.md`, mw4), so these types ARE the format:
-//! the TypeScript the UI uses is generated from them. Field names keep the
-//! spelling the web UI's stored pages have always used, so history written by
-//! older builds reads back unchanged.
+//! the TypeScript the UI uses is generated from them.
 //!
 //! No field is skipped when absent: the agent's TCP clients speak bincode,
 //! which has no notion of a missing field, so every field is always written.
@@ -101,10 +99,8 @@ pub struct ConversationMessage {
     pub id: String,
     #[debug(with = plaintext_debug_fmt)]
     pub content: String,
-    #[serde(rename = "senderCid")]
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub sender_cid: u64,
-    #[serde(rename = "recipientCid")]
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub recipient_cid: u64,
     pub timestamp: f64,
@@ -113,7 +109,7 @@ pub struct ConversationMessage {
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional))]
     pub error: Option<String>,
-    #[serde(rename = "replyTo", default)]
+    #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional))]
     pub reply_to: Option<String>,
     #[serde(default)]
@@ -128,7 +124,6 @@ pub struct ConversationMessage {
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional))]
     pub attachments: Option<Vec<Attachment>>,
-    #[serde(default)]
     pub message_type: MessageType,
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional))]

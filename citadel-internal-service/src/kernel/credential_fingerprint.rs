@@ -96,8 +96,7 @@ fn keyed_hash(key: &[u8; 32], username: &str, password: &[u8]) -> Option<Vec<u8>
 /// Whether a freshly derived fingerprint proves knowledge of the recorded one.
 ///
 /// `None` on either side is a refusal, never a pass: a session with no recorded
-/// fingerprint (one that predates this mechanism, or an account we cannot
-/// fingerprint) must be re-authenticated through the SDK rather than handed
+/// fingerprint (an account we cannot fingerprint) must be re-authenticated through the SDK rather than handed
 /// over on the strength of a username.
 ///
 /// The comparison is constant-time. The values are password-derived, and an

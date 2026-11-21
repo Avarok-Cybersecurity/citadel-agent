@@ -2,10 +2,8 @@
 
 use super::*;
 
-/// A `Connect` that names only a password: no `security_key`, no `recovery_phrase` (nor
-/// `server_password`, which the UI never sends). Nor `server_address`: it parses, empty, so the
-/// agent can answer that page (connect.rs).
-fn legacy_connect_json() -> String {
+/// A current `Connect` as JSON, with `removed` taken out.
+fn connect_json_without(removed: &str) -> String {
     let current = InternalServiceRequest::Connect {
         request_id: Uuid::new_v4(),
         username: "alice".to_string(),
@@ -22,39 +20,25 @@ fn legacy_connect_json() -> String {
     };
     let mut value = serde_json::to_value(&current).unwrap();
     let fields = value["Connect"].as_object_mut().unwrap();
-    for added in [
-        "security_key",
-        "recovery_phrase",
-        "server_password",
-        "admission_token",
-        "server_address",
-    ] {
-        assert!(fields.remove(added).is_some(), "{added} is not a field");
-    }
+    assert!(fields.remove(removed).is_some(), "{removed} is not a field");
     value.to_string()
 }
 
 #[test]
-fn an_older_clients_connect_still_parses_as_a_password_sign_in() {
-    let request: InternalServiceRequest = serde_json::from_str(&legacy_connect_json()).unwrap();
-    let InternalServiceRequest::Connect {
-        password,
-        security_key,
-        recovery_phrase,
-        server_address,
-        ..
-    } = request
-    else {
-        panic!("not a Connect: {request:?}");
-    };
-    // Parsed rather than dropped, so the agent answers it: an empty server is refused at once.
-    assert_eq!(server_address, "");
-    assert_eq!(password.expect("the password").as_ref(), b"hunter2");
-    assert!(
-        !security_key,
-        "an older client cannot answer a key challenge"
-    );
-    assert!(recovery_phrase.is_none());
+fn a_connect_that_names_no_server_or_key_ability_is_refused() {
+    for required in ["server_address", "security_key"] {
+        let err = serde_json::from_str::<InternalServiceRequest>(&connect_json_without(required))
+            .unwrap_err();
+        assert!(err.to_string().contains(required), "{required}: {err}");
+    }
+}
+
+#[test]
+fn a_connect_may_leave_out_what_is_optional() {
+    for optional in ["recovery_phrase", "server_password", "admission_token"] {
+        serde_json::from_str::<InternalServiceRequest>(&connect_json_without(optional))
+            .unwrap_or_else(|err| panic!("{optional}: {err}"));
+    }
 }
 
 #[test]

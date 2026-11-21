@@ -257,7 +257,7 @@ pub struct ConnectFailure {
     pub message: String,
     pub request_id: Option<Uuid>,
     /// Why, when the UI can act on it: the server's admission check (a Turnstile token) refused
-    /// the attempt. Absent for every other failure, and from an older agent.
+    /// the attempt. Absent for every other failure.
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub reason_code: Option<FailureReason>,
@@ -310,7 +310,7 @@ pub struct RegisterFailure {
     pub message: String,
     pub request_id: Option<Uuid>,
     /// Why, when the UI can act on it: the server's admission check (a Turnstile token) refused
-    /// the attempt. Absent for every other failure, and from an older agent.
+    /// the attempt. Absent for every other failure.
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub reason_code: Option<FailureReason>,
@@ -321,7 +321,7 @@ pub struct RegisterFailure {
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub admission_challenge: Option<AdmissionChallengeWire>,
     /// With `UsernameHeldForAnotherServer`: the server this agent's account of that username
-    /// is on, as a Connect names it. Absent for every other failure, and from an older agent.
+    /// is on, as a Connect names it. Absent for every other failure.
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub held_for_server: Option<String>,
@@ -884,9 +884,7 @@ pub struct PeerConnectNotification {
     pub request_id: Option<Uuid>,
     /// The agent answers this offer itself -- accepts, declines, or leaves it
     /// unanswered by the UI's own rules -- so no window may answer it. Set for an
-    /// account the agent hosts, which is reachable with no window open. An
-    /// agent that predates this never sends it, which is what `false` means.
-    #[serde(default)]
+    /// account the agent hosts, which is reachable with no window open.
     pub answered_by_agent: bool,
 }
 
@@ -1078,7 +1076,7 @@ pub struct ListAllPeersFailure {
     pub request_id: Option<Uuid>,
     /// Why, when the UI can act on it: `Reconnecting` means the agent is bringing the session
     /// back and will answer once it is up, so the poll should pause rather than report an
-    /// error. Absent for every other failure, and from an older agent.
+    /// error. Absent for every other failure.
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub reason: Option<PeerListFailureReason>,
@@ -1094,7 +1092,7 @@ pub struct ListRegisteredPeersFailure {
     pub request_id: Option<Uuid>,
     /// Why, when the UI can act on it: `Reconnecting` means the agent is bringing the session
     /// back and will answer once it is up, so the poll should pause rather than report an
-    /// error. Absent for every other failure, and from an older agent.
+    /// error. Absent for every other failure.
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub reason: Option<PeerListFailureReason>,
@@ -1130,9 +1128,7 @@ pub struct GetSessionsResponse {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
     pub sessions: Vec<SessionInformation>,
-    /// Accounts whose sessions the server ended, until each signs in again. Absent from an
-    /// older agent, hence the default.
-    #[serde(default)]
+    /// Accounts whose sessions the server ended, until each signs in again.
     pub signed_out: Vec<SignedOutSession>,
     pub request_id: Option<Uuid>,
 }
@@ -1352,19 +1348,11 @@ pub enum InternalServiceRequest {
         /// (`host[:port]` or a `ws(s)://` URL). Required: the agent signs in only the account
         /// with this username on THIS server, and refuses (`AccountOnAnotherServer`) rather
         /// than dial whichever server a same-named account happens to be registered to.
-        ///
-        /// `serde(default)` only so that a client from before this field (a page still
-        /// running an older build) is ANSWERED rather than dropped as unparseable: an empty
-        /// address is refused at once, telling that page to reload (connect.rs). It is never
-        /// used as an address.
-        #[serde(default)]
         server_address: String,
         /// Absent for a `KeyOnly` account and for a recovery-phrase sign-in.
         #[cfg_attr(feature = "typescript", ts(type = "number[] | null"))]
         password: Option<SecBuffer>,
         /// Whether this window can answer a `SecurityKeyChallengeNotification`.
-        #[serde(default)]
-        #[cfg_attr(feature = "typescript", ts(as = "Option<bool>", optional))]
         security_key: bool,
         /// The account's 24-word recovery phrase as typed (any case and spacing). It signs in to
         /// the recovery console: a session that may only manage how the account signs in. The

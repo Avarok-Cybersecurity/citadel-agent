@@ -111,14 +111,8 @@ fn the_tags_are_pinned() {
 fn a_newer_format_or_a_torn_blob_is_unreadable() {
     let mut newer = encode(&one(outbound(1))).unwrap();
     newer[4] = FORMAT_V1 + 1;
-    assert!(matches!(
-        decode(&newer),
-        Decoded::Unreadable(_)
-    ));
+    assert!(matches!(decode(&newer), Decoded::Unreadable(_)));
     let current = encode(&one(outbound(1))).unwrap();
     let torn = &current[..current.len() - 1];
-    assert!(matches!(
-        decode(torn),
-        Decoded::Unreadable(_)
-    ));
+    assert!(matches!(decode(torn), Decoded::Unreadable(_)));
 }

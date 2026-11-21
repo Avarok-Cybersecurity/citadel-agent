@@ -143,7 +143,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0 # the tracking-identifier check reads every commit since the merge base
       - run: cargo fmt --check
+      - name: No internal tracking identifier enters public history
+        env:
+          BASE_REF: ${{ github.base_ref || 'master' }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node .github/scripts/check-no-tracking-ids.mjs "origin/$BASE_REF"
+      - name: The tracking-identifier check's own tests
+        run: node --test .github/scripts/tracking-ids.test.mjs
 
   # The committed wire types are regenerated from the Rust and must not differ:
   # a changed field, a new or deleted type, or a hand edit fails here. This

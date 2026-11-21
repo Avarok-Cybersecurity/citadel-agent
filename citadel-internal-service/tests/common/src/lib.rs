@@ -4,10 +4,15 @@ pub mod coturn;
 pub mod group;
 pub mod group_rejoin;
 pub mod multi_window;
+pub mod node_settings;
 mod ports;
 pub mod pq;
 pub mod pq_accounts;
+pub mod pq_files;
 pub mod pq_window;
+/// The session settings a test names when the test is not about them: the SDK's named choice
+/// for a session whose application chooses none.
+pub use citadel_sdk::prelude::default_session_security_settings;
 pub use ports::get_free_port;
 
 /// The launch token every test agent's notice plane admits (kernel/notices).
@@ -19,6 +24,7 @@ fn test_notice_token() -> citadel_internal_service::kernel::notices::NoticeToken
 }
 pub mod turn_harness;
 
+use crate::node_settings::TestNode;
 use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service::StunServers;
 use citadel_internal_service_connector::connector::{
@@ -39,7 +45,6 @@ use citadel_sdk::prefabs::server::empty::EmptyKernel;
 use citadel_sdk::prelude::*;
 use core::panic;
 use futures::{SinkExt, StreamExt};
-use std::collections::HashMap;
 use std::error::Error;
 use std::future::Future;
 use std::net::{SocketAddr, TcpListener};
@@ -50,6 +55,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
+
+/// What a test agent demands of a test server's certificate: test servers are self-signed.
+pub const TEST_SERVER_CERTIFICATE: CertVerification = CertVerification::SelfSignedAccepted;
 
 /// A browser-transfer root of this test's own: a fresh temporary directory, never the
 /// shared `$TMPDIR/citadel-browser-transfers`, whose 256 MiB cap every earlier run's leftovers
@@ -197,9 +205,10 @@ pub async fn register_and_connect_to_server<
             // now, connect to the server
             let command = InternalServiceRequest::Connect {
                 username,
+                server_address: item.server_addr.to_string(),
                 password: Some(password),
                 security_key: false,
-                recovery_code: None,
+                recovery_phrase: None,
                 connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
                 udp_mode: Default::default(),
                 keep_alive_timeout: None,
@@ -213,7 +222,7 @@ pub async fn register_and_connect_to_server<
 
             let response_packet = stream.next().await.unwrap();
             if let InternalServiceResponse::ConnectSuccess(
-                citadel_internal_service_types::ConnectSuccess { cid, request_id: _ },
+                citadel_internal_service_types::ConnectSuccess { cid, .. },
             ) = response_packet
             {
                 info!(
@@ -256,6 +265,21 @@ pub async fn services_connected_to_one_server_on<R: Ratchet, I: BindableInterfac
         server_info_skip_cert_verification::<R>()
     };
     tokio::task::spawn(server);
+    services_connected_to_server_at::<R, I>(
+        int_svc_addrs,
+        server_bind_address,
+        server_session_password,
+    )
+    .await
+}
+
+/// As [`services_connected_to_one_server_on`], against a server the caller runs at
+/// `server_bind_address`, so the caller knows where every account is registered.
+pub async fn services_connected_to_server_at<R: Ratchet, I: BindableInterface>(
+    int_svc_addrs: Vec<SocketAddr>,
+    server_bind_address: SocketAddr,
+    server_session_password: Option<PreSharedKey>,
+) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
     let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
 
     // Spawn Internal Services with given addresses
@@ -266,6 +290,7 @@ pub async fn services_connected_to_one_server_on<R: Ratchet, I: BindableInterfac
             I::bind(bind_address_internal_service).await?,
             citadel_internal_service::SERVER_RECONNECT,
             crate::test_transfers(),
+            crate::TEST_SERVER_CERTIFICATE,
         )
         .with_notice_token(test_notice_token());
         let internal_service = test_stun_servers()
@@ -273,6 +298,7 @@ pub async fn services_connected_to_one_server_on<R: Ratchet, I: BindableInterfac
             .with_backend(test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         // Add NodeFuture for Internal Service to Vector to be spawned
@@ -350,7 +376,7 @@ pub async fn register_and_connect_to_server_then_peers_as_browser<R: Ratchet>(
     connect_every_pair(services, None, Default::default()).await
 }
 
-async fn connect_every_pair(
+pub async fn connect_every_pair(
     mut returned_service_info: Vec<PeerReturnHandle>,
     peer_session_password: Option<PreSharedKey>,
     udp_mode: citadel_sdk::prelude::UdpMode,
@@ -567,35 +593,40 @@ pub async fn connect_p2p_with_turn(
 
     // Service B Receives Connect Request from Service A
     let inbound_response = from_service_b.recv().await.unwrap();
-    match inbound_response {
+    let answered_by_agent = match inbound_response {
         InternalServiceResponse::PeerConnectNotification(PeerConnectNotification {
             cid,
             peer_cid,
             session_security_settings: _,
             udp_mode: _,
             request_id: _,
-            answered_by_agent: _,
+            answered_by_agent,
         }) => {
             assert_eq!(cid, cid_b);
             assert_eq!(peer_cid, cid_a);
+            answered_by_agent
         }
         _ => {
             panic!("Peer B didn't get the PeerConnectNotification");
         }
-    }
+    };
 
-    // Service B Sends Connect Request to Accept
-    to_service_b
-        .send(InternalServiceRequest::PeerConnect {
-            request_id: Uuid::new_v4(),
-            cid: cid_b,
-            peer_cid: cid_a,
-            udp_mode,
-            session_security_settings,
-            peer_session_password: session_password,
-            turn: turn_b,
-        })
-        .unwrap();
+    // Service B's window accepts, unless B's agent answers the offer itself (with the
+    // peer session password B's window gave on registering): a window answering too
+    // would race the agent's own answer.
+    if !answered_by_agent {
+        to_service_b
+            .send(InternalServiceRequest::PeerConnect {
+                request_id: Uuid::new_v4(),
+                cid: cid_b,
+                peer_cid: cid_a,
+                udp_mode,
+                session_security_settings,
+                peer_session_password: session_password,
+                turn: turn_b,
+            })
+            .unwrap();
+    }
 
     // Receive Connect Success Responses
     let mut paths = Vec::with_capacity(2);
@@ -790,6 +821,9 @@ pub fn server_test_node_on_listener<'a, K: NetKernel<R> + 'a, R: Ratchet>(
         .with_backend(test_backend())
         .with_node_type(NodeType::Server(bind_addr))
         .with_path_policy(citadel_sdk::test_common::localhost_path_policy())
+        .with_server_limits(citadel_sdk::test_common::localhost_server_limits())
+        .with_server_misc_settings(crate::pq::pq_server_misc())
+        .as_test_node()
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(ServerMode::OrderedReliable(
             NativeOrderedReliableConfig::from_std_listener(tcp_listener).unwrap(),
@@ -817,6 +851,9 @@ pub fn server_test_node_skip_cert_verification_with_password<
         .with_backend(test_backend())
         .with_node_type(NodeType::Server(bind_addr))
         .with_path_policy(citadel_sdk::test_common::localhost_path_policy())
+        .with_server_limits(citadel_sdk::test_common::localhost_server_limits())
+        .with_server_misc_settings(crate::pq::pq_server_misc())
+        .as_test_node()
         .with_server_password(server_password)
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(ServerMode::OrderedReliable(
@@ -1050,8 +1087,9 @@ pub async fn test_kv_for_service(
     if let InternalServiceResponse::LocalDBGetAllKVSuccess(resp) =
         from_service.recv().await.unwrap()
     {
+        // The agent's hosted ILM keeps its own records in the same store.
         assert_eq!(resp.cid, cid);
-        assert_eq!(resp.map.len(), 0);
+        assert!(!resp.map.contains_key("tmp"), "{:?}", resp.map.keys());
         assert_eq!(peer_cid, resp.peer_cid);
     } else {
         panic!("Didn't get the LocalDBGetAllKVSuccess");
@@ -1103,12 +1141,8 @@ pub async fn test_kv_for_service(
         from_service.recv().await.unwrap()
     {
         assert_eq!(resp.cid, cid);
-        assert_eq!(resp.map.len(), 1);
         assert_eq!(peer_cid, resp.peer_cid);
-        assert_eq!(
-            resp.map,
-            HashMap::from([("tmp".to_string(), value.clone())])
-        );
+        assert_eq!(resp.map.get("tmp"), Some(&value));
     } else {
         panic!("Didn't get the LocalDBGetAllKVSuccess");
     }
@@ -1236,6 +1270,7 @@ pub async fn sessions_on_one_service_reaching(
         service_addr,
         citadel_internal_service::SERVER_RECONNECT,
         crate::test_transfers(),
+        crate::TEST_SERVER_CERTIFICATE,
     )
     .await?;
     let internal_service = test_stun_servers()
@@ -1243,6 +1278,7 @@ pub async fn sessions_on_one_service_reaching(
         .with_backend(BackendType::InMemory)
         .with_node_type(NodeType::Peer)
         .with_insecure_skip_cert_verification()
+        .as_test_agent(&service)
         .build(service)?;
     tokio::task::spawn(internal_service);
     tokio::time::sleep(Duration::from_millis(1000)).await;

@@ -5,7 +5,7 @@ import type { FailureReason } from "./FailureReason";
 export type RegisterFailure = { cid: bigint, message: string, request_id: string | null, 
 /**
  * Why, when the UI can act on it: the server's admission check (a Turnstile token) refused
- * the attempt. Absent for every other failure, and from an older agent.
+ * the attempt. Absent for every other failure.
  */
 reason_code?: FailureReason | null, 
 /**
@@ -13,4 +13,9 @@ reason_code?: FailureReason | null,
  * published one (PUBLIC: see `AdmissionChallengeWire`). Absent for every other failure,
  * from a server that publishes none, and from an older agent.
  */
-admission_challenge?: AdmissionChallengeWire | null, };
+admission_challenge?: AdmissionChallengeWire | null, 
+/**
+ * With `UsernameHeldForAnotherServer`: the server this agent's account of that username
+ * is on, as a Connect names it. Absent for every other failure.
+ */
+held_for_server?: string | null, };

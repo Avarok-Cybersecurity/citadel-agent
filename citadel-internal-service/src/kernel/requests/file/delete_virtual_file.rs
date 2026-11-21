@@ -1,4 +1,5 @@
 use crate::kernel::requests::HandledRequestResult;
+use crate::kernel::revfs_seed::index::Location;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -66,7 +67,7 @@ where
     }
 }
 
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
@@ -81,6 +82,21 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
     let remote = this.remote();
+    // Held until the delete is answered: refused while the account is re-keyed (kernel/revfs_seed).
+    let token = match crate::kernel::revfs_seed::begin_use(this.revfs_vault.get(), cid) {
+        Ok(token) => token,
+        Err(message) => {
+            let response =
+                InternalServiceResponse::DeleteVirtualFileFailure(DeleteVirtualFileFailure {
+                    cid,
+                    message,
+                    request_id: Some(request_id),
+                });
+            return Some(HandledRequestResult { response, uuid });
+        }
+    };
+    let location = peer_cid.map_or(Location::Server, Location::Peer);
+    let path = virtual_directory.to_string_lossy().into_owned();
 
     // Extract what we need from the lock, then drop it before any await
     let delete_request: Result<NodeRequest, NetworkError> = {
@@ -132,12 +148,25 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         Ok(request) => match remote.send_callback_subscription(request).await {
             Ok(mut subscription) => {
                 match await_delete_outcome(&mut subscription, DELETE_WAIT).await {
-                    DeleteOutcome::Deleted => InternalServiceResponse::DeleteVirtualFileSuccess(
-                        DeleteVirtualFileSuccess {
+                    DeleteOutcome::Deleted => {
+                        let forgotten = crate::kernel::revfs_seed::forget(
+                            this.revfs_vault.get(),
+                            remote,
                             cid,
-                            request_id: Some(request_id),
-                        },
-                    ),
+                            location,
+                            &path,
+                        )
+                        .await;
+                        if let Err(err) = forgotten {
+                            warn!(target: "citadel", "[RE-VFS] An object of account {cid} was deleted but is still in its index: {err}");
+                        }
+                        InternalServiceResponse::DeleteVirtualFileSuccess(
+                            DeleteVirtualFileSuccess {
+                                cid,
+                                request_id: Some(request_id),
+                            },
+                        )
+                    }
                     DeleteOutcome::Rejected(err) => failure(err),
                     DeleteOutcome::Ended => {
                         failure("The delete ended without an answer from the protocol".to_string())
@@ -155,6 +184,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         Err(err) => failure(err.into_string()),
     };
 
+    drop(token);
+    crate::kernel::revfs_seed::resume(this, cid);
     Some(HandledRequestResult { response, uuid })
 }
 

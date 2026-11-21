@@ -1,7 +1,6 @@
 //! Telling the declared windows whether anything shows the agent's notices.
 //!
-//! A window that hosts no ILM of its own leaves a hosted message's OS
-//! notification to the agent -- but only something attached to the agent shows
+//! A window leaves a hosted message's OS notification to the agent -- but only something attached to the agent shows
 //! one: today the menu-bar app, subscribed to the notice plane. Windows and
 //! Linux have none. So the windows are told, on declaring
 //! (`AgentCapabilities::notices_heard`) and whenever it changes
@@ -15,18 +14,13 @@ use citadel_sdk::prelude::Ratchet;
 use uuid::Uuid;
 
 impl<T: IOInterface + Sync, R: Ratchet> CitadelWorkspaceService<T, R> {
-    /// If whether notices are heard changed, tell every window that declared it hosts no ILM.
+    /// If whether notices are heard changed, tell every window that declared its capabilities:
+    /// each learned the value from the declaration's answer.
     pub(crate) fn notices_heard_changed(&self) {
         let Some(heard) = self.notices.heard_changed() else {
             return;
         };
-        let windows: Vec<Uuid> = self
-            .client_capabilities
-            .read()
-            .iter()
-            .filter(|(_, capabilities)| capabilities.agent_ilm)
-            .map(|(connection, _)| *connection)
-            .collect();
+        let windows: Vec<Uuid> = self.client_capabilities.read().keys().copied().collect();
         let told = InternalServiceResponse::NoticesHeardNotification(NoticesHeardNotification {
             cid: 0,
             heard,

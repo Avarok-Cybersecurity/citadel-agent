@@ -12,6 +12,7 @@ use citadel_internal_service_types::{
 };
 use citadel_sdk::prelude::{ConnectMode, SecBuffer, UdpMode};
 use std::error::Error;
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -21,6 +22,7 @@ const KEY_WINDOW: Duration = Duration::from_secs(60);
 /// Starts a password-and-key sign-in and returns its request id and the challenge it raised.
 async fn challenged(
     window: &mut Window,
+    server: SocketAddr,
     username: &str,
 ) -> Result<(Uuid, SecurityKeyChallengeNotification), Box<dyn Error>> {
     let request_id = Uuid::new_v4();
@@ -28,13 +30,14 @@ async fn challenged(
         .send(InternalServiceRequest::Connect {
             request_id,
             username: username.to_string(),
+            server_address: server.to_string(),
             password: Some(SecBuffer::from(PASSWORD)),
             security_key: true,
-            recovery_code: None,
+            recovery_phrase: None,
             connect_mode: ConnectMode::Standard { force_login: false },
             udp_mode: UdpMode::Disabled,
             keep_alive_timeout: None,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             server_password: None,
             admission_token: None,
         })
@@ -78,7 +81,7 @@ async fn only_the_first_valid_answer_from_an_asked_window_counts() -> Result<(),
     let mut window = Window::open(agent).await?;
     let key = FakeKey::new(7);
     let user = account(&mut window, server, SignInPolicy::PasswordAndKey, &key).await?;
-    let (request_id, challenge) = challenged(&mut window, &user.username).await?;
+    let (request_id, challenge) = challenged(&mut window, server, &user.username).await?;
 
     let mut stranger = Window::open(agent).await?;
     let foreign = answer(&mut stranger, &challenge, &key.credential_id, &key.prf).await?;
@@ -116,7 +119,7 @@ async fn a_declined_challenge_fails_the_sign_in_at_once() -> Result<(), Box<dyn 
         &FakeKey::new(7),
     )
     .await?;
-    let (request_id, challenge) = challenged(&mut window, &user.username).await?;
+    let (request_id, challenge) = challenged(&mut window, server, &user.username).await?;
 
     let started = Instant::now();
     window
@@ -152,7 +155,7 @@ async fn an_unanswered_challenge_fails_at_the_sdks_deadline_and_no_later(
     let key = FakeKey::new(7);
     let user = account(&mut window, server, SignInPolicy::PasswordAndKey, &key).await?;
     let started = Instant::now();
-    let (request_id, challenge) = challenged(&mut window, &user.username).await?;
+    let (request_id, challenge) = challenged(&mut window, server, &user.username).await?;
     assert_eq!(challenge.expires_in_ms, KEY_WINDOW.as_millis() as u64);
 
     let failed = window.next_of(request_id).await?;

@@ -23,6 +23,7 @@
 use crate::kernel::reconnect::sign_in::{self, SignIn};
 use crate::kernel::reconnect::{LinkState, Reauth};
 use crate::kernel::requests::HandledRequestResult;
+use crate::kernel::revfs_seed;
 use crate::kernel::session_route::SessionRoute;
 use crate::kernel::sign_in::factors;
 use crate::kernel::sign_in::key_relay::Asker;
@@ -32,7 +33,9 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     ConnectFailure, InternalServiceRequest, InternalServiceResponse,
 };
-use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt, Ratchet, SessionScope};
+use citadel_sdk::prelude::{
+    AuthenticationRequest, ProtocolRemoteExt, Ratchet, SecBuffer, SessionScope,
+};
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
@@ -45,17 +48,69 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         username,
         password,
         security_key,
-        recovery_code,
+        recovery_phrase,
         admission_token,
         connect_mode,
         udp_mode,
         keep_alive_timeout,
         session_security_settings,
         server_password,
+        server_address,
     } = request
     else {
         unreachable!("Should never happen if programmed properly")
     };
+    // An empty or malformed address is refused here too, as an invalid server.
+    // Only the account with this username on THIS server (account_server.rs), before anything is dialled.
+    if let Err(refusal) =
+        crate::kernel::account_server::check(this.remote(), &username, &server_address).await
+    {
+        citadel_sdk::logging::warn!(target: "citadel", "[Connect] REFUSED {} for {}: {:?}", username, server_address, refusal);
+        let response = refusal.into_response(&username, &server_address, request_id);
+        return Some(HandledRequestResult { response, uuid });
+    }
+    // The phrase is bound to the account's server, which the check above has just confirmed
+    // is the one named: read before anything is dialled, so a mistyped word is answered at once.
+    let recovery_phrase = match recovery_phrase {
+        None => None,
+        Some(typed) => match read_phrase(this, &username, &typed).await {
+            Ok(phrase) => Some(phrase),
+            Err(message) => {
+                let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                    cid: 0,
+                    message,
+                    request_id: Some(request_id),
+                    reason_code: None,
+                    admission_challenge: None,
+                });
+                return Some(HandledRequestResult { response, uuid });
+            }
+        },
+    };
+    // The account's RE-VFS key, before anything is dialled: a session without it could store
+    // nothing, and a refusal after the SDK connect would leave that SDK session behind. A
+    // device that holds the account but no root for it takes the phrase's, once the server has
+    // accepted the phrase (`unrooted`, stored after the sign-in).
+    let (revfs_key, unrooted) = match crate::kernel::revfs_seed::session_key(
+        this.revfs_vault.get(),
+        this.remote(),
+        &username,
+    )
+    .await
+    {
+        Ok(key) => (key, None),
+        Err(err) => match recovery_phrase
+            .as_ref()
+            .filter(|_| err == revfs_seed::NO_ROOT)
+        {
+            Some(phrase) => match revfs_seed::phrase_key(this.remote(), &username, phrase) {
+                Ok(key) => (key, Some(*phrase.seed().as_bytes())),
+                Err(err) => return Some(no_revfs_key(&username, err, request_id, uuid)),
+            },
+            None => return Some(no_revfs_key(&username, err, request_id, uuid)),
+        },
+    };
+    let unrooted = unrooted.map(zeroize::Zeroizing::new);
     let connect_mode = crate::kernel::requests::connect_mode::server_connect_mode(
         connect_mode,
         crate::kernel::requests::connect_mode::LoginOrigin::UserSignIn,
@@ -167,10 +222,6 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
         };
 
-        if let Some(refused) = this.refuse_older_connect(authorized, cid, uuid, request_id) {
-            cleanup_username(this, &username);
-            return Some(refused);
-        }
         match sign_in::on_sign_in(tracked, authorized) {
             SignIn::Refuse => {
                 citadel_sdk::logging::warn!(target: "citadel", "[Connect] REFUSED reuse of session {} for user {}: the password does not match the one that opened it", cid, username);
@@ -191,7 +242,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             SignIn::AlreadyActive => {
                 citadel_sdk::logging::info!(target: "citadel", "[Connect] Session {} already active for user {} - returning SessionAlreadyActive", cid, username);
                 crate::kernel::membership::take_over(this, cid, uuid);
-                this.host_ilm_for(cid, uuid).await;
+                this.host_ilm_for(cid).await;
                 // Lets the frontend handle it gracefully (e.g. redirect to the workspace).
                 let response = InternalServiceResponse::SessionAlreadyActive(
                     citadel_internal_service_types::SessionAlreadyActive {
@@ -246,31 +297,17 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         request_id,
     };
     let (challenges, clients) = (&this.key_challenges, &this.tx_to_localhost_clients);
-    let offered = factors::begin(
+    let (factors, underway) = factors::begin(
         challenges,
         clients,
         asker,
         factors::Offer {
             password: password.clone(),
             security_key,
-            recovery_code,
+            recovery_phrase,
             admission: admission_token,
         },
     );
-    let (factors, underway) = match offered {
-        Ok(begun) => begun,
-        Err(message) => {
-            cleanup_username(this, &username_for_cleanup);
-            let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
-                cid: 0,
-                message,
-                request_id: Some(request_id),
-                reason_code: None,
-                admission_challenge: None,
-            });
-            return Some(HandledRequestResult { response, uuid });
-        }
-    };
 
     // Proceed with new connection (no existing session or stale session was cleaned)
     match remote
@@ -281,6 +318,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             keep_alive_timeout,
             session_security_settings,
             server_password.clone(),
+            this.server_certificate,
         )
         .await
     {
@@ -452,7 +490,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
             // Recorded from the password the SERVER just accepted, so a later
             // reuse request has something to prove itself against -- and only when the
-            // password is all the sign-in proved. A session a key or a recovery code opened
+            // password is all the sign-in proved. A session a key or the recovery phrase opened
             // records none, so neither a reuse nor an attach can reach it on a password.
             let fingerprint = match &reconnect_credentials.reauth {
                 Reauth::Password(password) => {
@@ -477,6 +515,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 fingerprint,
                 reconnect_credentials,
                 SessionSignIn { handle, scope },
+                revfs_key,
             );
             {
                 let mut map = this.server_connection_map.write();
@@ -490,6 +529,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 citadel_internal_service_types::ConnectSuccess {
                     cid,
                     request_id: Some(request_id),
+                    identity: None,
                 },
             );
 
@@ -500,11 +540,27 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 request_id,
                 this.telemetry.clone(),
                 this.apps.net.as_ref().map(|net| net.grants.clone()),
+                this.identity.as_ref().map(|id| id.waiters.clone()),
             );
 
-            // A recovery session may not message: the server drops it, so no ILM is hosted.
+            if let Some(seed) = unrooted {
+                let adopted = revfs_seed::adopt_phrase(
+                    this.revfs_vault.get(),
+                    remote,
+                    cid,
+                    &seed,
+                    revfs_seed::Adopt::IfAbsent,
+                )
+                .await;
+                if let Err(err) = adopted {
+                    citadel_sdk::logging::warn!(target: "citadel", "[Connect] {cid}'s phrase signed in, but its RE-VFS root was not stored: {err}");
+                }
+            }
+            // A recovery session may not message or store: the server drops both, so no ILM is
+            // hosted, and a re-key after a phrase regeneration waits for a full session.
             if scope == SessionScope::Full {
-                this.host_ilm_for(cid, uuid).await;
+                this.host_ilm_for(cid).await;
+                revfs_seed::resume(this, cid);
             }
             // Off the Connect's path: the answer to the window must not wait on the server.
             let telemetry = this.clone();
@@ -528,4 +584,31 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             Some(HandledRequestResult { response, uuid })
         }
     }
+}
+
+fn no_revfs_key(username: &str, err: String, request_id: Uuid, uuid: Uuid) -> HandledRequestResult {
+    citadel_sdk::logging::warn!(target: "citadel", "[Connect] REFUSED {}: no RE-VFS key: {}", username, err);
+    let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+        cid: 0,
+        message: format!("The account's storage key is unavailable: {err}"),
+        request_id: Some(request_id),
+        reason_code: None,
+        admission_challenge: None,
+    });
+    HandledRequestResult { response, uuid }
+}
+
+/// The typed phrase, bound to the canonical domain of `username`'s server on this agent.
+async fn read_phrase<T: IOInterface + Sync, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    username: &str,
+    typed: &SecBuffer,
+) -> Result<citadel_sdk::prelude::RecoveryPhrase, String> {
+    let remote = this.remote();
+    let cid = remote
+        .account_manager()
+        .get_persistence_handler()
+        .get_cid_by_username(username);
+    let domain = crate::kernel::recovery_domain::of_account(remote, cid).await?;
+    crate::kernel::sign_in::phrase::read(typed, &domain)
 }

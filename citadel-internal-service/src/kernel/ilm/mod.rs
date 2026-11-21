@@ -7,12 +7,11 @@
 //! lets the account receive with no window open at all
 //! (citadel-workspace `docs/plans/multi-window-sessions.md`, mw3).
 //!
-//! The pieces are the browser's, over the agent's own I/O:
+//! The pieces are the connector's, over the agent's own I/O:
 //! * storage: the connector's `CitadelWorkspaceBackend` over [`AgentChannel`],
-//!   which answers its LocalDB requests in-process -- the same keys a browser's
-//!   ILM persisted, so that state is adopted, not reset;
-//! * wire: the connector's `wire` module, both ways, so frames are byte-identical
-//!   to the ones a browser sends and a peer on an older agent reads them;
+//!   which answers its LocalDB requests in-process;
+//! * wire: the connector's `wire` module, both ways, so every agent writes and
+//!   reads the same frames;
 //! * transport: the session's peer sinks ([`AgentTransport`]);
 //! * delivery: [`AgentDelivery`], to the windows attached to the session.
 //!

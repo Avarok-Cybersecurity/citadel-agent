@@ -2,7 +2,10 @@
 //! windows (or a browser and the installed PWA) are to the agent.
 
 use crate::group::recv_until;
-use crate::{open_localhost_connection, two_sessions_on_one_service_at, PeerHandle};
+use crate::{
+    open_localhost_connection, server_info_skip_cert_verification,
+    two_sessions_on_one_service_reaching, PeerHandle,
+};
 use citadel_internal_service_types::{
     AttachProof, ConfigCommand, InternalServiceRequest, InternalServiceResponse, SessionRole,
 };
@@ -20,9 +23,11 @@ pub type Window = (
 );
 
 /// Alice (session 0, `secret_0`) and Bob (session 1) on one agent, P2P-connected,
-/// plus the agent's address so further windows can be opened onto it.
+/// plus the agent's address so further windows can be opened onto it, and the server
+/// both accounts are registered to.
 pub struct TwoAccounts {
     pub addr: SocketAddr,
+    pub server_addr: SocketAddr,
     pub alice: PeerHandle,
     pub bob: PeerHandle,
 }
@@ -30,7 +35,10 @@ pub struct TwoAccounts {
 pub const ALICE_PASSWORD: &str = "secret_0";
 
 pub async fn two_connected_accounts(tag: &str) -> Result<TwoAccounts, Box<dyn Error>> {
-    let (addr, mut alice, mut bob) = two_sessions_on_one_service_at(tag).await?;
+    let (server, server_addr) = server_info_skip_cert_verification::<StackedRatchet>();
+    tokio::task::spawn(server);
+    let (addr, mut alice, mut bob) =
+        two_sessions_on_one_service_reaching(tag, [server_addr; 2]).await?;
     crate::register_p2p(
         &mut alice.0,
         &mut alice.1,
@@ -38,7 +46,7 @@ pub async fn two_connected_accounts(tag: &str) -> Result<TwoAccounts, Box<dyn Er
         &mut bob.0,
         &mut bob.1,
         bob.2,
-        SessionSecuritySettings::default(),
+        citadel_sdk::prelude::default_session_security_settings(),
         None::<PreSharedKey>,
     )
     .await?;
@@ -49,11 +57,16 @@ pub async fn two_connected_accounts(tag: &str) -> Result<TwoAccounts, Box<dyn Er
         &mut bob.0,
         &mut bob.1,
         bob.2,
-        SessionSecuritySettings::default(),
+        citadel_sdk::prelude::default_session_security_settings(),
         None::<PreSharedKey>,
     )
     .await?;
-    Ok(TwoAccounts { addr, alice, bob })
+    Ok(TwoAccounts {
+        addr,
+        server_addr,
+        alice,
+        bob,
+    })
 }
 
 pub async fn open_window(addr: SocketAddr) -> Result<Window, Box<dyn Error>> {

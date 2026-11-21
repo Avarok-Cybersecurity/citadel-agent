@@ -1,5 +1,9 @@
 //! `storage`: the kernel's named backends and the host-local KV (R4.5). Keys are namespaced by
 //! app id and scope from the install record, never from these arguments.
+//!
+//! `storage.node.authored` is one KV per node per author: anyone who may view the node writes to
+//! their own, and reads anyone's. The author a write lands under is the session's, never an
+//! argument; `author` on a write may only repeat it.
 
 use crate::{Bytes, Capability};
 use alloc::string::String;
@@ -13,9 +17,13 @@ abi_types! {
         Scope,
         Node { node_id: String },
         Local,
+        /// `author`: whose namespace a read addresses, None the caller's own. A write always
+        /// lands in the caller's own; naming anyone else is refused.
+        NodeAuthored { node_id: String, author: Option<String> },
     }
 
     /// Which store changed (`AppEvent::StorageChanged`).
+    #[derive(Eq)]
     #[serde(rename_all = "snake_case")]
     pub enum StorageBackend {
         User,
@@ -24,6 +32,7 @@ abi_types! {
         Local,
         Blob,
         Files,
+        NodeAuthored { node_id: String, author: String },
     }
 
     pub struct KvGet {
@@ -69,6 +78,24 @@ abi_types! {
         pub next: Option<String>,
     }
 
+    /// One page of every author's keys under `prefix` on `node_id` (`storage.node.authored`),
+    /// by author and then key; pass `next` back as `cursor`.
+    pub struct KvListAuthored {
+        pub node_id: String,
+        pub prefix: String,
+        pub cursor: Option<String>,
+    }
+
+    pub struct AuthoredKey {
+        pub author: String,
+        pub key: String,
+    }
+
+    pub struct AuthoredPage {
+        pub entries: Vec<AuthoredKey>,
+        pub next: Option<String>,
+    }
+
     pub struct BlobPut {
         pub bytes: Bytes,
     }
@@ -111,17 +138,7 @@ impl KvBackend {
             KvBackend::Scope => Capability::StorageScope,
             KvBackend::Node { .. } => Capability::StorageNode,
             KvBackend::Local => Capability::StorageLocal,
-        }
-    }
-}
-
-impl From<KvBackend> for StorageBackend {
-    fn from(b: KvBackend) -> Self {
-        match b {
-            KvBackend::User => StorageBackend::User,
-            KvBackend::Scope => StorageBackend::Scope,
-            KvBackend::Node { node_id } => StorageBackend::Node { node_id },
-            KvBackend::Local => StorageBackend::Local,
+            KvBackend::NodeAuthored { .. } => Capability::StorageNodeAuthored,
         }
     }
 }
@@ -129,7 +146,8 @@ impl From<KvBackend> for StorageBackend {
 macro_rules! backend_decides {
     ($($op:ident),*) => {$(
         impl $op {
-            /// The backend decides the capability: `storage.user`, `.scope`, `.node`, `.local`.
+            /// The backend decides the capability: `storage.user`, `.scope`, `.node`, `.local`,
+            /// `.node.authored`.
             pub const fn required_capability(&self) -> Capability {
                 self.backend.capability()
             }

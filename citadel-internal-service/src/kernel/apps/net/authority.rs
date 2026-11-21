@@ -18,6 +18,20 @@ pub struct KernelGrant {
     /// Whether the install may reach private addresses: its installer still holds the right
     /// to allow it. The member's own grant on this agent is needed as well.
     pub private: bool,
+    /// The manifest's `servers` the install was approved `citadel.session` to, as canonical
+    /// domains (kernel/apps/session). Empty when it was not granted the capability.
+    pub servers: Vec<String>,
+    /// The manifest's `limits.session`: present exactly when `citadel.session` was granted.
+    pub session: Option<SessionLimits>,
+}
+
+/// An install's `limits.session` (`citadel-session-abi.md` §2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionLimits {
+    /// `1..=1_048_576`; the agent also caps every body at `APP_SESSION_MAX_BODY_BYTES`.
+    pub max_msg_bytes: u32,
+    /// `1..=64`; enforced by the host, which meters the guest.
+    pub max_msgs_per_s: u32,
 }
 
 /// What a frame the server sent a session means for host egress.

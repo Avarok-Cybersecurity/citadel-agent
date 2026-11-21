@@ -26,6 +26,12 @@ mod group_responses_more;
 pub use group_responses::*;
 pub use group_responses_more::*;
 mod admission;
+mod app_session;
+pub use app_session::*;
+mod identity;
+pub use identity::*;
+mod peer_identity;
+pub use peer_identity::*;
 mod apps_ihttp;
 mod apps_kv;
 mod apps_net;
@@ -36,6 +42,7 @@ mod notices;
 mod pulled_read;
 mod server_link;
 mod sign_in;
+mod sign_in_ceremony;
 mod sign_in_wire;
 mod supervisor;
 mod turn;
@@ -81,10 +88,11 @@ pub use server_link::{
     ServerConnectionLost, ServerReconnectFailed, ServerReconnected, SignedOutSession,
 };
 pub use sign_in::{
-    FailureReason, RecoveryCodes, SecurityKeyAnswerFailure, SecurityKeyAnswerSuccess,
-    SecurityKeyChallengeNotification, SecurityKeyPurpose, SignInManagementFailure,
-    SignInManagementSuccess, StepUp,
+    FailureReason, RecoverAccountFailure, RecoverAccountSuccess, RecoveryCodes,
+    SecurityKeyAnswerFailure, SecurityKeyAnswerSuccess, SecurityKeyChallengeNotification,
+    SecurityKeyPurpose, SignInManagementFailure, SignInManagementSuccess, StepUp,
 };
+pub use sign_in_ceremony::SecurityKeyCeremony;
 pub use sign_in_wire::{
     FactorKind, SignInCredential, SignInManagementOp, SignInManagementOutcome, SignInPolicy,
 };
@@ -105,6 +113,10 @@ pub use updates::{UpdateAvailable, UpdateInstall, UpdateStatus};
 /// direction turn every error into "empty", which is the exact failure mode
 /// that has already been fixed five times in the agent's request handlers.
 pub const KEY_NOT_FOUND: &str = "Key not found";
+
+/// The identity of these wire types (see build_types_hash.rs): equal in two
+/// binaries exactly when they were built from the same type shapes.
+pub const TYPES_HASH: &str = env!("CITADEL_TYPES_HASH");
 
 /// Length only, for material that is the user's own content.
 ///
@@ -229,6 +241,11 @@ pub struct ConnectSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
     pub request_id: Option<Uuid>,
+    /// The identity an account registered with (`ConnectIdentity`); absent for a typed
+    /// password's account and from an older agent.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub identity: Option<AccountIdentity>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -240,7 +257,7 @@ pub struct ConnectFailure {
     pub message: String,
     pub request_id: Option<Uuid>,
     /// Why, when the UI can act on it: the server's admission check (a Turnstile token) refused
-    /// the attempt. Absent for every other failure, and from an older agent.
+    /// the attempt. Absent for every other failure.
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub reason_code: Option<FailureReason>,
@@ -273,10 +290,15 @@ pub struct RegisterSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
     pub request_id: Option<Uuid>,
-    /// The account's recovery codes, to show the user once. Empty for a server without
-    /// post-quantum sign-in. With `connect_after_register` this response is sent before the
-    /// connect's own.
-    pub recovery_codes: RecoveryCodes,
+    /// The account's 24-word recovery phrase, to show the user once. It also recovers the
+    /// account's files: its seed is the root of the account's RE-VFS key. A server that issues
+    /// none is a registration failure. With `connect_after_register` this response is sent
+    /// before the connect's own.
+    pub recovery_phrase: RecoveryCodes,
+    /// The identity and the server pinned by a `RegisterIdentity`; absent for `Register`.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub identity: Option<AccountIdentity>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -288,7 +310,7 @@ pub struct RegisterFailure {
     pub message: String,
     pub request_id: Option<Uuid>,
     /// Why, when the UI can act on it: the server's admission check (a Turnstile token) refused
-    /// the attempt. Absent for every other failure, and from an older agent.
+    /// the attempt. Absent for every other failure.
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub reason_code: Option<FailureReason>,
@@ -298,6 +320,11 @@ pub struct RegisterFailure {
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub admission_challenge: Option<AdmissionChallengeWire>,
+    /// With `UsernameHeldForAnotherServer`: the server this agent's account of that username
+    /// is on, as a Connect names it. Absent for every other failure.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub held_for_server: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -307,48 +334,33 @@ pub struct ServiceConnectionAccepted {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
     pub request_id: Option<Uuid>,
-    /// This agent hosts a session's ILM and conversations for a connection that
-    /// declares `agent_ilm` (multi-window, 0.8.6). Said in the greeting, the
-    /// first thing on every socket, so a client knows at once whether to
-    /// declare: an older agent does not answer a declaration at all. Its
-    /// greeting has no such field, which is what `false` means here.
-    #[serde(default)]
-    pub agent_ilm: bool,
     /// This agent supervises its hosted accounts' peer connections (redialling them with
     /// no window open), so a window must not auto-connect for them: it sends
-    /// `ConfigCommand::Interest` instead. Absent from an older agent's greeting, which is
-    /// what `false` means.
-    #[serde(default)]
+    /// `ConfigCommand::Interest` instead.
     pub supervises_p2p: bool,
     /// This agent stages a browser file in chunks (`StageUploadChunk`) and sends it with
-    /// `FileSource::StagedUpload`, up to its staging ceiling. Absent from an older agent's
-    /// greeting, which is what `false` means: such an agent takes a browser file only
-    /// inline, as `ByteContents`, up to 16 MiB.
-    #[serde(default)]
+    /// `FileSource::StagedUpload`, up to its staging ceiling.
     pub stages_uploads: bool,
     /// This agent can open a native file dialog (`PickFile`). A build without the
     /// `native-dialogs` feature refuses every `PickFile`, so a UI that knows this up front
-    /// shows its in-page picker instead of a button that cannot work. Absent from an older
-    /// agent's greeting, which is what `false` means.
-    #[serde(default)]
+    /// shows its in-page picker instead of a button that cannot work.
     pub native_picker: bool,
     /// This agent takes a window's console lines (`BrowserConsole`) into the session's opt-in
-    /// diagnostic logs. Absent from an older agent's greeting, which is what `false` means: a
-    /// window never sends that agent a request it cannot parse.
-    #[serde(default)]
+    /// diagnostic logs.
     pub browser_console: bool,
     /// This agent answers the Citadel apps requests (`AppFetch`, `AppKv`, `IhttpSend` and
-    /// their companions). Absent from an older agent's greeting, which is what `false` means:
-    /// a window never sends that agent a request it cannot parse.
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript", ts(as = "Option<bool>", optional))]
+    /// their companions).
     pub apps: bool,
+    /// This agent's `TYPES_HASH`. A page compares it with its WASM client's and,
+    /// when they differ, says the two are out of step before anything fails to
+    /// decode.
+    pub types_hash: String,
 }
 
 impl ServiceConnectionAccepted {
-    /// What this agent says first on every socket: it hosts (0.8.6), stages browser
-    /// uploads, supervises peer connections when `supervises_p2p`, and offers a native
-    /// file dialog when `native_picker`, and takes console lines when `browser_console`.
+    /// What this agent says first on every socket: it stages browser uploads, supervises
+    /// peer connections when `supervises_p2p`, offers a native file dialog when
+    /// `native_picker`, and takes console lines when `browser_console`.
     pub fn greeting(
         connection: Uuid,
         supervises_p2p: bool,
@@ -358,12 +370,12 @@ impl ServiceConnectionAccepted {
         InternalServiceResponse::ServiceConnectionAccepted(Self {
             cid: 0,
             request_id: Some(connection),
-            agent_ilm: true,
             supervises_p2p,
             stages_uploads: true,
             native_picker,
             browser_console,
             apps: true,
+            types_hash: TYPES_HASH.to_string(),
         })
     }
 }
@@ -742,6 +754,13 @@ pub struct PeerConnectSuccess {
     /// Whether a background upgrade may still move the connection off the server relay. `false`
     /// with `server_relay` means it stays relayed.
     pub upgrading: bool,
+    /// The settings the connection was established with: those the two ends agreed in their
+    /// key exchange. When both dialled at once the server merges the two dials at the stronger
+    /// offer, so these need not be the ones this end asked for, nor any offer this end was shown.
+    #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
+    pub session_security_settings: SessionSecuritySettings,
+    /// Whether the key exchange was signed by the identity key pinned for the peer.
+    pub peer_identity: PeerIdentityMark,
     pub request_id: Option<Uuid>,
 }
 
@@ -842,9 +861,7 @@ pub struct PeerConnectNotification {
     pub request_id: Option<Uuid>,
     /// The agent answers this offer itself -- accepts, declines, or leaves it
     /// unanswered by the UI's own rules -- so no window may answer it. Set for an
-    /// account the agent hosts, which is reachable with no window open. An
-    /// agent that predates this never sends it, which is what `false` means.
-    #[serde(default)]
+    /// account the agent hosts, which is reachable with no window open.
     pub answered_by_agent: bool,
 }
 
@@ -1036,7 +1053,7 @@ pub struct ListAllPeersFailure {
     pub request_id: Option<Uuid>,
     /// Why, when the UI can act on it: `Reconnecting` means the agent is bringing the session
     /// back and will answer once it is up, so the poll should pause rather than report an
-    /// error. Absent for every other failure, and from an older agent.
+    /// error. Absent for every other failure.
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub reason: Option<PeerListFailureReason>,
@@ -1052,7 +1069,7 @@ pub struct ListRegisteredPeersFailure {
     pub request_id: Option<Uuid>,
     /// Why, when the UI can act on it: `Reconnecting` means the agent is bringing the session
     /// back and will answer once it is up, so the poll should pause rather than report an
-    /// error. Absent for every other failure, and from an older agent.
+    /// error. Absent for every other failure.
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub reason: Option<PeerListFailureReason>,
@@ -1088,9 +1105,7 @@ pub struct GetSessionsResponse {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
     pub sessions: Vec<SessionInformation>,
-    /// Accounts whose sessions the server ended, until each signs in again. Absent from an
-    /// older agent, hence the default.
-    #[serde(default)]
+    /// Accounts whose sessions the server ended, until each signs in again.
     pub signed_out: Vec<SignedOutSession>,
     pub request_id: Option<Uuid>,
 }
@@ -1278,8 +1293,25 @@ pub enum InternalServiceResponse {
     IhttpSendAccepted(IhttpSendAccepted),
     IhttpSendFailure(IhttpSendFailure),
     IhttpFrameNotification(IhttpFrameNotification),
+    AppSessionState(AppSessionState),
+    AppSessionMessage(AppSessionMessage),
+    AppSessionFailure(AppSessionFailure),
+    IdentitySuccess(IdentitySuccess),
+    IdentityFailure(IdentityFailure),
+    ServerDiscoverySuccess(ServerDiscoverySuccess),
+    ServerDiscoveryFailure(ServerDiscoveryFailure),
+    /// A session's server failed the post-connect identity challenge; it was disconnected.
+    ServerIdentityMismatchNotification(ServerIdentityMismatch),
     /// Results from a batched request, in the same order as input commands
     BatchedResponse(BatchedResponseData),
+    PeerIdentity(PeerIdentityInfo),
+    /// A peer signed with an identity key other than its pinned one; its exchanges are refused
+    /// until the person accepts the key.
+    PeerIdentityKeyChangedNotification(PeerIdentityKeyChanged),
+    PeerIdentityKeyAccepted(PeerIdentityKeyAccepted),
+    PeerIdentityFailure(PeerIdentityFailure),
+    RecoverAccountSuccess(RecoverAccountSuccess),
+    RecoverAccountFailure(RecoverAccountFailure),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, RequestId)]
@@ -1289,19 +1321,22 @@ pub enum InternalServiceRequest {
     Connect {
         request_id: Uuid,
         username: String,
-        /// Absent for a `KeyOnly` account and for a recovery-code sign-in.
+        /// The server the account is on, as the user typed it or as the agent reported it
+        /// (`host[:port]` or a `ws(s)://` URL). Required: the agent signs in only the account
+        /// with this username on THIS server, and refuses (`AccountOnAnotherServer`) rather
+        /// than dial whichever server a same-named account happens to be registered to.
+        server_address: String,
+        /// Absent for a `KeyOnly` account and for a recovery-phrase sign-in.
         #[cfg_attr(feature = "typescript", ts(type = "number[] | null"))]
         password: Option<SecBuffer>,
-        /// Whether this window can answer a `SecurityKeyChallengeNotification`. A client from
-        /// before post-quantum sign-in sends neither this nor `recovery_code`.
-        #[serde(default)]
-        #[cfg_attr(feature = "typescript", ts(as = "Option<bool>", optional))]
+        /// Whether this window can answer a `SecurityKeyChallengeNotification`.
         security_key: bool,
-        /// A recovery code as typed. It signs in once, to a session that may only add a
-        /// security key, set the sign-in policy or sign out.
+        /// The account's 24-word recovery phrase as typed (any case and spacing). It signs in to
+        /// the recovery console: a session that may only manage how the account signs in. The
+        /// agent binds it to the account's server (`kernel/recovery_domain.rs`).
         #[serde(default)]
         #[cfg_attr(feature = "typescript", ts(type = "number[] | null", optional))]
-        recovery_code: Option<SecBuffer>,
+        recovery_phrase: Option<SecBuffer>,
         /// A Turnstile token for a server that checks fresh sign-ins (Turnstile action
         /// `sign-in`). Never logged.
         #[serde(default)]
@@ -1368,6 +1403,103 @@ pub enum InternalServiceRequest {
         #[debug(with = secret_debug_fmt)]
         #[cfg_attr(feature = "typescript", ts(optional = nullable))]
         admission_token: Option<String>,
+    },
+    /// Whether this agent holds an identity, and whether it is unlocked.
+    IdentityStatus {
+        request_id: Uuid,
+    },
+    /// Draw a new identity seed, seal it under `unlock_password`, and hold it unlocked.
+    IdentityCreate {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        unlock_password: SecBuffer,
+    },
+    IdentityUnlock {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        unlock_password: SecBuffer,
+    },
+    /// Forget the unsealed identity now (it is also forgotten after the configured idle time).
+    IdentityLock {
+        request_id: Uuid,
+    },
+    /// The recovery phrase, for a request that proves the unlock password again.
+    IdentityExport {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        unlock_password: SecBuffer,
+    },
+    /// Sign a "Sign in with Citadel" attempt with the identity key (contracts
+    /// `sign-in-with-citadel.md` §1a, §8; `identity-api.md` §7a). The signed `origin` is the
+    /// `Origin` this connection's handshake carried, never a value of this request; a
+    /// connection without one is refused `NoBrowserOrigin`. `unlock_password` is re-proven
+    /// for every signature, and the lock state is left as it was. `issuer` and `aud` are 1 to
+    /// 255 bytes, `nonce` and `challenge` exactly 32, else `BadField`.
+    IdentitySignChallenge {
+        request_id: Uuid,
+        /// The issuer's canonical domain (`work.avarok.net`).
+        issuer: String,
+        /// The client the person is consenting to (`sw-mcp`).
+        aud: String,
+        /// The issuer's attempt nonce.
+        #[debug(with = bytes_debug_fmt)]
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        nonce: Vec<u8>,
+        /// `SHA3-256(verifier)` from the sign-in link.
+        #[debug(with = bytes_debug_fmt)]
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        challenge: Vec<u8>,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        unlock_password: SecBuffer,
+    },
+    /// Recreate an identity from its 24-word phrase (space separated) and seal it under
+    /// `unlock_password`. Refused while this agent holds an identity.
+    IdentityImport {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        phrase: SecBuffer,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        unlock_password: SecBuffer,
+    },
+    /// The identity's signed binding to account `cid`'s username on its pinned domain.
+    IdentityBinding {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+    },
+    /// Fetch and verify `https://<server_addr>/.well-known/citadel`, changing nothing.
+    ServerDiscovery {
+        request_id: Uuid,
+        server_addr: String,
+    },
+    /// Register `handle@<canonical domain>` with the unlocked identity's derived password,
+    /// pin the server, then connect and challenge it (`server-identity-challenge.md` §3).
+    RegisterIdentity {
+        request_id: Uuid,
+        /// What the person typed: a domain, `host:port`, or a URL.
+        server_addr: String,
+        handle: String,
+        full_name: String,
+        discovery: IdentityDiscovery,
+        #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
+        session_security_settings: SessionSecuritySettings,
+        #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
+        server_password: Option<PreSharedKey>,
+        #[serde(default)]
+        #[debug(with = secret_debug_fmt)]
+        #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+        admission_token: Option<String>,
+    },
+    /// Sign account `cid` in by its pinned username and domain (never recomputed) with the
+    /// derived password, then challenge the server; a mismatch disconnects it.
+    ConnectIdentity {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
+        session_security_settings: SessionSecuritySettings,
+        #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
+        server_password: Option<PreSharedKey>,
     },
     Message {
         request_id: Uuid,
@@ -1854,15 +1986,13 @@ pub enum InternalServiceRequest {
         message_id: String,
         patch: Box<MessagePatch>,
     },
-    /// Delete the conversation's history. `include_unattributed` also removes a
-    /// record that predates ownership stamps (an explicit "Clear Chat History").
+    /// Delete this account's history with the peer.
     ConversationClear {
         request_id: Uuid,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         peer_cid: u64,
-        include_unattributed: bool,
     },
     ConversationList {
         request_id: Uuid,
@@ -2057,12 +2187,97 @@ pub enum InternalServiceRequest {
         #[debug(with = plaintext_debug_fmt)]
         frame: Vec<u8>,
     },
+    /// Open, or find, this install's `citadel.session` to `server` for `acting_username`; see
+    /// `app_session.rs`. Answered with `AppSessionState` or `AppSessionFailure`.
+    AppSessionOpen {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        app_id: String,
+        install_id: String,
+        acting_username: String,
+        server: String,
+    },
+    /// Send `body` to the server over the install's open `session`. Answered with nothing on
+    /// success; `AppSessionFailure` otherwise.
+    AppSessionSend {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        install_id: String,
+        session: u32,
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[debug(with = plaintext_debug_fmt)]
+        body: Vec<u8>,
+    },
+    /// Close the install's `session`. Answered with `AppSessionState` (`closed`) or
+    /// `AppSessionFailure`.
+    AppSessionClose {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        install_id: String,
+        session: u32,
+    },
     /// Execute multiple requests in parallel, returning results in the same order as input.
     /// This enables single-roundtrip batch operations for efficiency.
     Batched {
         request_id: Uuid,
         /// The list of commands to execute in parallel
         commands: Vec<InternalServiceRequest>,
+    },
+    /// Both ends' identity fingerprints for the pair, and a changed key waiting for the
+    /// person's acceptance, if any (`PeerIdentityInfo`).
+    GetPeerIdentity {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+    },
+    /// Pin the peer's new identity key, which `PeerIdentityKeyChangedNotification` reported:
+    /// the person compared it and accepted it. `fingerprint` names the key accepted, so a key
+    /// that changed again since is not accepted with it. Never sent without the person's say.
+    AcceptPeerIdentityKey {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        peer_cid: u64,
+        fingerprint: String,
+    },
+    /// Recover `username` at `server_addr` with its recovery phrase, on a device that may hold no
+    /// bundle for it, then sign in with the phrase to the recovery console. When this agent does
+    /// not hold the account, the server installs this device's bundle in place of every other
+    /// device's (`RecoverAccountSuccess`, sent first); when it does, nothing is revoked and only
+    /// the sign-in's answer comes. Either way the last answer is `ConnectSuccess` (a recovery
+    /// console session) or a failure.
+    RecoverAccount {
+        request_id: Uuid,
+        /// As `Register::server_addr`: `host[:port]` or a `ws(s)://` URL.
+        server_addr: String,
+        username: String,
+        /// The 24 words as typed. Never logged.
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        phrase: SecBuffer,
+        /// What to call this device among the account's security events (1 to 64 characters).
+        device_label: String,
+        /// A Turnstile token for a server that asks for one. Never logged. A token is single-use,
+        /// and the server asks for one twice (the recovery, then the phrase sign-in, both checked
+        /// as action `recover`): on a device that does not hold the account it admits the
+        /// recovery, and the sign-in after it goes without one; on a server that requires the
+        /// check, that sign-in answers `ConnectFailure` (`AdmissionRequired`, with the challenge)
+        /// under this request id after `RecoverAccountSuccess`, and the window sends
+        /// `RecoverAccount` again with a fresh token. On a device that holds the account (the
+        /// second send included) nothing is recovered and the token admits the sign-in.
+        #[serde(default)]
+        #[debug(with = secret_debug_fmt)]
+        #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+        admission_token: Option<String>,
+        #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
+        session_security_settings: SessionSecuritySettings,
+        #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
+        server_password: Option<PreSharedKey>,
     },
 }
 
@@ -2176,6 +2391,10 @@ pub struct SessionInformation {
     /// workspaces. `None` for an account registered before the agent recorded it.
     #[serde(default)]
     pub server_host: Option<String>,
+    /// The identity the session's account registered with, and its pinned server.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub identity: Option<AccountIdentity>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -2206,7 +2425,8 @@ pub struct AccountInformation {
     /// The `host[:port]` the account registered to, as the user typed it (a hosted
     /// tenant as `acme.work.avarok.net`, an IP as the IP). The resolved address
     /// (`SessionInformation::server_address`) is, behind an edge, shared by many
-    /// workspaces. `None` for an account registered before the agent recorded it.
+    /// workspaces. This is the server a `Connect` for the account must name. `None` when
+    /// it could not be read.
     #[serde(default)]
     pub server_host: Option<String>,
     /// The highest session security level this account can sign in at: the level it
@@ -2216,6 +2436,11 @@ pub struct AccountInformation {
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(type = "SecurityLevel | null"))]
     pub registered_security_level: Option<SecurityLevel>,
+    /// The identity the account registered with, and its pinned server: what the UI lists
+    /// for a `ConnectIdentity`. `None` for a typed password's account.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub identity: Option<AccountIdentity>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -2265,6 +2490,8 @@ impl InternalServiceRequest {
     pub fn session_cid(&self) -> Option<u64> {
         match self {
             Self::Message { cid, .. } => Some(*cid),
+            Self::GetPeerIdentity { cid, .. } => Some(*cid),
+            Self::AcceptPeerIdentityKey { cid, .. } => Some(*cid),
             Self::Disconnect { cid, .. } => Some(*cid),
             Self::MediaOpen { cid, .. } => Some(*cid),
             Self::MediaSend { cid, .. } => Some(*cid),
@@ -2315,6 +2542,7 @@ impl InternalServiceRequest {
             | Self::SetAccountPreferences { cid, .. }
             | Self::GetAccountPreferences { cid, .. } => Some(*cid),
             Self::SignInManagement { cid, .. } => Some(*cid),
+            Self::IdentityBinding { cid, .. } => Some(*cid),
             Self::BrowserConsole { cid, .. } => Some(*cid),
             Self::AppFetch { cid, .. }
             | Self::AppFetchCredit { cid, .. }
@@ -2322,6 +2550,9 @@ impl InternalServiceRequest {
             | Self::GetAppNetUsage { cid, .. }
             | Self::AppKv { cid, .. }
             | Self::IhttpSend { cid, .. }
+            | Self::AppSessionOpen { cid, .. }
+            | Self::AppSessionSend { cid, .. }
+            | Self::AppSessionClose { cid, .. }
             | Self::AppsGetAgentSettings { cid, .. }
             | Self::AppsSetAgentSettings { cid, .. } => Some(*cid),
             // Exhaustive on purpose: no `_` arm.
@@ -2333,7 +2564,8 @@ impl InternalServiceRequest {
             // reliable place to catch it.
             //
             // These six legitimately precede or span a session:
-            //   Connect / Register     — there is no session yet.
+            //   Connect / Register /
+            //   RecoverAccount         — there is no session yet.
             //   Batched                — the inner requests are gated one by one.
             //   ConnectionManagement   — carries its target inside
             //                            `management_command`; gated in
@@ -2350,8 +2582,23 @@ impl InternalServiceRequest {
             //   SecurityKeyDecline     — a sign-in's challenge has no session yet;
             //                            gated by the connections the challenge was
             //                            sent to (kernel/sign_in/key_relay.rs).
+            //   Identity* / ServerDiscovery /
+            //   RegisterIdentity /
+            //   ConnectIdentity        — the agent's identity, and accounts with no
+            //                            session yet (kernel/identity).
             Self::Connect { .. }
             | Self::Register { .. }
+            | Self::RecoverAccount { .. }
+            | Self::IdentityStatus { .. }
+            | Self::IdentityCreate { .. }
+            | Self::IdentityUnlock { .. }
+            | Self::IdentityLock { .. }
+            | Self::IdentityExport { .. }
+            | Self::IdentitySignChallenge { .. }
+            | Self::IdentityImport { .. }
+            | Self::ServerDiscovery { .. }
+            | Self::RegisterIdentity { .. }
+            | Self::ConnectIdentity { .. }
             | Self::Batched { .. }
             | Self::ConnectionManagement { .. }
             | Self::GetSessions { .. }
@@ -2373,6 +2620,26 @@ impl InternalServiceRequest {
 #[path = "pending_invites_tests.rs"]
 mod pending_invites_tests;
 
+/// The session settings the wire tests send. Chosen here, not defaulted: the SDK has no default
+/// for them, and what a test sends should be what it says.
+#[cfg(test)]
+pub(crate) fn test_session_security_settings() -> SessionSecuritySettings {
+    use citadel_types::crypto::{
+        CryptoParameters, EncryptionAlgorithm, HeaderObfuscatorSettings, KemAlgorithm, SecrecyMode,
+        SecurityLevel, SigAlgorithm,
+    };
+    SessionSecuritySettings {
+        security_level: SecurityLevel::Standard,
+        secrecy_mode: SecrecyMode::BestEffort,
+        crypto_params: CryptoParameters::new(
+            EncryptionAlgorithm::AES_GCM_256,
+            KemAlgorithm::MlKem1024Fips203,
+            SigAlgorithm::None,
+        ),
+        header_obfuscator_settings: HeaderObfuscatorSettings::default(),
+    }
+}
+
 #[cfg(test)]
 mod browser_console_wire_tests;
 #[cfg(test)]
@@ -2382,6 +2649,8 @@ mod pulled_read_wire_tests;
 mod sign_in_wire_tests;
 #[cfg(test)]
 mod staged_upload_wire_tests;
+#[cfg(test)]
+mod types_hash_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2392,6 +2661,7 @@ mod tests {
         let success_response = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
             cid: 0,
             request_id: None,
+            identity: None,
         });
         let error_response = InternalServiceResponse::ConnectFailure(ConnectFailure {
             cid: 0,
@@ -2409,6 +2679,7 @@ mod tests {
         let success_response = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
             cid: 0,
             request_id: None,
+            identity: None,
         });
         let notification_response =
             InternalServiceResponse::PeerRegisterNotification(PeerRegisterNotification {
@@ -2427,13 +2698,14 @@ mod tests {
         let request = InternalServiceRequest::Connect {
             request_id,
             username: "test".to_string(),
+            server_address: "bench.work.avarok.net".to_string(),
             password: Some(SecBuffer::from(vec![])),
             security_key: false,
-            recovery_code: None,
+            recovery_phrase: None,
             connect_mode: ConnectMode::Standard { force_login: false },
             udp_mode: UdpMode::Enabled,
             keep_alive_timeout: None,
-            session_security_settings: SessionSecuritySettings::default(),
+            session_security_settings: test_session_security_settings(),
             server_password: None,
             admission_token: None,
         };
@@ -2446,6 +2718,7 @@ mod tests {
         let request = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
             cid,
             request_id: None,
+            identity: None,
         });
 
         assert_eq!(request.cid(), cid);

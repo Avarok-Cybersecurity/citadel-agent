@@ -27,6 +27,40 @@ pub struct PendingSend {
     /// The browser payload's request directory, for a `ByteContents` send: removed
     /// when the transfer ends (requests/file/browser_payload.rs).
     pub payload_dir: Option<PathBuf>,
+    /// For a RE-VFS store: the index entry it makes once complete, and its hold on the
+    /// account's key (kernel/revfs_seed).
+    pub(crate) revfs_store: Option<PendingStore>,
+}
+
+/// A RE-VFS store in flight.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingStore {
+    pub entry: crate::kernel::revfs_seed::index::IndexEntry,
+    pub token: Option<crate::kernel::revfs_seed::UseToken>,
+}
+
+impl PendingStore {
+    /// A store of `path` at `level` to the server (`peer_cid` `None`) or to that peer, sealed
+    /// under `key`.
+    pub(crate) fn settled(
+        path: &std::path::Path,
+        level: citadel_sdk::prelude::SecurityLevel,
+        peer_cid: Option<u64>,
+        key: &citadel_sdk::prelude::RevfsKey,
+        token: Option<crate::kernel::revfs_seed::UseToken>,
+    ) -> Self {
+        use crate::kernel::revfs_seed::index::{IndexEntry, Location, Stage};
+        Self {
+            entry: IndexEntry {
+                location: peer_cid.map_or(Location::Server, Location::Peer),
+                path: path.to_string_lossy().into_owned(),
+                level: level.value(),
+                key_id: key.id(),
+                stage: Stage::Settled,
+            },
+            token,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -56,6 +90,7 @@ mod tests {
         PendingSend {
             request_id,
             payload_dir: None,
+            revfs_store: None,
         }
     }
 

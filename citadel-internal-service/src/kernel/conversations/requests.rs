@@ -179,13 +179,9 @@ impl Engine {
                 request_id,
                 cid,
                 peer_cid,
-                include_unattributed,
             } => {
                 let _held = self.lock(cid, peer_cid).await;
-                if !store(io, cid)
-                    .delete(peer_cid, include_unattributed)
-                    .await?
-                {
+                if !store(io, cid).delete(peer_cid).await? {
                     return Err("This conversation is not this account's to clear".to_string());
                 }
                 let change = Change {

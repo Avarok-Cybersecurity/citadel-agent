@@ -20,10 +20,6 @@ fn a_piggybacked_ack_rides_uncompressed_and_comes_back_out() {
             compression: None,
         },
     });
-    assert!(
-        bincode2::deserialize::<Legacy>(&bytes).is_err(),
-        "a legacy peer must not be able to mistake an extended frame for a plain one"
-    );
     assert_eq!(
         data_of(decode_notification(&bytes)),
         (ALICE, BOB, ID, b"short reply".to_vec(), Some(ID - 3))
@@ -31,7 +27,7 @@ fn a_piggybacked_ack_rides_uncompressed_and_comes_back_out() {
 }
 
 #[test]
-fn compression_that_does_not_pay_falls_back_to_the_legacy_frame() {
+fn compression_that_does_not_pay_falls_back_to_the_plain_frame() {
     // Below the threshold, so the codec is never even tried.
     let contents = b"tiny".to_vec();
     let bytes = frame_bytes(OutboundFrame {
@@ -44,14 +40,14 @@ fn compression_that_does_not_pay_falls_back_to_the_legacy_frame() {
             )),
         },
     });
-    let legacy = bincode2::serialize(&Legacy::Message {
+    let plain = bincode2::serialize(&WireWrapper::Message {
         source: ALICE,
         destination: BOB,
         message_id: ID,
         contents,
     })
     .expect("serialize");
-    assert_eq!(bytes, legacy);
+    assert_eq!(bytes, plain);
 }
 
 #[test]

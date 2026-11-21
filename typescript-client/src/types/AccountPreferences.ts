@@ -11,6 +11,5 @@ import type { PeerSecurityMinimum } from "./PeerSecurityMinimum";
 export type AccountPreferences = { send_read_receipts: boolean, accept_requests_from_strangers: boolean, notify_on_screenshot: boolean, notification_preview: NotificationPreview, retention: Array<PeerRetention>, 
 /**
  * Chats with a level above Standard; an absent chat admits every offer.
- * Absent from a UI that predates it, which pushed no minimum.
  */
 security_minimums: Array<PeerSecurityMinimum>, };

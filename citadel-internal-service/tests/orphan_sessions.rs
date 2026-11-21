@@ -7,6 +7,7 @@ mod tests {
         server_info_skip_cert_verification, RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
+    use citadel_internal_service_test_common::node_settings::TestNode;
     use citadel_internal_service_types::{
         ConfigCommand, InternalServiceRequest, InternalServiceResponse,
     };
@@ -29,6 +30,7 @@ mod tests {
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service = NodeBuilder::default()
@@ -36,6 +38,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -112,6 +115,7 @@ mod tests {
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service = NodeBuilder::default()
@@ -119,6 +123,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -204,6 +209,7 @@ mod tests {
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service = NodeBuilder::default()
@@ -211,6 +217,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);

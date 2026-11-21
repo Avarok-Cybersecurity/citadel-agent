@@ -10,6 +10,7 @@ import type { BrowserConsoleEntry } from "./BrowserConsoleEntry";
 import type { ConfigCommand } from "./ConfigCommand";
 import type { ConversationMessage } from "./ConversationMessage";
 import type { FileSource } from "./FileSource";
+import type { IdentityDiscovery } from "./IdentityDiscovery";
 import type { MessagePatch } from "./MessagePatch";
 import type { MessageType } from "./MessageType";
 import type { PeerTurnConfig } from "./PeerTurnConfig";
@@ -18,19 +19,26 @@ import type { StepUp } from "./StepUp";
 
 export type InternalServiceRequest = { "Connect": { request_id: string, username: string, 
 /**
- * Absent for a `KeyOnly` account and for a recovery-code sign-in.
+ * The server the account is on, as the user typed it or as the agent reported it
+ * (`host[:port]` or a `ws(s)://` URL). Required: the agent signs in only the account
+ * with this username on THIS server, and refuses (`AccountOnAnotherServer`) rather
+ * than dial whichever server a same-named account happens to be registered to.
+ */
+server_address: string, 
+/**
+ * Absent for a `KeyOnly` account and for a recovery-phrase sign-in.
  */
 password: number[] | null, 
 /**
- * Whether this window can answer a `SecurityKeyChallengeNotification`. A client from
- * before post-quantum sign-in sends neither this nor `recovery_code`.
+ * Whether this window can answer a `SecurityKeyChallengeNotification`.
  */
-security_key?: boolean, 
+security_key: boolean, 
 /**
- * A recovery code as typed. It signs in once, to a session that may only add a
- * security key, set the sign-in policy or sign out.
+ * The account's 24-word recovery phrase as typed (any case and spacing). It signs in to
+ * the recovery console: a session that may only manage how the account signs in. The
+ * agent binds it to the account's server (`kernel/recovery_domain.rs`).
  */
-recovery_code?: number[] | null, 
+recovery_phrase?: number[] | null, 
 /**
  * A Turnstile token for a server that checks fresh sign-ins (Turnstile action
  * `sign-in`). Never logged.
@@ -70,7 +78,27 @@ server_addr: string, full_name: string, username: string, proposed_password: num
  * `connect_after_register` against such a server the connect is refused with
  * `admission_required` and the window signs in with a fresh token. Never logged.
  */
-admission_token?: string | null, } } | { "Message": { request_id: string, message: number[], cid: bigint, peer_cid: bigint | null, security_level: SecurityLevel, } } | { "Disconnect": { request_id: string, cid: bigint, } } | { "MediaOpen": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "MediaSend": { request_id: string, cid: bigint, peer_cid: bigint, 
+admission_token?: string | null, } } | { "IdentityStatus": { request_id: string, } } | { "IdentityCreate": { request_id: string, unlock_password: number[], } } | { "IdentityUnlock": { request_id: string, unlock_password: number[], } } | { "IdentityLock": { request_id: string, } } | { "IdentityExport": { request_id: string, unlock_password: number[], } } | { "IdentitySignChallenge": { request_id: string, 
+/**
+ * The issuer's canonical domain (`work.avarok.net`).
+ */
+issuer: string, 
+/**
+ * The client the person is consenting to (`sw-mcp`).
+ */
+aud: string, 
+/**
+ * The issuer's attempt nonce.
+ */
+nonce: number[], 
+/**
+ * `SHA3-256(verifier)` from the sign-in link.
+ */
+challenge: number[], unlock_password: number[], } } | { "IdentityImport": { request_id: string, phrase: number[], unlock_password: number[], } } | { "IdentityBinding": { request_id: string, cid: bigint, } } | { "ServerDiscovery": { request_id: string, server_addr: string, } } | { "RegisterIdentity": { request_id: string, 
+/**
+ * What the person typed: a domain, `host:port`, or a URL.
+ */
+server_addr: string, handle: string, full_name: string, discovery: IdentityDiscovery, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, admission_token?: string | null, } } | { "ConnectIdentity": { request_id: string, cid: bigint, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Message": { request_id: string, message: number[], cid: bigint, peer_cid: bigint | null, security_level: SecurityLevel, } } | { "Disconnect": { request_id: string, cid: bigint, } } | { "MediaOpen": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "MediaSend": { request_id: string, cid: bigint, peer_cid: bigint, 
 /**
  * Which stream within the call: audio, main video, or thumbnail video.
  */
@@ -132,7 +160,7 @@ max_msg_bytes: number,
  * The install's manifest `limits.topics.max_msgs_per_s`, per sender. At most
  * `TOPIC_MAX_MSGS_PER_S_CEILING`.
  */
-max_msgs_per_s: number, } } | { "GroupLeave": { cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupEnd": { cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupMessage": { cid: bigint, message: number[], group_key: MessageGroupKey, request_id: string, } } | { "GroupInvite": { cid: bigint, peer_cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupRespondRequest": { cid: bigint, peer_cid: bigint, group_key: MessageGroupKey, response: boolean, request_id: string, invitation: boolean, } } | { "GroupKick": { cid: bigint, peer_cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupListGroupsFor": { cid: bigint, peer_cid: bigint | null, request_id: string, } } | { "GroupListJoined": { cid: bigint, request_id: string, } } | { "GroupRequestJoin": { cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "ConnectionManagement": { request_id: string, management_command: ConfigCommand, } } | { "ConversationSend": { request_id: string, cid: bigint, peer_cid: bigint, content: string, message_type: MessageType, reply_to: string | null, mentions: Array<string> | null, attachments: Array<Attachment> | null, document_id: string | null, document_title: string | null, security_level: SecurityLevel, } } | { "ConversationResend": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, } } | { "ConversationEdit": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, contents: string, } } | { "ConversationDelete": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, } } | { "ConversationReact": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, emoji: string, active: boolean, } } | { "ConversationMarkRead": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "ConversationRecord": { request_id: string, cid: bigint, peer_cid: bigint, message: ConversationMessage, } } | { "ConversationPatch": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, patch: MessagePatch, } } | { "ConversationClear": { request_id: string, cid: bigint, peer_cid: bigint, include_unattributed: boolean, } } | { "ConversationList": { request_id: string, cid: bigint, } } | { "ConversationPage": { request_id: string, cid: bigint, peer_cid: bigint, page: number | null, } } | { "SetAccountPreferences": { request_id: string, cid: bigint, preferences: AccountPreferences, } } | { "GetAccountPreferences": { request_id: string, cid: bigint, } } | { "NoticeSubscribe": { request_id: string, token: string, } } | { "NoticeSetMuted": { request_id: string, token: string, cid: bigint, muted: boolean, } } | { "UpdateGetStatus": { request_id: string, } } | { "UpdateCheckNow": { request_id: string, } } | { "UpdateApply": { request_id: string, } } | { "UpdateSetSettings": { request_id: string, auto_install: boolean, } } | { "AppsGetAgentSettings": { request_id: string, cid: bigint, } } | { "AppsSetAgentSettings": { request_id: string, cid: bigint, private_network: boolean, } } | { "UpdateInstallResult": { request_id: string, token: string, version: string, error: string | null, } } | { "SendReliable": { request_id: string, cid: bigint, peer_cid: bigint, message: number[], security_level: SecurityLevel, 
+max_msgs_per_s: number, } } | { "GroupLeave": { cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupEnd": { cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupMessage": { cid: bigint, message: number[], group_key: MessageGroupKey, request_id: string, } } | { "GroupInvite": { cid: bigint, peer_cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupRespondRequest": { cid: bigint, peer_cid: bigint, group_key: MessageGroupKey, response: boolean, request_id: string, invitation: boolean, } } | { "GroupKick": { cid: bigint, peer_cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupListGroupsFor": { cid: bigint, peer_cid: bigint | null, request_id: string, } } | { "GroupListJoined": { cid: bigint, request_id: string, } } | { "GroupRequestJoin": { cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "ConnectionManagement": { request_id: string, management_command: ConfigCommand, } } | { "ConversationSend": { request_id: string, cid: bigint, peer_cid: bigint, content: string, message_type: MessageType, reply_to: string | null, mentions: Array<string> | null, attachments: Array<Attachment> | null, document_id: string | null, document_title: string | null, security_level: SecurityLevel, } } | { "ConversationResend": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, } } | { "ConversationEdit": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, contents: string, } } | { "ConversationDelete": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, } } | { "ConversationReact": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, emoji: string, active: boolean, } } | { "ConversationMarkRead": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "ConversationRecord": { request_id: string, cid: bigint, peer_cid: bigint, message: ConversationMessage, } } | { "ConversationPatch": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, patch: MessagePatch, } } | { "ConversationClear": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "ConversationList": { request_id: string, cid: bigint, } } | { "ConversationPage": { request_id: string, cid: bigint, peer_cid: bigint, page: number | null, } } | { "SetAccountPreferences": { request_id: string, cid: bigint, preferences: AccountPreferences, } } | { "GetAccountPreferences": { request_id: string, cid: bigint, } } | { "NoticeSubscribe": { request_id: string, token: string, } } | { "NoticeSetMuted": { request_id: string, token: string, cid: bigint, muted: boolean, } } | { "UpdateGetStatus": { request_id: string, } } | { "UpdateCheckNow": { request_id: string, } } | { "UpdateApply": { request_id: string, } } | { "UpdateSetSettings": { request_id: string, auto_install: boolean, } } | { "AppsGetAgentSettings": { request_id: string, cid: bigint, } } | { "AppsSetAgentSettings": { request_id: string, cid: bigint, private_network: boolean, } } | { "UpdateInstallResult": { request_id: string, token: string, version: string, error: string | null, } } | { "SendReliable": { request_id: string, cid: bigint, peer_cid: bigint, message: number[], security_level: SecurityLevel, 
 /**
  * "json", "text", "yjs-update", "opaque", "cbor-command", or none.
  */
@@ -140,8 +168,31 @@ compression_hint: string | null, } } | { "SecurityKeyAnswer": { request_id: stri
 /**
  * The 32-byte WebAuthn PRF output. Handed to the SDK and wiped; never logged.
  */
-prf_output: number[], } } | { "SecurityKeyDecline": { request_id: string, challenge_id: string, reason: string, } } | { "SignInManagement": { request_id: string, cid: bigint, op: SignInManagementOp, step_up: StepUp, } } | { "BrowserConsole": { request_id: string, cid: bigint, entries: Array<BrowserConsoleEntry>, } } | { "AppFetch": { request_id: string, cid: bigint, app_id: string, install_id: string, grant: AppNetGrant, request: AppHttpRequest, stream: boolean, } } | { "AppFetchCredit": { request_id: string, cid: bigint, fetch_id: string, n: number, } } | { "AppFetchCancel": { request_id: string, cid: bigint, fetch_id: string, } } | { "GetAppNetUsage": { request_id: string, cid: bigint, install_id: string, } } | { "AppKv": { request_id: string, cid: bigint, namespace: AppKvNamespace, op: AppKvOp, } } | { "IhttpSend": { request_id: string, cid: bigint, peer_cid: bigint, frame: number[], } } | { "Batched": { request_id: string, 
+prf_output: number[], } } | { "SecurityKeyDecline": { request_id: string, challenge_id: string, reason: string, } } | { "SignInManagement": { request_id: string, cid: bigint, op: SignInManagementOp, step_up: StepUp, } } | { "BrowserConsole": { request_id: string, cid: bigint, entries: Array<BrowserConsoleEntry>, } } | { "AppFetch": { request_id: string, cid: bigint, app_id: string, install_id: string, grant: AppNetGrant, request: AppHttpRequest, stream: boolean, } } | { "AppFetchCredit": { request_id: string, cid: bigint, fetch_id: string, n: number, } } | { "AppFetchCancel": { request_id: string, cid: bigint, fetch_id: string, } } | { "GetAppNetUsage": { request_id: string, cid: bigint, install_id: string, } } | { "AppKv": { request_id: string, cid: bigint, namespace: AppKvNamespace, op: AppKvOp, } } | { "IhttpSend": { request_id: string, cid: bigint, peer_cid: bigint, frame: number[], } } | { "AppSessionOpen": { request_id: string, cid: bigint, app_id: string, install_id: string, acting_username: string, server: string, } } | { "AppSessionSend": { request_id: string, cid: bigint, install_id: string, session: number, body: number[], } } | { "AppSessionClose": { request_id: string, cid: bigint, install_id: string, session: number, } } | { "Batched": { request_id: string, 
 /**
  * The list of commands to execute in parallel
  */
-commands: Array<InternalServiceRequest>, } };
+commands: Array<InternalServiceRequest>, } } | { "GetPeerIdentity": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "AcceptPeerIdentityKey": { request_id: string, cid: bigint, peer_cid: bigint, fingerprint: string, } } | { "RecoverAccount": { request_id: string, 
+/**
+ * As `Register::server_addr`: `host[:port]` or a `ws(s)://` URL.
+ */
+server_addr: string, username: string, 
+/**
+ * The 24 words as typed. Never logged.
+ */
+phrase: number[], 
+/**
+ * What to call this device among the account's security events (1 to 64 characters).
+ */
+device_label: string, 
+/**
+ * A Turnstile token for a server that asks for one. Never logged. A token is single-use,
+ * and the server asks for one twice (the recovery, then the phrase sign-in, both checked
+ * as action `recover`): on a device that does not hold the account it admits the
+ * recovery, and the sign-in after it goes without one; on a server that requires the
+ * check, that sign-in answers `ConnectFailure` (`AdmissionRequired`, with the challenge)
+ * under this request id after `RecoverAccountSuccess`, and the window sends
+ * `RecoverAccount` again with a fresh token. On a device that holds the account (the
+ * second send included) nothing is recovered and the token admits the sign-in.
+ */
+admission_token?: string | null, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } };

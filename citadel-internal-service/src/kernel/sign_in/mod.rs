@@ -7,6 +7,8 @@
 
 pub(crate) mod factors;
 pub(crate) mod key_relay;
+mod key_wire;
+pub(crate) mod phrase;
 pub(crate) mod recovery;
 
 use crate::kernel::reconnect::Reauth;
@@ -29,7 +31,7 @@ pub(crate) struct SessionSignIn<R: Ratchet> {
 }
 
 impl<T, R: Ratchet> CitadelWorkspaceService<T, R> {
-    /// Whether `cid` is a session signed in with a recovery code.
+    /// Whether `cid` is a recovery console session (signed in with the phrase or a code).
     pub(crate) fn is_recovery_session(&self, cid: u64) -> bool {
         self.server_connection_map
             .read()
@@ -59,7 +61,7 @@ pub(crate) fn open<R: Ratchet>(
 }
 
 /// How the session can be opened again without its user. Only a password-only sign-in can be
-/// repeated unprompted: a key needs a touch, and a recovery code signs in once.
+/// repeated unprompted: a key needs a touch, and the recovery phrase is typed by the user.
 pub(crate) fn reauth(scope: SessionScope, key_asked: bool, password: Option<SecBuffer>) -> Reauth {
     match (scope, key_asked, password) {
         (SessionScope::Recovery, _, _) => Reauth::NeedsUser(RECOVERY_REAUTH),
@@ -75,8 +77,21 @@ pub(crate) fn failure_reason(code: citadel_io::ErrorCode) -> Option<FailureReaso
     match code {
         ErrorCode::PqSignInAdmissionRequired => Some(FailureReason::AdmissionRequired),
         ErrorCode::PqSignInAdmissionFailed => Some(FailureReason::AdmissionFailed),
+        ErrorCode::ProtocolVersionUnsupported => Some(FailureReason::ProtocolVersionUnsupported),
+        ErrorCode::RevfsSealUnrecognised => Some(FailureReason::RevfsSealUnrecognised),
         _ => None,
     }
+}
+
+/// The reason a refused management change carries for the UI, when it has one: an
+/// `AddSecurityKey` the server cannot take, because it has not enabled security keys (it names
+/// no relying party).
+pub(crate) fn management_failure_reason(
+    adds_a_key: bool,
+    code: citadel_io::ErrorCode,
+) -> Option<FailureReason> {
+    (adds_a_key && matches!(code, citadel_io::ErrorCode::PqSignInUnavailable))
+        .then_some(FailureReason::ServerCannotEnrolSecurityKeys)
 }
 
 /// The check a refused sign-in or registration asks the window to show, when the server's
@@ -96,7 +111,7 @@ pub(crate) fn admission_challenge(err: &NetworkError) -> Option<AdmissionChallen
 pub(crate) const KEY_REAUTH: &str =
     "This account signs in with a security key; sign in again to reconnect";
 pub(crate) const RECOVERY_REAUTH: &str =
-    "A recovery-code session cannot be reconnected; sign in again";
+    "A recovery console session cannot be reconnected; sign in again";
 
 #[cfg(test)]
 mod tests {
@@ -116,7 +131,7 @@ mod tests {
         );
         assert!(
             !is_password(&reauth(SessionScope::Recovery, false, pw())),
-            "a recovery code"
+            "a recovery phrase"
         );
         assert!(
             !is_password(&reauth(SessionScope::Full, false, None)),
@@ -141,5 +156,37 @@ mod tests {
             })
         );
         assert_eq!(admission_challenge(&refused()), None);
+    }
+
+    #[test]
+    fn only_an_unsendable_key_enrolment_says_the_server_must_be_updated() {
+        use citadel_io::ErrorCode;
+        assert_eq!(
+            management_failure_reason(true, ErrorCode::PqSignInUnavailable),
+            Some(FailureReason::ServerCannotEnrolSecurityKeys)
+        );
+        assert_eq!(
+            management_failure_reason(false, ErrorCode::PqSignInUnavailable),
+            None,
+            "another change refused as unavailable is not about keys"
+        );
+        assert_eq!(
+            management_failure_reason(true, ErrorCode::PqSignInFactorMissing),
+            None,
+            "a key that was not touched is not the server's age"
+        );
+    }
+
+    #[test]
+    fn a_version_or_seal_refusal_reaches_the_page_by_name() {
+        use citadel_io::ErrorCode;
+        assert_eq!(
+            failure_reason(ErrorCode::ProtocolVersionUnsupported),
+            Some(FailureReason::ProtocolVersionUnsupported)
+        );
+        assert_eq!(
+            failure_reason(ErrorCode::RevfsSealUnrecognised),
+            Some(FailureReason::RevfsSealUnrecognised)
+        );
     }
 }

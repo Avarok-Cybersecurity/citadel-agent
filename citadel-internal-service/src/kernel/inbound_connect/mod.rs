@@ -20,7 +20,7 @@ mod tests;
 
 use crate::kernel::conversations::engine::preferences;
 use crate::kernel::requests::answer_local_db;
-use crate::kernel::requests::peer::answer::{answer_offer, window_relay};
+use crate::kernel::requests::peer::answer::{answer_offer, peer_session_password, window_relay};
 use crate::kernel::store_keys::pause_key;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -80,7 +80,9 @@ impl<T: IOInterface + Sync, R: Ratchet> CitadelWorkspaceService<T, R> {
             AgentAnswer::NoAnswer | AgentAnswer::LeaveToWindows => return,
         };
         let relay = window_relay(self, cid);
-        if let Err(err) = answer_offer(self, cid, peer_cid, accept, relay.as_ref(), None).await {
+        let password = peer_session_password(self, cid, peer_cid);
+        if let Err(err) = answer_offer(self, cid, peer_cid, accept, relay.as_ref(), password).await
+        {
             warn!(target: "citadel", "[INBOUND-CONNECT] {cid} <- {peer_cid}: answer not sent: {err}");
         }
     }

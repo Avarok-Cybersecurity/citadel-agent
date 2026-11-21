@@ -27,6 +27,9 @@ pub struct WatchPlan {
     pub version: String,
     /// What `target` is started with (none for an AppImage, whose wrapper adds the flags).
     pub args: Vec<String>,
+    /// What the old version is started with again when it is put back: its own command, without
+    /// the launch settings added for the new one, which it may not know.
+    pub restore_args: Vec<String>,
     pub failed_marker: PathBuf,
 }
 
@@ -82,7 +85,7 @@ pub fn supervise(plan: &WatchPlan, io: &dyn WatchIo) -> Outcome {
     };
     io.log(&format!("rolling back {}: {why}", plan.version));
     restore(plan, io, &why);
-    if let Err(e) = io.spawn(&plan.target, &plan.args) {
+    if let Err(e) = io.spawn(&plan.target, &plan.restore_args) {
         io.log(&format!("the restored agent did not start: {e}"));
     }
     Outcome::RolledBack

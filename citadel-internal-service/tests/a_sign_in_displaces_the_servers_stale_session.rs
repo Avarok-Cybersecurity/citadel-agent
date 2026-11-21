@@ -56,7 +56,14 @@ async fn a_sign_in_replaces_the_session_the_server_still_holds() -> Result<(), B
     );
 
     let started = std::time::Instant::now();
-    let (answer, told) = connect_observing(&mut sink, &mut stream, &name, PASSWORD).await?;
+    let (answer, told) = connect_observing(
+        &mut sink,
+        &mut stream,
+        &proxy.addr.to_string(),
+        &name,
+        PASSWORD,
+    )
+    .await?;
     assert!(
         matches!(answer, InternalServiceResponse::ConnectSuccess(ref s) if s.cid == cid),
         "the sign-in was refused while the server held the dead session: {answer:?}"
@@ -111,7 +118,14 @@ async fn a_wrong_password_leaves_the_reconnect_running() -> Result<(), Box<dyn E
         "lost(reconnecting=true)"
     );
 
-    let answer = connect_with_password(&mut sink, &mut stream, &name, "not-the-password").await?;
+    let answer = connect_with_password(
+        &mut sink,
+        &mut stream,
+        &proxy.addr.to_string(),
+        &name,
+        "not-the-password",
+    )
+    .await?;
     assert!(
         matches!(
             answer,

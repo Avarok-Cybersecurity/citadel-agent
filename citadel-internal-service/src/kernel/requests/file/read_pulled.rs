@@ -3,12 +3,15 @@
 //! Which file, and whether this read is in order, is kernel/pulled_reads.rs. This
 //! is the disk, behind three gates: the session must be this connection's (the
 //! ownership gate in requests/mod.rs), a peer pull's peer must still be one of
-//! the session's peers, and the recorded path, canonicalised at read time, must
+//! the session's peers (a received chat file's sender is matched by its record,
+//! kernel/received_reads.rs), and the recorded path, canonicalised at read time, must
 //! lie inside the SDK's file-transfer directory. The size limit is checked on the
 //! opened file before any bytes are read.
 
 use super::file_identity::{is_reparse_point, open_no_follow, FileIdentity};
+use crate::kernel::conversations::kv::HostKv;
 use crate::kernel::pulled_reads::{plan_chunk, PulledKey};
+use crate::kernel::received_reads::resolve;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -70,6 +73,13 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     Some(HandledRequestResult { response, uuid })
 }
 
+/// Which table a read is held in: a RE-VFS pull's, or a chat file the account received.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Source {
+    Pull,
+    Received,
+}
+
 async fn read<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     cid: u64,
@@ -77,23 +87,48 @@ async fn read<T: IOInterface + Sync, R: Ratchet>(
     offset: u64,
     max_len: u32,
 ) -> Result<(u64, Vec<u8>), String> {
+    let pulled = this
+        .server_connection_map
+        .read()
+        .get(&cid)
+        .is_some_and(|conn| conn.pulled_reads.holds(key));
+    let store = HostKv::account(this.host_io(), cid);
+    let source = if !pulled && resolve(&*this.server_connection_map, &store, cid, key).await? {
+        Source::Received
+    } else {
+        Source::Pull
+    };
     let ticket = {
         let mut lock = this.server_connection_map.write();
         let conn = lock
             .get_mut(&cid)
             .ok_or_else(|| "read: Server Connection Not Found".to_string())?;
-        if let Some(peer_cid) = key.peer_cid {
+        // A pull's peer must still be a peer. A received file's sender is checked by its record
+        // instead (kernel/received_reads.rs): the file stays this account's when they are offline.
+        if let (Source::Pull, Some(peer_cid)) = (source, key.peer_cid) {
             if !conn.peers.contains_key(&peer_cid) {
                 return Err(format!("peer {peer_cid} is not a peer of this session"));
             }
         }
-        conn.pulled_reads
-            .begin_read(key, offset, max_len, Instant::now())?
+        let table = match source {
+            Source::Pull => &mut conn.pulled_reads,
+            Source::Received => &mut conn.received_reads,
+        };
+        table.begin_read(key, offset, max_len, Instant::now())?
     };
     let generation = ticket.generation;
     let outcome = match sdk_transfer_root(this.remote().account_manager().get_backend_type()) {
         Ok(root) => tokio::task::spawn_blocking(move || {
-            read_confined(&root, &ticket.saved, &ticket.identity, offset, max_len)
+            if source == Source::Received && !ticket.saved.exists() {
+                return Err(GONE.to_string());
+            }
+            read_confined(&root, &ticket.saved, &ticket.identity, offset, max_len).map_err(|e| {
+                if source == Source::Received && e.contains("replaced") {
+                    REPLACED.to_string()
+                } else {
+                    e
+                }
+            })
         })
         .await
         .map_err(|e| format!("the read did not finish: {e}"))
@@ -102,10 +137,21 @@ async fn read<T: IOInterface + Sync, R: Ratchet>(
     };
     if let Some(conn) = this.server_connection_map.write().get_mut(&cid) {
         let landed = outcome.as_ref().ok().map(|(_, data)| (offset, data.len()));
-        conn.pulled_reads.settle(key, generation, landed);
+        let table = match source {
+            Source::Pull => &mut conn.pulled_reads,
+            Source::Received => &mut conn.received_reads,
+        };
+        table.settle(key, generation, landed);
     }
     outcome
 }
+
+/// A received file the person deleted or moved from the agent's transfer folder.
+pub(crate) const GONE: &str =
+    "this file is no longer on this computer: it was deleted or moved after it arrived";
+/// A received file whose bytes are not the ones received.
+pub(crate) const REPLACED: &str =
+    "this file was changed or replaced on this computer after it arrived, so it is not opened";
 
 /// The directory the SDK saves received files under, for `backend`.
 pub(crate) fn sdk_transfer_root(backend: &BackendType) -> Result<PathBuf, String> {

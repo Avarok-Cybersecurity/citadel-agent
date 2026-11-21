@@ -34,7 +34,8 @@ pub struct FakeKey {
 pub struct Offer {
     pub password: Option<String>,
     pub key: Option<FakeKey>,
-    pub recovery_code: Option<String>,
+    /// The recovery phrase as typed: signs in to the recovery console.
+    pub recovery_phrase: Option<String>,
     /// A Turnstile token, for a server that checks fresh sign-ins.
     pub admission: Option<String>,
 }
@@ -44,6 +45,32 @@ pub struct Offer {
 pub struct Outcome {
     pub response: InternalServiceResponse,
     pub challenges: Vec<SecurityKeyChallengeNotification>,
+}
+
+/// What a registration hands the window once: the recovery phrase.
+#[derive(Debug, Clone)]
+pub struct Registered {
+    pub cid: u64,
+    pub phrase: RecoveryCodes,
+}
+
+impl Registered {
+    /// The phrase's 24 words as a person would type them.
+    pub fn typed_phrase(&self) -> String {
+        self.phrase.0.join(" ")
+    }
+}
+
+/// What a `RecoverAccount` answered: whether the account was recovered here (other devices
+/// revoked), the phrase sign-in's own answer, and, for a refusal, which step refused it, its
+/// reason and whether it published an admission challenge.
+#[derive(Debug)]
+pub struct Recovered {
+    pub recovered_cid: Option<u64>,
+    pub sign_in: Result<u64, String>,
+    pub refused_by_recovery: bool,
+    pub reason: Option<FailureReason>,
+    pub challenged: bool,
 }
 
 pub struct Window {
@@ -106,13 +133,13 @@ impl Window {
         }
     }
 
-    /// Registers without connecting; the recovery codes, or the refusal.
+    /// Registers without connecting; the recovery phrase, or the refusal.
     pub async fn register(
         &mut self,
         server: SocketAddr,
         username: &str,
         password: &str,
-    ) -> Result<Result<(u64, RecoveryCodes), String>, Box<dyn Error>> {
+    ) -> Result<Result<Registered, String>, Box<dyn Error>> {
         self.register_admitted(server, username, password, None)
             .await
             .map(|registered| registered.map_err(|(message, _)| message))
@@ -125,7 +152,7 @@ impl Window {
         username: &str,
         password: &str,
         token: Option<&str>,
-    ) -> Result<Result<(u64, RecoveryCodes), (String, Option<FailureReason>)>, Box<dyn Error>> {
+    ) -> Result<Result<Registered, (String, Option<FailureReason>)>, Box<dyn Error>> {
         let request_id = Uuid::new_v4();
         self.send(InternalServiceRequest::Register {
             request_id,
@@ -134,15 +161,16 @@ impl Window {
             username: username.to_string(),
             proposed_password: password.into(),
             connect_after_register: false,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             server_password: None,
             admission_token: token.map(str::to_string),
         })
         .await?;
         Ok(match self.answer_of(request_id, None).await?.response {
-            InternalServiceResponse::RegisterSuccess(success) => {
-                Ok((success.cid, success.recovery_codes.clone()))
-            }
+            InternalServiceResponse::RegisterSuccess(success) => Ok(Registered {
+                cid: success.cid,
+                phrase: success.recovery_phrase.clone(),
+            }),
             InternalServiceResponse::RegisterFailure(failure) => {
                 Err((failure.message, failure.reason_code))
             }
@@ -150,8 +178,10 @@ impl Window {
         })
     }
 
+    /// Signs `username` in on `server`, the address its account was registered to.
     pub async fn connect(
         &mut self,
+        server: SocketAddr,
         username: &str,
         offer: &Offer,
     ) -> Result<Outcome, Box<dyn Error>> {
@@ -159,14 +189,15 @@ impl Window {
         self.send(InternalServiceRequest::Connect {
             request_id,
             username: username.to_string(),
+            server_address: server.to_string(),
             password: offer.password.as_deref().map(SecBuffer::from),
             security_key: offer.key.is_some(),
-            recovery_code: offer.recovery_code.as_deref().map(SecBuffer::from),
+            recovery_phrase: offer.recovery_phrase.as_deref().map(SecBuffer::from),
             admission_token: offer.admission.clone(),
             connect_mode: ConnectMode::Standard { force_login: false },
             udp_mode: UdpMode::Disabled,
             keep_alive_timeout: None,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             server_password: None,
         })
         .await?;
@@ -176,14 +207,87 @@ impl Window {
     /// The session's CID, or the refusal's message.
     pub async fn sign_in(
         &mut self,
+        server: SocketAddr,
         username: &str,
         offer: &Offer,
     ) -> Result<Result<u64, String>, Box<dyn Error>> {
-        Ok(match self.connect(username, offer).await?.response {
-            InternalServiceResponse::ConnectSuccess(success) => Ok(success.cid),
-            InternalServiceResponse::ConnectFailure(failure) => Err(failure.message),
-            other => Err(format!("{other:?}")),
+        Ok(
+            match self.connect(server, username, offer).await?.response {
+                InternalServiceResponse::ConnectSuccess(success) => Ok(success.cid),
+                InternalServiceResponse::ConnectFailure(failure) => Err(failure.message),
+                other => Err(format!("{other:?}")),
+            },
+        )
+    }
+
+    /// Recovers `username` on `server` with `phrase` (as typed), naming this device `label`.
+    pub async fn recover(
+        &mut self,
+        server: SocketAddr,
+        username: &str,
+        phrase: &str,
+        label: &str,
+    ) -> Result<Recovered, Box<dyn Error>> {
+        self.recover_admitted(server, username, phrase, label, None)
+            .await
+    }
+
+    /// As `recover`, with an admission (Turnstile) token.
+    pub async fn recover_admitted(
+        &mut self,
+        server: SocketAddr,
+        username: &str,
+        phrase: &str,
+        label: &str,
+        token: Option<&str>,
+    ) -> Result<Recovered, Box<dyn Error>> {
+        let request_id = Uuid::new_v4();
+        self.send(InternalServiceRequest::RecoverAccount {
+            request_id,
+            server_addr: server.to_string(),
+            username: username.to_string(),
+            phrase: SecBuffer::from(phrase),
+            device_label: label.to_string(),
+            admission_token: token.map(str::to_string),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
+            server_password: None,
         })
+        .await?;
+        let mut recovered_cid = None;
+        let answered =
+            |recovered_cid, sign_in, refused_by_recovery, reason, challenged| Recovered {
+                recovered_cid,
+                sign_in,
+                refused_by_recovery,
+                reason,
+                challenged,
+            };
+        loop {
+            return Ok(match self.answer_of(request_id, None).await?.response {
+                InternalServiceResponse::RecoverAccountSuccess(success) => {
+                    recovered_cid = Some(success.cid);
+                    continue;
+                }
+                InternalServiceResponse::RecoverAccountFailure(failure) => answered(
+                    recovered_cid,
+                    Err(failure.message),
+                    true,
+                    failure.reason_code,
+                    failure.admission_challenge.is_some(),
+                ),
+                InternalServiceResponse::ConnectSuccess(success) => {
+                    answered(recovered_cid, Ok(success.cid), false, None, false)
+                }
+                InternalServiceResponse::ConnectFailure(failure) => answered(
+                    recovered_cid,
+                    Err(failure.message),
+                    false,
+                    failure.reason_code,
+                    failure.admission_challenge.is_some(),
+                ),
+                other => return Err(format!("not a recovery answer: {other:?}").into()),
+            });
+        }
     }
 
     pub async fn manage(

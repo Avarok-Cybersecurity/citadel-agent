@@ -4,14 +4,12 @@ use std::task::{Context, Poll};
 
 use citadel_internal_service_connector::connector::InternalServiceConnector;
 use citadel_internal_service_connector::io_interface::IOInterface;
-use citadel_internal_service_connector::messenger::{CitadelWorkspaceMessenger, MessengerTx};
 use citadel_internal_service_types::{
-    InternalServicePayload, InternalServiceRequest, InternalServiceResponse, SecurityLevel,
+    InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
 };
 
 use async_trait::async_trait;
 use citadel_io::tokio::sync::{RwLock, mpsc};
-use dashmap::{DashMap, DashSet};
 use futures::{Sink, Stream};
 // use send_wrapper::SendWrapper;  // Not needed with channel-based approach
 use ws_stream_wasm::{WsMessage, WsMeta};
@@ -21,10 +19,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 mod app_signature;
 mod connection_lifecycle;
-mod traffic;
 use connection_lifecycle::{refuse_init, should_report_death, teardown_before_connect};
 use std::sync::RwLock as StdRwLock;
-use traffic::{BROWSER_ILM_OPTIONS, parse_compression_hint};
 use wasm_bindgen::prelude::*;
 
 // WASM exports and logging setup - defined early for use in functions below
@@ -173,6 +169,11 @@ impl IOInterface for WasmWebSocketIO {
     /// than the agent, but answering it any other way would be false.
     const CALLER_CAN_ALREADY_READ_LOCAL_FILES: bool = false;
 
+    /// The client side of the socket: it accepts no handshakes, so it saw no `Origin`.
+    fn handshake_origin(_sink: &Self::Sink) -> Option<&str> {
+        None
+    }
+
     async fn next_connection(&mut self) -> Option<(Self::Sink, Self::Stream)> {
         if let (Some(sink_tx), Some(stream_rx)) = (self.sink_tx.take(), self.stream_rx.take()) {
             let sink = WasmWebSocketSink { tx: sink_tx };
@@ -184,9 +185,6 @@ impl IOInterface for WasmWebSocketIO {
         }
     }
 }
-
-// Use the backend from the connector crate
-use citadel_internal_service_connector::messenger::backend::CitadelWorkspaceBackend;
 
 // Global state management
 static WORKSPACE_STATE: OnceCell<Arc<RwLock<Option<WorkspaceState>>>> = OnceCell::new();
@@ -218,15 +216,10 @@ fn sink_channel() -> Option<mpsc::UnboundedSender<InternalServicePayload>> {
 }
 
 struct WorkspaceState {
-    messenger: CitadelWorkspaceMessenger<CitadelWorkspaceBackend>,
     stream: Option<citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>>,
     // Messages rescued from a stream that was replaced while `next_message` had
     // it checked out. Without this they were dropped with the receiver.
     pending: std::collections::VecDeque<InternalServiceResponse>,
-    // Wrapped in Arc so we can clone handles and release the RwLock before long async operations
-    connections: Arc<DashMap<u64, Arc<MessengerTx<CitadelWorkspaceBackend>>>>,
-    // Track CIDs that are currently being opened to prevent duplicate multiplex calls
-    pending_opens: Arc<DashSet<u64>>,
     // On drop, this will kill the background task automatically (RAII pattern)
     #[allow(dead_code)]
     shutdown_tx: citadel_io::tokio::sync::oneshot::Sender<()>,
@@ -441,16 +434,11 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
         .await
         .ok_or_else(|| JsValue::from_str("Failed to create connector"))?;
 
-    let (messenger, stream) = CitadelWorkspaceMessenger::new(connector, BROWSER_ILM_OPTIONS);
-    let connections = Arc::new(DashMap::new());
-    let pending_opens = Arc::new(DashSet::new());
+    let stream = forward_responses(connector);
 
     let state = WorkspaceState {
-        messenger,
         stream: Some(stream),
         pending: std::collections::VecDeque::new(),
-        connections,
-        pending_opens,
         shutdown_tx,
     };
 
@@ -462,251 +450,25 @@ async fn init_inner(ws_url: String, restart: bool) -> Result<(), JsValue> {
     Ok(())
 }
 
-/// Opens a messenger handle for the given CID.
-/// This creates an ISM (InterSession Messaging) channel for reliable-ordered messaging.
-/// Must be called once at login and maintained via polling (see ensure_messenger_open).
-#[wasm_bindgen]
-pub async fn open_messenger_for(cid_str: String) -> Result<(), JsValue> {
-    let cid: u64 = cid_str
-        .parse()
-        .map_err(|e| JsValue::from_str(&format!("Invalid CID format: {}", e)))?;
-
-    console_log!("Opening messenger handle for CID: {}", cid);
-
-    // CRITICAL: Check if already open AND atomically mark as pending to prevent race conditions.
-    // Clone Arc refs for use outside lock.
-    let (already_open, is_pending, messenger, pending_opens, connections) = {
-        let workspace_state = get_workspace_state();
-        let guard = workspace_state.read().await;
-
-        if let Some(state) = guard.as_ref() {
-            // Check if messenger handle already exists for this CID
-            if state.connections.contains_key(&cid) {
-                (true, false, None, None, None)
-            } else {
-                // Try to atomically mark this CID as being opened
-                let was_inserted = state.pending_opens.insert(cid);
-                if !was_inserted {
-                    // Another task is already opening this CID
-                    (false, true, None, None, None)
-                } else {
-                    (
-                        false,
-                        false,
-                        Some(state.messenger.clone()),
-                        Some(state.pending_opens.clone()),
-                        Some(state.connections.clone()),
-                    )
-                }
-            }
-        } else {
-            return Err(JsValue::from_str("Workspace not initialized"));
-        }
-    }; // Lock released here
-
-    if already_open {
-        console_log!("Messenger handle already open for CID: {}", cid);
-        return Ok(());
-    }
-
-    if is_pending {
-        // Another task is opening this CID - wait briefly and check if it completed
-        console_log!(
-            "Messenger handle for CID: {} is being opened by another task, waiting...",
-            cid
-        );
-        // Small delay then check if it's now in connections
-        citadel_io::tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let workspace_state = get_workspace_state();
-        let guard = workspace_state.read().await;
-        if let Some(state) = guard.as_ref()
-            && state.connections.contains_key(&cid)
-        {
-            console_log!("Messenger handle for CID: {} is now available", cid);
-            return Ok(());
-        }
-        return Err(JsValue::from_str(
-            "Messenger handle is being opened by another task",
-        ));
-    }
-
-    // Now do the long multiplex operation WITHOUT holding the lock
-    if let (Some(messenger), Some(pending_opens), Some(connections)) =
-        (messenger, pending_opens, connections)
-    {
-        let result = messenger.multiplex(cid).await;
-
-        match result {
-            Ok(tx) => {
-                connections.insert(cid, Arc::new(tx));
-                pending_opens.remove(&cid);
-                console_log!("Messenger handle opened for CID: {}", cid);
-                Ok(())
-            }
-            Err(e) => {
-                pending_opens.remove(&cid);
-                Err(JsValue::from_str(&e.to_string()))
+/// Every response the agent sends, in order, on a channel `next_message` reads.
+///
+/// The agent hosts each account's ILM, so what arrives here is already what the
+/// page acts on: nothing is decoded or acknowledged in the browser. The pump ends
+/// when the socket's stream ends or when the state holding the receiver is dropped.
+fn forward_responses(
+    connector: InternalServiceConnector<WasmWebSocketIO>,
+) -> citadel_io::tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse> {
+    use futures::StreamExt;
+    let (tx, rx) = citadel_io::tokio::sync::mpsc::unbounded_channel();
+    let mut stream = connector.stream;
+    wasm_bindgen_futures::spawn_local(async move {
+        while let Some(response) = stream.next().await {
+            if tx.send(response).is_err() {
+                return;
             }
         }
-    } else {
-        Err(JsValue::from_str("Workspace not initialized"))
-    }
-}
-
-/// Ensures a messenger handle is open for the given CID.
-/// Returns true if the messenger was just opened, false if already open or being opened by another task.
-/// Use this for polling to maintain messenger handles across leader/follower tab transitions.
-#[wasm_bindgen]
-pub async fn ensure_messenger_open(cid_str: String) -> Result<bool, JsValue> {
-    let cid: u64 = cid_str
-        .parse()
-        .map_err(|e| JsValue::from_str(&format!("Invalid CID format: {}", e)))?;
-
-    // CRITICAL: Check if already open AND atomically mark as pending to prevent race conditions.
-    // Two concurrent calls could both pass contains_key check before either inserts.
-    // The pending_opens set prevents duplicate multiplex calls.
-    let (already_open, is_pending, messenger, pending_opens, connections) = {
-        let workspace_state = get_workspace_state();
-        let guard = workspace_state.read().await;
-
-        if let Some(state) = guard.as_ref() {
-            // Check if messenger handle already exists for this CID
-            if state.connections.contains_key(&cid) {
-                // Already open, no action needed
-                (true, false, None, None, None)
-            } else {
-                // Try to atomically mark this CID as being opened
-                // insert() returns true if the value was newly inserted (not present before)
-                let was_inserted = state.pending_opens.insert(cid);
-                if !was_inserted {
-                    // Another task is already opening this CID - don't duplicate
-                    (false, true, None, None, None)
-                } else {
-                    // We successfully marked it as pending - we'll do the open
-                    // Clone Arc refs for use outside lock
-                    (
-                        false,
-                        false,
-                        Some(state.messenger.clone()),
-                        Some(state.pending_opens.clone()),
-                        Some(state.connections.clone()),
-                    )
-                }
-            }
-        } else {
-            return Err(JsValue::from_str("Workspace not initialized"));
-        }
-    }; // Lock released here
-
-    if already_open {
-        return Ok(false);
-    }
-
-    if is_pending {
-        // Another task is opening this CID - we need to WAIT for it to complete
-        // instead of returning immediately, otherwise the caller will try to send
-        // messages before the handle is ready.
-        console_log!(
-            "Waiting for pending messenger open for CID: {} (another task is opening)",
-            cid
-        );
-
-        // Poll until the handle is ready or the pending operation fails
-        // Max wait: 30 seconds (multiplex can take time due to batched requests)
-        let max_wait_ms = 30_000u64;
-        let poll_interval_ms = 100u64;
-        let max_iterations = max_wait_ms / poll_interval_ms;
-
-        for iteration in 0..max_iterations {
-            // Small delay before checking
-            citadel_internal_service_connector::messenger::sleep_internal(
-                std::time::Duration::from_millis(poll_interval_ms),
-            )
-            .await;
-
-            // Check if handle is now available or pending is done
-            let (is_ready, still_pending) = {
-                let workspace_state = get_workspace_state();
-                let guard = workspace_state.read().await;
-
-                if let Some(state) = guard.as_ref() {
-                    let ready = state.connections.contains_key(&cid);
-                    let pending = state.pending_opens.contains(&cid);
-                    (ready, pending)
-                } else {
-                    return Err(JsValue::from_str("Workspace not initialized"));
-                }
-            };
-
-            if is_ready {
-                console_log!(
-                    "Messenger handle became ready for CID: {} (waited {}ms)",
-                    cid,
-                    (iteration + 1) * poll_interval_ms
-                );
-                return Ok(false); // Handle was opened by another task
-            }
-
-            if !still_pending {
-                // Pending flag was cleared but handle not ready - the other task failed
-                // Try to open it ourselves by recursing (will set pending flag again)
-                console_log!(
-                    "Pending cleared but handle not ready for CID: {}, retrying ourselves",
-                    cid
-                );
-                return Box::pin(ensure_messenger_open(cid_str)).await;
-            }
-
-            // Still pending, continue waiting
-            if iteration > 0 && iteration % 50 == 0 {
-                console_log!(
-                    "Still waiting for messenger open for CID: {} ({}ms elapsed)",
-                    cid,
-                    (iteration + 1) * poll_interval_ms
-                );
-            }
-        }
-
-        // Timeout - the other task is taking too long
-        console_log!(
-            "Timeout waiting for messenger open for CID: {} after {}ms",
-            cid,
-            max_wait_ms
-        );
-        return Err(JsValue::from_str(&format!(
-            "Timeout waiting for messenger handle for CID: {}",
-            cid
-        )));
-    }
-
-    // Now do the long multiplex operation WITHOUT holding the lock
-    // We have exclusive responsibility for this CID (marked in pending_opens)
-    if let (Some(messenger), Some(pending_opens), Some(connections)) =
-        (messenger, pending_opens, connections)
-    {
-        console_log!("Opening messenger handle for CID: {} (was missing)", cid);
-
-        // Use a guard pattern to ensure we remove from pending_opens even on error
-        let result = messenger.multiplex(cid).await;
-
-        match result {
-            Ok(tx) => {
-                // Insert into connections
-                connections.insert(cid, Arc::new(tx));
-                // Remove from pending (we're done opening)
-                pending_opens.remove(&cid);
-                console_log!("Messenger handle opened for CID: {}", cid);
-                Ok(true) // Messenger was just opened
-            }
-            Err(e) => {
-                // Remove from pending on error so future attempts can retry
-                pending_opens.remove(&cid);
-                Err(JsValue::from_str(&e.to_string()))
-            }
-        }
-    } else {
-        Err(JsValue::from_str("Workspace not initialized"))
-    }
+    });
+    rx
 }
 
 /// Return the message stream to the shared workspace state after a
@@ -793,7 +555,7 @@ pub async fn next_message() -> Result<JsValue, JsValue> {
     let workspace_state = get_workspace_state();
     let mut guard = workspace_state.write().await;
 
-    // Take the stream so that the open_p2p_connection and send_p2p_connection functions
+    // Take the stream so that direct sends
     // are not blocked while listening
     if let Some(state) = guard.as_mut() {
         // Rescued messages go out before anything new is awaited, so a reconnect
@@ -818,89 +580,6 @@ pub async fn next_message() -> Result<JsValue, JsValue> {
         }
     } else {
         Err(JsValue::from_str("Workspace not initialized"))
-    }
-}
-
-/// Convert string to SecurityLevel, matching TypeScript type:
-/// 'Standard' | 'Reinforced' | 'High' | 'Extreme'
-fn parse_security_level(s: Option<&str>) -> SecurityLevel {
-    match s {
-        Some("Standard") => SecurityLevel::Standard,
-        Some("Reinforced") => SecurityLevel::Reinforced,
-        Some("High") => SecurityLevel::High,
-        Some("Extreme") => SecurityLevel::Extreme,
-        _ => SecurityLevel::default(), // Falls back to Standard
-    }
-}
-
-/// Sends a P2P message using ISM-routed reliable messaging.
-/// Unlike send_p2p_message which bypasses ISM, this function uses
-/// send_message_to_with_security_level for guaranteed delivery.
-///
-/// `compression_hint` says what `message` is: "json", "text" or "yjs-update"
-/// may be compressed toward a peer that supports it; "opaque", "cbor-command"
-/// or an absent hint are sent as they are. Any other value is an error.
-#[wasm_bindgen]
-pub async fn send_p2p_message_reliable(
-    local_cid_str: String,
-    peer_cid_str: String,
-    message: Vec<u8>,
-    security_level: Option<String>,
-    compression_hint: Option<String>,
-) -> Result<(), JsValue> {
-    let local_cid: u64 = local_cid_str
-        .parse()
-        .map_err(|e| JsValue::from_str(&format!("Invalid local CID format: {}", e)))?;
-    let peer_cid: u64 = peer_cid_str
-        .parse()
-        .map_err(|e| JsValue::from_str(&format!("Invalid peer CID format: {}", e)))?;
-
-    console_log!(
-        "Sending reliable P2P message from {} to {}",
-        local_cid,
-        peer_cid
-    );
-
-    let sec_level = parse_security_level(security_level.as_deref());
-    let compression_hint = parse_compression_hint(compression_hint.as_deref())?;
-
-    // CRITICAL: Clone the Arc handle and release the lock BEFORE the long async send.
-    // Holding a read lock across await blocks next_message() which needs a write lock,
-    // causing the JavaScript event loop to stall and the UI to freeze.
-    let tx: Option<Arc<MessengerTx<CitadelWorkspaceBackend>>> = {
-        let workspace_state = get_workspace_state();
-        let guard = workspace_state.read().await;
-
-        if let Some(state) = guard.as_ref() {
-            state.connections.get(&local_cid).map(|r| r.value().clone())
-        } else {
-            return Err(JsValue::from_str("Workspace not initialized"));
-        }
-    }; // Lock released here
-
-    if let Some(tx) = tx {
-        // Use ISM-routed send for reliability - lock is NOT held during this await
-        tx.send_message_to_with_hint(
-            peer_cid,
-            sec_level,
-            uuid::Uuid::new_v4(),
-            message,
-            compression_hint,
-        )
-        .await
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-        console_log!(
-            "Reliable P2P message sent from {} to {}",
-            local_cid,
-            peer_cid
-        );
-        Ok(())
-    } else {
-        Err(JsValue::from_str(&format!(
-            "No messaging handle found for local CID: {}. Call open_p2p_connection first.",
-            local_cid
-        )))
     }
 }
 
@@ -999,9 +678,6 @@ pub async fn close_connection() -> Result<(), JsValue> {
     let mut guard = workspace_state.write().await;
 
     if let Some(mut state) = guard.take() {
-        // Close all P2P connections
-        state.connections.clear();
-
         // Count what teardown is about to destroy, and say so.
         //
         // Dropping WorkspaceState drops the receiver AND `pending` — every
@@ -1030,8 +706,7 @@ pub async fn close_connection() -> Result<(), JsValue> {
             );
         }
 
-        // Note: CitadelWorkspaceMessenger doesn't have a close() method
-        // The connection will be cleaned up when the state is dropped
+        // Everything else is released when the state is dropped.
         console_log!("[ILM-TEARDOWN] WASM client connection closed");
         Ok(())
     } else {
@@ -1043,6 +718,13 @@ pub async fn close_connection() -> Result<(), JsValue> {
 #[wasm_bindgen]
 pub fn get_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// The identity of the wire types this client was built from. The page compares
+/// it with the agent's greeting (`types_hash`) and says when they are out of step.
+#[wasm_bindgen]
+pub fn types_hash() -> String {
+    citadel_internal_service_types::TYPES_HASH.to_string()
 }
 
 #[wasm_bindgen]

@@ -46,15 +46,17 @@ mod tests {
         let request_id = Uuid::new_v4();
         let connect_request = InternalServiceRequest::Connect {
             username: "test_user".to_string(),
+            server_address: "bench.work.avarok.net".to_string(),
             password: Some(vec![].into()),
             security_key: false,
-            recovery_code: None,
+            recovery_phrase: None,
             connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                 force_login: false,
             },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
-            session_security_settings: Default::default(),
+            session_security_settings:
+                citadel_internal_service_test_common::default_session_security_settings(),
             server_password: None,
             request_id,
             admission_token: None,
@@ -93,15 +95,17 @@ mod tests {
         let request_id = Uuid::new_v4();
         let connect_req = InternalServiceRequest::Connect {
             username: "test".to_string(),
+            server_address: "bench.work.avarok.net".to_string(),
             password: Some(vec![].into()),
             security_key: false,
-            recovery_code: None,
+            recovery_phrase: None,
             connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                 force_login: false,
             },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
-            session_security_settings: Default::default(),
+            session_security_settings:
+                citadel_internal_service_test_common::default_session_security_settings(),
             server_password: None,
             request_id,
             admission_token: None,
@@ -126,6 +130,7 @@ mod tests {
                 let response = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
                     cid: 1234,
                     request_id: Some(request_id),
+                    identity: None,
                 });
                 tx_response.send(response).unwrap();
             }

@@ -38,32 +38,42 @@ use uuid::Uuid;
 pub mod apps;
 mod apps_io;
 pub(crate) mod c2s_reader;
+pub(crate) mod control_origin;
 pub(crate) mod conversations;
 mod conversations_io;
 pub(crate) mod credential_fingerprint;
 pub(crate) mod ext;
 pub(crate) mod group_channels;
+pub mod identity;
 pub(crate) mod ilm;
 mod inbound_connect;
 pub(crate) mod media;
 pub(crate) mod peer_path;
 pub(crate) mod peer_paths;
+pub(crate) mod peer_session_passwords;
 pub(crate) mod pending_group_invites;
 pub(crate) mod picked_files;
 pub(crate) mod pulled_files;
 pub(crate) mod pulled_reads;
+pub(crate) mod received_files;
+pub(crate) mod received_reads;
 pub(crate) mod reconnect;
+pub(crate) mod recovery_domain;
 pub mod supervisor;
 
 use reconnect::policy::ReconnectPolicy;
+pub(crate) mod account_server;
 pub(crate) mod attach_tokens;
+mod hosted_records;
 pub(crate) mod membership;
 mod membership_hosting;
-mod migration_guard;
 pub mod notices;
+pub mod p2p_kex;
+pub(crate) mod private_file;
 pub(crate) mod requests;
 pub(crate) mod responses;
 pub(crate) mod revfs_correlation;
+pub mod revfs_seed;
 pub(crate) mod send_correlation;
 pub(crate) mod server_address;
 pub(crate) mod server_host;
@@ -76,6 +86,7 @@ pub(crate) mod staged_uploads;
 pub(crate) mod store_keys;
 pub(crate) mod tick_updater;
 pub mod updates;
+pub mod updates_handoff;
 pub(crate) use tick_updater::spawn_tick_updater;
 
 pub type RatchetType = StackedRatchet;
@@ -119,8 +130,7 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) reconnect_policy: ReconnectPolicy,
     /// Sessions a reconnect gave up on, until they sign in again (reconnect/signed_out.rs).
     pub(crate) signed_out: reconnect::signed_out::SignedOut,
-    /// The ILM the agent hosts per account, for clients that declared
-    /// `agent_ilm` (kernel/ilm).
+    /// The ILM the agent hosts for every signed-in account (kernel/ilm).
     pub(crate) ilm_hosts: Arc<ilm::IlmRegistry>,
     /// How the agent keeps each hosted account's links alive (kernel/supervisor); `None`
     /// is a service that does not supervise, and so does not declare `supervises_p2p`.
@@ -132,6 +142,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) conversations: Arc<conversations::Engine>,
     /// What each localhost connection's client declared it can do.
     pub(crate) client_capabilities: Arc<RwLock<HashMap<Uuid, ClientCapabilities>>>,
+    /// The browser `Origin` each localhost connection's handshake carried (kernel/control_origin).
+    pub(crate) control_origins: Arc<control_origin::ControlOrigins>,
     /// Native notices and the menu-bar app's account rows (kernel/notices).
     pub(crate) notices: Arc<notices::NoticeHub>,
     /// The agent's updater, when the shipped binary configured one (kernel/updates).
@@ -140,10 +152,24 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) key_challenges: Arc<sign_in::key_relay::KeyChallenges>,
     /// Where browser uploads are written before they are sent (requests/file/transfer_root.rs).
     pub(crate) browser_transfers: BrowserTransferRoot,
+    /// What every connection this service makes to a workspace server demands of the server's
+    /// certificate. The binary states it (each build has one value); there is no default.
+    pub(crate) server_certificate: CertVerification,
     /// Opt-in telemetry uploads, when the shipped binary configured them (telemetry/uplink).
     pub(crate) telemetry: Option<Arc<crate::telemetry::TelemetryUplink>>,
     /// Citadel apps: host egress, `local` storage, the internal-HTTP relay (kernel/apps).
     pub(crate) apps: Arc<apps::AppsHost>,
+    /// The portable identity, when the binary configured its ports (kernel/identity).
+    pub(crate) identity: Option<Arc<identity::IdentityHost>>,
+    /// How apps' `citadel.session` servers are discovered, when the binary configured it
+    /// (kernel/apps/session); `None` refuses every open as `not_configured`.
+    pub(crate) app_sessions: Option<Arc<apps::AppSessionConfig>>,
+    /// The vault each account's RE-VFS seed is sealed under (kernel/revfs_seed), set with the
+    /// node's key source; unset, every Connect is refused.
+    pub(crate) revfs_vault: Arc<std::sync::OnceLock<revfs_seed::Vault>>,
+    /// The identity key each account pinned for each peer (kernel/p2p_kex), set with the node's
+    /// key-exchange identity; unset, no peer has a pin and every exchange is unsigned.
+    pub(crate) p2p_kex_pins: Arc<std::sync::OnceLock<Arc<p2p_kex::pins::PeerKeyPins>>>,
     io: Arc<RwLock<Option<T>>>,
 }
 
@@ -167,12 +193,18 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             peer_paths: self.peer_paths.clone(),
             conversations: self.conversations.clone(),
             client_capabilities: self.client_capabilities.clone(),
+            control_origins: self.control_origins.clone(),
             notices: self.notices.clone(),
             updates: self.updates.clone(),
             key_challenges: self.key_challenges.clone(),
             browser_transfers: self.browser_transfers.clone(),
+            server_certificate: self.server_certificate,
             telemetry: self.telemetry.clone(),
             apps: self.apps.clone(),
+            identity: self.identity.clone(),
+            app_sessions: self.app_sessions.clone(),
+            revfs_vault: self.revfs_vault.clone(),
+            p2p_kex_pins: self.p2p_kex_pins.clone(),
             io: self.io.clone(),
         }
     }
@@ -186,6 +218,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
         io: T,
         reconnect_policy: ReconnectPolicy,
         browser_transfers: BrowserTransferRoot,
+        server_certificate: CertVerification,
     ) -> Self {
         let clients: Clients = Arc::new(RwLock::new(Default::default()));
         CitadelWorkspaceService {
@@ -207,11 +240,17 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             peer_paths: Default::default(),
             conversations: Default::default(),
             client_capabilities: Default::default(),
+            control_origins: Default::default(),
             updates: Default::default(),
             key_challenges: Default::default(),
             browser_transfers,
+            server_certificate,
             telemetry: None,
             apps: Default::default(),
+            identity: None,
+            app_sessions: None,
+            revfs_vault: Default::default(),
+            p2p_kex_pins: Default::default(),
             io: Arc::new(RwLock::new(Some(io))),
         }
     }
@@ -244,6 +283,53 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
         self
     }
 
+    /// Hold a portable identity with `config`'s store, `/.well-known/citadel` fetch and
+    /// challenge codec (kernel/identity). A service that never calls this refuses every
+    /// identity request as `NotConfigured`.
+    pub fn with_identity(mut self, config: identity::IdentityConfig) -> Self {
+        self.identity = Some(Arc::new(identity::IdentityHost::new(config)));
+        self
+    }
+
+    /// The node's RE-VFS key source (`NodeBuilder::with_revfs_key_source`): each signed-in
+    /// account's key, from a seed sealed under the vault key `vault` keeps (kernel/revfs_seed).
+    /// Required, once: a service never given a vault refuses every Connect, and a node without
+    /// the source refuses every RE-VFS push.
+    pub fn revfs_key_source(
+        &self,
+        vault: Arc<dyn revfs_seed::RevfsVaultStore>,
+    ) -> Result<impl citadel_sdk::prelude::RevfsKeySource + 'static, String> {
+        self.revfs_vault
+            .set(revfs_seed::Vault::new(vault))
+            .map_err(|_| "this service already has a RE-VFS vault".to_string())?;
+        Ok(revfs_seed::key_source(self.server_connection_map.clone()))
+    }
+
+    /// The node's P2P key-exchange identity (`NodeBuilder::with_p2p_kex_identity`): each
+    /// session's identity key signs its stages, and the peers' keys are pinned in `store`
+    /// (kernel/p2p_kex). Required, once, before the node starts.
+    pub async fn p2p_kex_identity(
+        &self,
+        store: Arc<dyn p2p_kex::PeerKeyStore>,
+    ) -> Result<citadel_sdk::prelude::P2pKexIdentities, String> {
+        let pins = p2p_kex::pins::PeerKeyPins::load(store).await?;
+        self.p2p_kex_pins
+            .set(pins.clone())
+            .map_err(|_| "this service already has a P2P key-exchange identity".to_string())?;
+        Ok(Arc::new(p2p_kex::KexIdentityPort {
+            sessions: self.server_connection_map.clone(),
+            clients: self.tx_to_localhost_clients.clone(),
+            pins,
+        }))
+    }
+
+    /// Hold apps' `citadel.session`s (kernel/apps/session), discovering their servers by
+    /// `config`. It also needs `with_identity` and `with_app_net` (the server's grants).
+    pub fn with_app_sessions(mut self, config: apps::AppSessionConfig) -> Self {
+        self.app_sessions = Some(Arc::new(config));
+        self
+    }
+
     pub fn remote(&self) -> &NodeRemote<R> {
         self.remote.as_ref().expect("Kernel not loaded")
     }
@@ -254,12 +340,14 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
         bind_address: SocketAddr,
         reconnect_policy: ReconnectPolicy,
         browser_transfers: BrowserTransferRoot,
+        server_certificate: CertVerification,
     ) -> std::io::Result<CitadelWorkspaceService<TcpIOInterface, R>> {
         let io = TcpIOInterface::new(bind_address).await?;
         Ok(CitadelWorkspaceService::new(
             io,
             reconnect_policy,
             browser_transfers,
+            server_certificate,
         ))
     }
 
@@ -272,12 +360,14 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
         origins: OriginPolicy,
         reconnect_policy: ReconnectPolicy,
         browser_transfers: BrowserTransferRoot,
+        server_certificate: CertVerification,
     ) -> std::io::Result<CitadelWorkspaceService<WebSocketInterface, R>> {
         let ws_server_io = WebSocketInterface::new(bind_address, origins).await?;
         Ok(CitadelWorkspaceService::new(
             ws_server_io,
             reconnect_policy,
             browser_transfers,
+            server_certificate,
         ))
     }
 
@@ -296,6 +386,7 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
         private_key: &[u8],
         reconnect_policy: ReconnectPolicy,
         browser_transfers: BrowserTransferRoot,
+        server_certificate: CertVerification,
     ) -> std::io::Result<CitadelWorkspaceService<WebSocketInterface, R>> {
         let ws_server_io =
             WebSocketInterface::new_tls(bind_address, origins, certificate_chain, private_key)
@@ -304,6 +395,7 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
             ws_server_io,
             reconnect_policy,
             browser_transfers,
+            server_certificate,
         ))
     }
 }
@@ -314,6 +406,7 @@ impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {
     pub fn new_in_memory(
         reconnect_policy: ReconnectPolicy,
         browser_transfers: BrowserTransferRoot,
+        server_certificate: CertVerification,
     ) -> (
         InternalServiceConnector<InMemoryInterface>,
         CitadelWorkspaceService<InMemoryInterface, R>,
@@ -330,7 +423,12 @@ impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {
             sink: Some(tx_to_consumer),
             stream: Some(rx_from_svc),
         };
-        let kernel = CitadelWorkspaceService::new(io, reconnect_policy, browser_transfers);
+        let kernel = CitadelWorkspaceService::new(
+            io,
+            reconnect_policy,
+            browser_transfers,
+            server_certificate,
+        );
         (connector, kernel)
     }
 }
@@ -394,6 +492,8 @@ pub struct Connection<R: Ratchet> {
     pub staged_uploads: staged_uploads::StagedUploads,
     /// Files this session pulled that the page may read. See kernel/pulled_reads.rs.
     pub(crate) pulled_reads: pulled_reads::PulledReads,
+    /// Chat files this session accepted, cached from the account's store. See kernel/received_reads.rs.
+    pub(crate) received_reads: pulled_reads::PulledReads,
     /// The client-side password hash this session was opened with.
     ///
     /// Consulted when a later `Connect` names this session's username, so the
@@ -403,11 +503,21 @@ pub struct Connection<R: Ratchet> {
     pub credential_fingerprint: Option<Vec<u8>>,
     /// The relay half a window last sent; see requests/peer/answer.rs.
     pub(crate) window_relay: Option<PeerTurnConfig>,
+    /// The peer session passwords windows gave, per peer; see kernel/peer_session_passwords.rs.
+    pub(crate) peer_session_passwords: peer_session_passwords::PeerSessionPasswords,
     /// What the session was opened with, so a server drop can be reconnected.
     /// In memory only. See kernel/reconnect/mod.rs.
     pub(crate) reconnect: reconnect::Credentials,
     /// What the sign-in proved, and the SDK handle for managing the account's factors.
     pub(crate) sign_in: sign_in::SessionSignIn<R>,
+    /// The account's RE-VFS key, established at Connect (kernel/revfs_seed).
+    pub(crate) revfs_key: citadel_sdk::prelude::RevfsKey,
+    /// The identity key's P2P key-exchange signer, for a session `ConnectIdentity` opened;
+    /// `None` for a legacy account, whose exchanges go unsigned (kernel/p2p_kex). Held for the
+    /// session's whole life: an open session keeps signing after the identity's idle lock, which
+    /// gates only new sign-ins, registrations and export -- otherwise every verified chat would
+    /// fail after the idle period (owner's decision, 2026-11-20).
+    pub(crate) p2p_kex_signer: Option<citadel_identity::P2pKexSigner>,
     pub(crate) link: reconnect::LinkState,
     /// The SDK session the link is; a drop report of another is not this link's.
     /// See kernel/reconnect/instance.rs.
@@ -474,6 +584,7 @@ impl<R: Ratchet> Connection<R> {
         credential_fingerprint: Option<Vec<u8>>,
         reconnect: reconnect::Credentials,
         sign_in: sign_in::SessionSignIn<R>,
+        revfs_key: citadel_sdk::prelude::RevfsKey,
     ) -> Self {
         Connection {
             peers: HashMap::new(),
@@ -492,11 +603,15 @@ impl<R: Ratchet> Connection<R> {
             revfs_correlations: revfs_correlation::RevfsCorrelations::default(),
             send_correlations: send_correlation::SendCorrelations::default(),
             staged_uploads: staged_uploads::StagedUploads::default(),
-            pulled_reads: pulled_reads::PulledReads::default(),
+            pulled_reads: pulled_reads::PulledReads::new(picked_files::MAX_PICKED_FILES),
+            received_reads: pulled_reads::PulledReads::new(received_reads::MAX_CACHED_RECEIVED),
             credential_fingerprint,
             window_relay: None,
+            peer_session_passwords: Default::default(),
             reconnect,
             sign_in,
+            revfs_key,
+            p2p_kex_signer: None,
             link: reconnect::LinkState::Up,
             handoff: reconnect::Handoff::default(),
         }
@@ -704,6 +819,7 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
                 // needing a null case everywhere else.
                 let (media_tx, media_rx) = media_lane(MEDIA_LANE_CAPACITY);
                 let id = Uuid::new_v4();
+                let origin = self.control_origins.admit(id, T::handshake_origin(&sink));
                 tcp_connection_map.write().insert(id, tx1);
                 media_lanes.write().insert(id, media_tx);
                 io.spawn_connection_handler(
@@ -713,6 +829,7 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
                     rx1,
                     media_rx,
                     id,
+                    origin,
                     tcp_connection_map.clone(),
                     media_lanes.clone(),
                     server_connection_map.clone(),

@@ -9,7 +9,8 @@ use citadel_internal_service_test_common::pq_window::{FakeKey, Window};
 use citadel_internal_service_test_common::setup_log;
 use citadel_internal_service_types::SignInManagementOutcome;
 use citadel_internal_service_types::{
-    ConfigCommand, InternalServiceRequest, InternalServiceResponse, SecurityKeyPurpose, StepUp,
+    ConfigCommand, InternalServiceRequest, InternalServiceResponse, SecurityKeyCeremony,
+    SecurityKeyPurpose, StepUp,
 };
 use citadel_sdk::prelude::SecBuffer;
 use std::error::Error;
@@ -24,7 +25,7 @@ async fn a_management_challenge_reaches_every_window_and_another_window_may_answ
     let mut first = Window::open(agent).await?;
     let user = citadel_internal_service_test_common::pq::username("win");
     first.register(server, &user, PASSWORD).await??;
-    let cid = first.sign_in(&user, &password_offer()).await??;
+    let cid = first.sign_in(server, &user, &password_offer()).await??;
 
     let mut second = Window::open(agent).await?;
     let attach_id = Uuid::new_v4();
@@ -62,6 +63,15 @@ async fn a_management_challenge_reaches_every_window_and_another_window_may_answ
     };
     assert_eq!(challenge.purpose, SecurityKeyPurpose::Enrol);
     assert_eq!(challenge.cid, cid);
+    assert!(
+        matches!(
+            challenge.ceremony,
+            SecurityKeyCeremony::Register { ref exclude_credential_ids, .. }
+                if exclude_credential_ids.is_empty()
+        ),
+        "adding the account's first key was not a registration: {:?}",
+        challenge.ceremony
+    );
     second.send(FakeKey::new(3).answer(&challenge)).await?;
 
     let added = first.answer_of(request_id, None).await?;

@@ -91,7 +91,7 @@ async fn a_user_disconnect_is_not_reconnected() -> Result<(), Box<dyn Error>> {
     );
     // Nothing was reconnected behind the map's back either: a fresh login is not refused
     // as already connected.
-    let login = connect(&mut sink, &mut stream, &name).await?;
+    let login = connect(&mut sink, &mut stream, &proxy.addr.to_string(), &name).await?;
     assert!(
         matches!(login, InternalServiceResponse::ConnectSuccess(ref s) if s.cid == cid),
         "{login:?}"
@@ -137,7 +137,7 @@ async fn a_user_disconnect_while_reconnecting_ends_it() -> Result<(), Box<dyn Er
         session(&mut sink, &mut stream, cid).await.is_err(),
         "no session is left"
     );
-    let login = connect(&mut sink, &mut stream, &name).await?;
+    let login = connect(&mut sink, &mut stream, &proxy.addr.to_string(), &name).await?;
     assert!(
         matches!(login, InternalServiceResponse::ConnectSuccess(ref s) if s.cid == cid),
         "{login:?}"
@@ -169,7 +169,7 @@ async fn a_login_while_reconnecting_waits_for_the_same_session() -> Result<(), B
     // beside the reconnect, nor send the page to the sign-in form: the sign-in stops the
     // reconnect and tries once itself, cannot reach the server, hands the session back to
     // the reconnect and is told the session exists.
-    let login = connect(&mut sink, &mut stream, &name).await?;
+    let login = connect(&mut sink, &mut stream, &proxy.addr.to_string(), &name).await?;
     assert!(
         matches!(login, InternalServiceResponse::SessionAlreadyActive(ref s) if s.cid == cid),
         "{login:?}"

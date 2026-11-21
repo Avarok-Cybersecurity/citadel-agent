@@ -79,6 +79,7 @@ async fn handle_request(
                 citadel_internal_service_types::ConnectSuccess {
                     cid: 12345 + message_count, // Unique CID for each connection
                     request_id: Some(request_id),
+                    identity: None,
                 },
             ))
         }

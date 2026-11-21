@@ -20,6 +20,7 @@ pub(crate) struct HandledRequestResult {
 }
 
 mod agent_own;
+mod app_session;
 mod apps_ihttp;
 mod apps_kv;
 mod apps_net;
@@ -32,9 +33,11 @@ mod deregister;
 mod disconnect;
 mod get_account_information;
 mod get_sessions;
+mod identity;
 mod media;
 pub(crate) mod message;
 mod notices;
+mod recover_account;
 mod register;
 mod security_key;
 mod send_reliable;
@@ -206,6 +209,28 @@ where
         }
         InternalServiceRequest::Connect { .. } => connect::handle(this, uuid, command).await,
         InternalServiceRequest::Register { .. } => register::handle(this, uuid, command).await,
+        InternalServiceRequest::RecoverAccount { .. } => {
+            recover_account::handle(this, uuid, command).await
+        }
+        InternalServiceRequest::IdentityStatus { .. }
+        | InternalServiceRequest::IdentityCreate { .. }
+        | InternalServiceRequest::IdentityUnlock { .. }
+        | InternalServiceRequest::IdentityLock { .. }
+        | InternalServiceRequest::IdentityExport { .. }
+        | InternalServiceRequest::IdentitySignChallenge { .. }
+        | InternalServiceRequest::IdentityImport { .. }
+        | InternalServiceRequest::IdentityBinding { .. } => {
+            identity::lifecycle(this, uuid, command).await
+        }
+        InternalServiceRequest::ServerDiscovery { .. } => {
+            identity::discover(this, uuid, command).await
+        }
+        InternalServiceRequest::RegisterIdentity { .. } => {
+            identity::register::handle(this, uuid, command).await
+        }
+        InternalServiceRequest::ConnectIdentity { .. } => {
+            identity::connect::handle(this, uuid, command).await
+        }
         InternalServiceRequest::Message { .. } => message::handle(this, uuid, command).await,
         InternalServiceRequest::NoticeSubscribe { .. }
         | InternalServiceRequest::NoticeSetMuted { .. } => {
@@ -273,6 +298,11 @@ where
 
         InternalServiceRequest::ListRegisteredPeers { .. } => {
             peer::list_registered::handle(this, uuid, command).await
+        }
+
+        InternalServiceRequest::GetPeerIdentity { .. }
+        | InternalServiceRequest::AcceptPeerIdentityKey { .. } => {
+            peer::identity::handle(this, uuid, command)
         }
 
         InternalServiceRequest::ListAllPeers { .. } => {
@@ -387,6 +417,11 @@ where
             apps_settings::handle(this, uuid, command).await
         }
         InternalServiceRequest::IhttpSend { .. } => apps_ihttp::handle(this, uuid, command).await,
+        InternalServiceRequest::AppSessionOpen { .. }
+        | InternalServiceRequest::AppSessionSend { .. }
+        | InternalServiceRequest::AppSessionClose { .. } => {
+            app_session::handle(this, uuid, command).await
+        }
 
         InternalServiceRequest::Batched {
             request_id,
@@ -822,6 +857,32 @@ fn refusal_response(
                 request_id: Some(*request_id),
             })
         }
+        InternalServiceRequest::GetPeerIdentity {
+            request_id,
+            cid,
+            peer_cid,
+        }
+        | InternalServiceRequest::AcceptPeerIdentityKey {
+            request_id,
+            cid,
+            peer_cid,
+            ..
+        } => InternalServiceResponse::PeerIdentityFailure(PeerIdentityFailure {
+            cid: *cid,
+            peer_cid: *peer_cid,
+            message: message.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::IdentityBinding { request_id, cid } => {
+            InternalServiceResponse::IdentityFailure(
+                citadel_internal_service_types::IdentityFailure {
+                    cid: *cid,
+                    request_id: Some(*request_id),
+                    reason: citadel_internal_service_types::IdentityRefusal::NotAnIdentityAccount,
+                    message: message.to_string(),
+                },
+            )
+        }
         InternalServiceRequest::DeleteVirtualFile {
             request_id, cid, ..
         } => InternalServiceResponse::DeleteVirtualFileFailure(DeleteVirtualFileFailure {
@@ -1017,6 +1078,7 @@ fn refusal_response(
             cid: *cid,
             message: message.to_string(),
             request_id: Some(*request_id),
+            reason: None,
         }),
         InternalServiceRequest::AppFetch {
             request_id, cid, ..
@@ -1046,6 +1108,29 @@ fn refusal_response(
             request_id: Some(*request_id),
             refusal: IhttpSendRefusal::Session,
         }),
+        InternalServiceRequest::AppSessionOpen {
+            request_id,
+            cid,
+            install_id,
+            ..
+        }
+        | InternalServiceRequest::AppSessionSend {
+            request_id,
+            cid,
+            install_id,
+            ..
+        }
+        | InternalServiceRequest::AppSessionClose {
+            request_id,
+            cid,
+            install_id,
+            ..
+        } => app_session::failure(
+            *cid,
+            *request_id,
+            install_id.clone(),
+            &crate::kernel::apps::session::rules::Refusal::Session,
+        ),
         InternalServiceRequest::AppsGetAgentSettings { request_id, cid }
         | InternalServiceRequest::AppsSetAgentSettings {
             request_id, cid, ..
@@ -1134,6 +1219,9 @@ pub(crate) fn requires_owned_session(command: &InternalServiceRequest) -> bool {
             | InternalServiceRequest::GetAppNetUsage { .. }
             | InternalServiceRequest::AppKv { .. }
             | InternalServiceRequest::IhttpSend { .. }
+            | InternalServiceRequest::AppSessionOpen { .. }
+            | InternalServiceRequest::AppSessionSend { .. }
+            | InternalServiceRequest::AppSessionClose { .. }
             // A member's own grants on this agent (kernel/apps/settings.rs).
             | InternalServiceRequest::AppsGetAgentSettings { .. }
             | InternalServiceRequest::AppsSetAgentSettings { .. }

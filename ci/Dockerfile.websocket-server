@@ -19,10 +19,14 @@ COPY citadel-internal-service ./citadel-internal-service
 COPY citadel-internal-service-connector ./citadel-internal-service-connector
 COPY citadel-internal-service-macros ./citadel-internal-service-macros
 COPY citadel-internal-service-types ./citadel-internal-service-types
+# The committed ts-rs bindings: the types crate's build script hashes them into
+# CITADEL_TYPES_HASH and refuses to build without them.
+COPY typescript-client/src/types ./typescript-client/src/types
 COPY citadel-internal-service-wasm-client ./citadel-internal-service-wasm-client
 COPY citadel-release-signature ./citadel-release-signature
 COPY citadel-app-id ./citadel-app-id
 COPY citadel-app-signature ./citadel-app-signature
+COPY citadel-identity ./citadel-identity
 COPY citadel-app-net-policy ./citadel-app-net-policy
 COPY citadel-ihttp-types ./citadel-ihttp-types
 COPY citadel-app-sdk-types ./citadel-app-sdk-types

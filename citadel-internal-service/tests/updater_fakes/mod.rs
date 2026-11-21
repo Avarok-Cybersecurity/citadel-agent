@@ -106,6 +106,35 @@ impl FakeSource {
         let last = bytes.len() - 1;
         bytes[last] ^= 0xff;
     }
+    /// Publish `name` serving `bytes`, signed by `seed`'s key (no `.sha256`: nothing reads one).
+    pub fn publish_signed(&self, seed: &[u8; 32], name: &str, bytes: &[u8]) {
+        let tag = self.tag();
+        let signed = signature(seed, &tag, name, bytes).into_bytes();
+        for (asset, bytes) in [
+            (name.to_string(), bytes.to_vec()),
+            (format!("{name}{SIGNATURE_SUFFIX}"), signed),
+        ] {
+            self.drop_asset(&asset);
+            let url = Self::url(&tag, &asset);
+            self.release.lock()["assets"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({
+                    "name": asset, "size": bytes.len(), "browser_download_url": url,
+                }));
+            self.files.lock().insert(url, bytes);
+        }
+    }
+    /// `name` now serves `bytes`; its signature is unchanged.
+    pub fn replace(&self, name: &str, bytes: &[u8]) {
+        let url = Self::url(&self.tag(), name);
+        self.files.lock().insert(url, bytes.to_vec());
+        for asset in self.release.lock()["assets"].as_array_mut().unwrap() {
+            if asset["name"] == name {
+                asset["size"] = bytes.len().into();
+            }
+        }
+    }
     pub fn drop_asset(&self, name: &str) {
         let mut release = self.release.lock();
         let assets = release["assets"].as_array_mut().unwrap();

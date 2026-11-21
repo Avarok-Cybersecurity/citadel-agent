@@ -52,10 +52,6 @@ pub(super) async fn attach_session<T: IOInterface + Sync, R: Ratchet>(
             format!("Session {session_cid} not found"),
         )
     };
-    if this.refuses_older_page(session_cid, conn_id) {
-        let error = crate::kernel::migration_guard::OLDER_PAGE.to_string();
-        return Some(refusal(session_cid, request_id, conn_id, error));
-    }
     let Some(username) = this
         .server_connection_map
         .read()
@@ -131,7 +127,7 @@ pub(super) async fn attach_session<T: IOInterface + Sync, R: Ratchet>(
             &displaced,
         );
     }
-    this.host_ilm_for(session_cid, conn_id).await;
+    this.host_ilm_for(session_cid).await;
     let role = if subscribers.primary() == Some(conn_id) {
         SessionRole::Primary
     } else {

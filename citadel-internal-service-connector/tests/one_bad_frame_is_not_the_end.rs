@@ -70,6 +70,10 @@ impl IOInterface for ScriptedInterface {
         None
     }
     const CALLER_CAN_ALREADY_READ_LOCAL_FILES: bool = false;
+
+    fn handshake_origin(_sink: &Self::Sink) -> Option<&str> {
+        None
+    }
 }
 
 fn a_response(message: &str) -> InternalServicePayload {

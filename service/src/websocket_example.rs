@@ -1,3 +1,4 @@
+use citadel_internal_service::kernel::revfs_seed::MemoryRevfsVault;
 use citadel_internal_service::kernel::{CitadelWorkspaceService, RatchetType};
 use citadel_internal_service::StunServers;
 use citadel_internal_service_connector::io_interface::origin_policy::OriginPolicy;
@@ -25,6 +26,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .apply(&mut NodeBuilder::<RatchetType>::default())
         .with_node_type(NodeType::Server(server_addr))
         .with_path_policy(citadel_internal_service::path_policy::every_path_policy()?)
+        // An example server on this machine: the SDK's limits for a localhost server.
+        .with_server_limits(citadel_sdk::test_common::localhost_server_limits())
+        .with_max_security_level(MaxSecurityLevel::new(SecurityLevel::Custom(10))?)
+        .with_link_manager(LinkManagerMode::Legacy)
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(ServerMode::OrderedReliable(
             NativeOrderedReliableConfig::from_std_listener(server_listener)?,
@@ -61,13 +66,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         websocket_interface,
         citadel_internal_service::SERVER_RECONNECT,
         citadel_internal_service::BrowserTransferRoot::in_system_temp_dir(),
+        // The example's own server is self-signed.
+        citadel_sdk::prelude::CertVerification::SelfSignedAccepted,
     );
+    let revfs_keys = service.revfs_key_source(std::sync::Arc::new(MemoryRevfsVault::default()))?;
+    let kex_identity = service
+        .p2p_kex_identity(std::sync::Arc::new(
+            citadel_internal_service::kernel::p2p_kex::MemoryPeerKeyStore::default(),
+        ))
+        .await?;
 
     // Build and run the internal service node
     let internal_service_node = stun_servers
         .apply(&mut NodeBuilder::default())
         .with_node_type(NodeType::Peer)
         .with_backend(BackendType::InMemory)
+        .with_max_security_level(MaxSecurityLevel::new(SecurityLevel::Custom(10))?)
+        .with_link_manager(LinkManagerMode::Legacy)
+        .with_revfs_key_source(revfs_keys)
+        .with_p2p_kex_identity(kex_identity)
         .with_insecure_skip_cert_verification()
         .build(service)?;
 

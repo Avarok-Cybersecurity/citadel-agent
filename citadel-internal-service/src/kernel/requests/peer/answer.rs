@@ -78,6 +78,30 @@ pub(crate) fn remember_window_relay<T, R: Ratchet>(
     }
 }
 
+/// Record the peer session password a window gave `cid` for `peer_cid` (none clears it).
+pub(crate) fn remember_peer_session_password<T, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    cid: u64,
+    peer_cid: u64,
+    password: Option<&PreSharedKey>,
+) {
+    if let Some(conn) = this.server_connection_map.write().get_mut(&cid) {
+        conn.peer_session_passwords.remember(peer_cid, password);
+    }
+}
+
+/// The peer session password a window last gave `cid` for `peer_cid`.
+pub(crate) fn peer_session_password<T, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    cid: u64,
+    peer_cid: u64,
+) -> Option<PreSharedKey> {
+    this.server_connection_map
+        .read()
+        .get(&cid)
+        .and_then(|conn| conn.peer_session_passwords.for_peer(peer_cid))
+}
+
 pub(crate) fn window_relay<T, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     cid: u64,

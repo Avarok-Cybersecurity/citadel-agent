@@ -70,7 +70,7 @@ mod tests {
             &mut tx1,
             &mut rx1,
             cid1,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -81,7 +81,7 @@ mod tests {
             &mut tx1,
             &mut rx1,
             cid1,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
             UdpMode::Enabled,
         )
@@ -120,7 +120,7 @@ mod tests {
             &mut tx1m,
             &mut rx1,
             cid1,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -131,13 +131,13 @@ mod tests {
             cid: cid0,
             peer_cid: cid1,
             udp_mode: UdpMode::Enabled,
-            session_security_settings: SessionSecuritySettings::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             peer_session_password: None::<PreSharedKey>,
             turn: None,
         })
         .unwrap();
 
-        // B is told, and ACCEPTS.
+        // B is told, and its agent accepts: the account is hosted.
         let notification = tokio::time::timeout(Duration::from_secs(30), rx1.recv())
             .await
             .expect("no PeerConnectNotification within 30s")
@@ -152,42 +152,24 @@ mod tests {
              accepted connection could never carry media"
         );
 
-        tx1.send(InternalServiceRequest::PeerConnectAccept {
-            request_id: Uuid::new_v4(),
-            cid: cid1,
-            peer_cid: cid0,
-            accept: true,
-            // Discarded by accept.rs; the SDK reads the mode from the signal.
-            udp_mode: UdpMode::Enabled,
-            session_security_settings: SessionSecuritySettings::default(),
-            peer_session_password: None::<PreSharedKey>,
-            turn: None,
-        })
-        .unwrap();
+        assert!(
+            notification.answered_by_agent,
+            "B's agent did not take the offer"
+        );
 
-        // The two sides answer with different variants: the connector gets
-        // PeerConnectSuccess, the acceptor PeerConnectAcceptSuccess.
-        for (rx, who) in [(&mut rx0, "connector"), (&mut rx1, "acceptor")] {
-            let signal = tokio::time::timeout(Duration::from_secs(30), rx.recv())
-                .await
-                .unwrap_or_else(|_| panic!("{who} never saw its connect result"))
-                .expect("channel open");
-            assert!(
-                matches!(
-                    signal,
-                    InternalServiceResponse::PeerConnectSuccess(..)
-                        | InternalServiceResponse::PeerConnectAcceptSuccess(..)
-                ),
-                "{who} got {signal:?} instead of a connect success"
-            );
-            // Media needs the datagram path, which attaches in the background: wait for it
-            // (the agent's ensure_direct) before opening.
-            if let InternalServiceResponse::PeerConnectSuccess(s) = signal {
-                let path =
-                    crate::common::settled_path(rx, s.cid, s.peer_cid, (s.path, s.upgrading)).await;
-                assert_eq!(path, P2pPathReport::Direct, "{who}");
-            }
-        }
+        // The connector gets PeerConnectSuccess; the acceptor's window sent nothing.
+        let signal = tokio::time::timeout(Duration::from_secs(30), rx0.recv())
+            .await
+            .expect("the connector never saw its connect result")
+            .expect("channel open");
+        let InternalServiceResponse::PeerConnectSuccess(s) = signal else {
+            panic!("the connector got {signal:?} instead of a connect success")
+        };
+        // Media needs the datagram path, which attaches in the background: wait for it
+        // (the agent's ensure_direct) before opening.
+        let path =
+            crate::common::settled_path(&mut rx0, s.cid, s.peer_cid, (s.path, s.upgrading)).await;
+        assert_eq!(path, P2pPathReport::Direct, "connector");
 
         open_media_and_measure(&tx0, &mut rx0, cid0, cid1, "accepted connection").await;
         Ok(())

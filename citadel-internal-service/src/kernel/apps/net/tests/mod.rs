@@ -58,6 +58,8 @@ pub(super) fn server_grant(app_id: &str, hosts: &[&str], private: bool) -> Kerne
         app_id: app_id.to_string(),
         hosts: hosts.iter().map(|h| h.to_string()).collect(),
         private,
+        servers: Vec::new(),
+        session: None,
     }
 }
 

@@ -4,7 +4,6 @@ import type { SignedOutSession } from "./SignedOutSession";
 
 export type GetSessionsResponse = { cid: bigint, sessions: Array<SessionInformation>, 
 /**
- * Accounts whose sessions the server ended, until each signs in again. Absent from an
- * older agent, hence the default.
+ * Accounts whose sessions the server ended, until each signs in again.
  */
 signed_out: Array<SignedOutSession>, request_id: string | null, };

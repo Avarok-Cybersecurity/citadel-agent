@@ -28,6 +28,7 @@ pub(super) async fn once<T: IOInterface + Sync, R: Ratchet>(
         credentials.keep_alive_timeout,
         credentials.session_security_settings,
         credentials.server_password,
+        this.server_certificate,
     );
     match tokio::time::timeout(policy.attempt_timeout, connect).await {
         Ok(result) => result,

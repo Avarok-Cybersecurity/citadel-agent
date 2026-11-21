@@ -130,6 +130,7 @@ mod tests {
         let (_c, svc): (_, Svc) = CitadelWorkspaceService::new_in_memory(
             crate::kernel::reconnect::policy::SERVER_RECONNECT,
             crate::BrowserTransferRoot::at(transfers.path().to_path_buf()),
+            citadel_sdk::prelude::CertVerification::SelfSignedAccepted,
         );
         {
             let mut m = svc.pending_peer_registrations.write();

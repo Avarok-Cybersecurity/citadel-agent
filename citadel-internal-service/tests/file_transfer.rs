@@ -8,6 +8,7 @@ mod tests {
         RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
+    use citadel_internal_service_test_common::node_settings::TestNode;
     use citadel_internal_service_types::{
         DeleteVirtualFileSuccess, DownloadFileFailure, DownloadFileSuccess, FileSource,
         FileTransferRequestNotification, FileTransferStatusNotification,
@@ -123,13 +124,15 @@ mod tests {
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service = NodeBuilder::default()
             .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
-            .with_backend(BackendType::Filesystem("filesystem".into()))
+            .with_backend(crate::common::test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -287,14 +290,16 @@ mod tests {
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
 
         let internal_service = NodeBuilder::default()
             .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
-            .with_backend(BackendType::Filesystem("filesystem".into()))
+            .with_backend(crate::common::test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -878,7 +883,8 @@ mod tests {
                 cid: *cid_a,
                 peer_cid: *cid_b,
                 udp_mode: Default::default(),
-                session_security_settings: SessionSecuritySettings::default(),
+                session_security_settings: citadel_sdk::prelude::default_session_security_settings(
+                ),
                 peer_session_password: None,
                 turn: None,
             })
@@ -889,7 +895,7 @@ mod tests {
                     Some(r) = from_service_b.recv() => if let InternalServiceResponse::PeerConnectNotification(n) = r {
                         to_service_b.send(InternalServiceRequest::PeerConnectAccept {
                             request_id: Uuid::new_v4(), cid: *cid_b, peer_cid: n.peer_cid, accept: true, udp_mode: Default::default(),
-                            session_security_settings: SessionSecuritySettings::default(), peer_session_password: None, turn: None,
+                            session_security_settings: citadel_sdk::prelude::default_session_security_settings(), peer_session_password: None, turn: None,
                         }).unwrap();
                     },
                     Some(r) = from_service_a.recv() => match r {
@@ -1127,13 +1133,15 @@ mod tests {
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service = NodeBuilder::default()
             .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
-            .with_backend(BackendType::Filesystem("filesystem".into()))
+            .with_backend(crate::common::test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -1199,13 +1207,15 @@ mod tests {
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service = NodeBuilder::default()
             .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
-            .with_backend(BackendType::Filesystem("filesystem".into()))
+            .with_backend(crate::common::test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);

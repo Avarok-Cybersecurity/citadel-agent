@@ -1,6 +1,9 @@
 use citadel_internal_service::stun::{StunServers, STUN_SERVERS_ENV};
 use citadel_sdk::prefabs::server::empty::EmptyKernel;
-use citadel_sdk::prelude::{BackendType, NodeBuilder, NodeType, StackedRatchet};
+use citadel_sdk::prelude::{
+    BackendType, LinkManagerMode, MaxSecurityLevel, NodeBuilder, NodeType, SecurityLevel,
+    StackedRatchet,
+};
 use std::error::Error;
 use std::net::SocketAddr;
 use structopt::StructOpt;
@@ -20,7 +23,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .apply(&mut builder)
         .with_backend(BackendType::InMemory)
         .with_node_type(NodeType::server(opts.bind)?)
-        .with_path_policy(citadel_internal_service::path_policy::every_path_policy()?);
+        .with_path_policy(citadel_internal_service::path_policy::every_path_policy()?)
+        // The agent's maximum, so every level an agent offers is one this server builds.
+        .with_max_security_level(MaxSecurityLevel::new(SecurityLevel::Custom(10))?)
+        .with_link_manager(LinkManagerMode::Legacy);
 
     if opts.dangerous.unwrap_or(false) {
         builder = builder.with_insecure_skip_cert_verification()

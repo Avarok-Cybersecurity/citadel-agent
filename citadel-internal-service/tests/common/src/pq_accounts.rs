@@ -2,16 +2,15 @@
 //! in with the password, enrol a key right after (the PRF salt exists only once the server has
 //! the account), and choose a policy.
 
-use crate::pq::{username, CRED, PASSWORD};
-use crate::pq_window::{FakeKey, Offer, Window};
-use citadel_internal_service_types::RecoveryCodes;
+use crate::pq::{username, PASSWORD};
+use crate::pq_window::{FakeKey, Offer, Registered, Window};
 use citadel_internal_service_types::{SignInManagementOp, SignInManagementOutcome, SignInPolicy};
 use std::error::Error;
 use std::net::SocketAddr;
 
 pub struct Account {
     pub username: String,
-    pub codes: RecoveryCodes,
+    pub registered: Registered,
 }
 
 pub fn password_offer() -> Offer {
@@ -23,7 +22,6 @@ pub fn password_offer() -> Offer {
 
 pub fn add_key() -> SignInManagementOp {
     SignInManagementOp::AddSecurityKey {
-        credential_id: CRED.to_vec(),
         label: "YubiKey".to_string(),
     }
 }
@@ -37,8 +35,10 @@ pub async fn account(
     key: &FakeKey,
 ) -> Result<Account, Box<dyn Error>> {
     let username = username("acct");
-    let (_, codes) = window.register(server, &username, PASSWORD).await??;
-    let cid = window.sign_in(&username, &password_offer()).await??;
+    let registered = window.register(server, &username, PASSWORD).await??;
+    let cid = window
+        .sign_in(server, &username, &password_offer())
+        .await??;
     if policy != SignInPolicy::Password {
         let added = window
             .manage(cid, add_key(), Some(PASSWORD), Some(key))
@@ -52,5 +52,8 @@ pub async fn account(
         assert_eq!(set, SignInManagementOutcome::PolicySet);
     }
     window.disconnect(cid).await?;
-    Ok(Account { username, codes })
+    Ok(Account {
+        username,
+        registered,
+    })
 }

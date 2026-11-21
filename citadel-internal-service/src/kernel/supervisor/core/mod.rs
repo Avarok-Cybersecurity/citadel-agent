@@ -11,6 +11,8 @@ mod tests;
 #[cfg(test)]
 mod tests_dial_in_progress;
 #[cfg(test)]
+mod tests_dialing_is_answered;
+#[cfg(test)]
 mod tests_force_target;
 #[cfg(test)]
 mod tests_link;

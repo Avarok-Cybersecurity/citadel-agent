@@ -50,6 +50,12 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     info!(target: "citadel", "[PeerConnectAccept] Received request: cid={}, peer_cid={}, accept={}", cid, peer_cid, accept);
     if accept {
         remember_window_relay(this, cid, turn.as_ref());
+        super::answer::remember_peer_session_password(
+            this,
+            cid,
+            peer_cid,
+            peer_session_password.as_ref(),
+        );
     }
 
     // Both outcomes answer with PeerConnectAcceptSuccess, because both ARE

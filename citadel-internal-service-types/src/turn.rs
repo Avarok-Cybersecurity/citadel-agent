@@ -99,15 +99,15 @@ mod tests {
         assert_eq!(path(P2pPathReport::ServerRelay), r#""server_relay""#);
     }
 
-    /// A client that predates `turn` sends PeerConnect without the key; it must still parse.
+    /// No `turn` key means no relay.
     #[test]
-    fn a_peer_connect_without_turn_still_deserializes() {
+    fn a_peer_connect_without_turn_means_no_relay() {
         let request = crate::InternalServiceRequest::PeerConnect {
             request_id: uuid::Uuid::new_v4(),
             cid: 1,
             peer_cid: 2,
             udp_mode: Default::default(),
-            session_security_settings: Default::default(),
+            session_security_settings: crate::test_session_security_settings(),
             peer_session_password: None,
             turn: None,
         };

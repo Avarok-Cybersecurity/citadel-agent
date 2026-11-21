@@ -51,7 +51,7 @@ pub struct ServerReconnectFailed {
     pub request_id: Option<Uuid>,
     /// Why, when the UI can act on it: the server's admission check (a Turnstile token)
     /// refused the reconnect, so the user must sign in again and pass it. Absent for every
-    /// other failure, and from an older agent.
+    /// other failure.
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub reason_code: Option<FailureReason>,
@@ -70,7 +70,7 @@ pub struct SignedOutSession {
     pub reason: String,
     /// Why, when the UI can act on it: the server's admission check (a Turnstile token)
     /// refused the reconnect, so the user must sign in again and pass it. Absent for every
-    /// other failure, and from an older agent.
+    /// other failure.
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub reason_code: Option<FailureReason>,

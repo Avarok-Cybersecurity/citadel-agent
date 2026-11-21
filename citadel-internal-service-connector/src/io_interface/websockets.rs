@@ -202,18 +202,22 @@ fn tls_config(
         })
 }
 
-/// Refuse the handshake unless its `Origin` is permitted.
+/// Refuse the handshake unless its `Origin` is permitted, and record in `seen`
+/// the `Origin` an admitted handshake carried.
 ///
 /// This runs during the handshake, so a refused page gets an HTTP 403 and no
 /// WebSocket at all — it never reaches `handle_request` and cannot be counted
-/// as a connection.
+/// as a connection. What it records is what a sign-in proof names as its
+/// origin (`IdentitySignChallenge`): a browser sets this header and page script
+/// cannot, so it is the one origin value no request body can stand in for.
 // The Err type is tungstenite's `ErrorResponse`, fixed by the callback trait
 // this closure has to satisfy. It cannot be boxed without failing to implement
 // the trait, and it is constructed at most once per refused handshake.
 #[allow(clippy::result_large_err)]
-fn origin_check(
-    origins: &OriginPolicy,
-) -> impl FnOnce(&Request, Response) -> Result<Response, ErrorResponse> + '_ {
+fn origin_check<'a>(
+    origins: &'a OriginPolicy,
+    seen: &'a mut Option<String>,
+) -> impl FnOnce(&Request, Response) -> Result<Response, ErrorResponse> + 'a {
     move |request: &Request, response: Response| {
         // A header that is not valid UTF-8 is not an origin we listed, so it
         // is treated as present-and-unrecognised rather than as absent.
@@ -223,6 +227,7 @@ fn origin_check(
             .map(|value| value.to_str().unwrap_or("<invalid>"));
 
         if origins.permits(origin) {
+            *seen = origin.map(str::to_string);
             return Ok(response);
         }
 
@@ -266,6 +271,10 @@ impl IOInterface for WebSocketInterface {
     /// `PickFileRef` and `ByteContents`, which are both driven by a choice the
     /// user actually made.
     const CALLER_CAN_ALREADY_READ_LOCAL_FILES: bool = false;
+
+    fn handshake_origin(sink: &Self::Sink) -> Option<&str> {
+        sink.origin.as_deref()
+    }
 
     /// The next connection whose handshake has COMPLETED.
     ///
@@ -319,6 +328,7 @@ impl IOInterface for WebSocketInterface {
                         // A peer that opens a socket and sends no ClientHello is
                         // exactly the stall the timeout was added for; putting
                         // TLS outside it would reopen that hole one layer down.
+                        let mut origin = None;
                         let upgrade = async {
                             let transport = match tls {
                                 Some(acceptor) => AgentTransport::Tls(Box::new(
@@ -329,13 +339,16 @@ impl IOInterface for WebSocketInterface {
                                 )),
                                 None => AgentTransport::Plain(stream),
                             };
-                            accept_hdr_async(transport, origin_check(&origins)).await
+                            accept_hdr_async(transport, origin_check(&origins, &mut origin)).await
                         };
                         match citadel_io::tokio::time::timeout(HANDSHAKE_TIMEOUT, upgrade).await {
                             Ok(Ok(ws_stream)) => {
                                 let (sink, stream) = ws_stream.split();
                                 let _ = tx.send((
-                                    WebSocketSink { inner: sink },
+                                    WebSocketSink {
+                                        inner: sink,
+                                        origin,
+                                    },
                                     WebSocketStream_ { inner: stream },
                                 ));
                             }
@@ -362,6 +375,8 @@ impl IOInterface for WebSocketInterface {
 
 pub struct WebSocketSink {
     inner: futures_util::stream::SplitSink<WebSocketStream<AgentTransport>, Message>,
+    /// The `Origin` this connection's handshake carried; `None` for a native client.
+    origin: Option<String>,
 }
 
 impl Sink<InternalServicePayload> for WebSocketSink {
@@ -578,6 +593,7 @@ mod tests {
                                 citadel_internal_service_types::ConnectSuccess {
                                     cid: 12345,
                                     request_id: Some(request_id),
+                                    identity: None,
                                 },
                             ),
                         ),
@@ -588,6 +604,7 @@ mod tests {
                                     citadel_internal_service_types::ConnectSuccess {
                                         cid: 12345,
                                         request_id: None,
+                                        identity: None,
                                     },
                                 ),
                             )
@@ -613,15 +630,17 @@ mod tests {
         let request = InternalServicePayload::Request(InternalServiceRequest::Connect {
             request_id,
             username: "test_user".to_string(),
+            server_address: "bench.work.avarok.net".to_string(),
             password: Some(SecBuffer::from(b"password".to_vec())),
             security_key: false,
-            recovery_code: None,
+            recovery_phrase: None,
             connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                 force_login: false,
             },
             udp_mode: Default::default(),
             keep_alive_timeout: Some(Duration::from_secs(30)),
-            session_security_settings: Default::default(),
+            session_security_settings:
+                citadel_internal_service_test_common::default_session_security_settings(),
             server_password: None,
             admission_token: None,
         });
@@ -664,6 +683,7 @@ mod tests {
                             citadel_internal_service_types::ConnectSuccess {
                                 cid: 99999,
                                 request_id: None,
+                                identity: None,
                             },
                         ));
 
@@ -684,15 +704,17 @@ mod tests {
         let request_payload = InternalServicePayload::Request(InternalServiceRequest::Connect {
             request_id: Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap(),
             username: "frontend_user".to_string(),
+            server_address: "bench.work.avarok.net".to_string(),
             password: Some(SecBuffer::from(b"password".to_vec())),
             security_key: false,
-            recovery_code: None,
+            recovery_phrase: None,
             connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                 force_login: false,
             },
             udp_mode: Default::default(),
             keep_alive_timeout: Some(Duration::from_secs(30)),
-            session_security_settings: Default::default(),
+            session_security_settings:
+                citadel_internal_service_test_common::default_session_security_settings(),
             server_password: None,
             admission_token: None,
         });
@@ -751,6 +773,7 @@ mod tests {
                             citadel_internal_service_types::ConnectSuccess {
                                 cid: message_count,
                                 request_id: None,
+                                identity: None,
                             },
                         ));
 
@@ -777,15 +800,17 @@ mod tests {
             let request = InternalServicePayload::Request(InternalServiceRequest::Connect {
                 request_id: Uuid::new_v4(),
                 username: format!("test_user_{}", i),
+                server_address: "bench.work.avarok.net".to_string(),
                 password: Some(SecBuffer::from(b"password".to_vec())),
                 security_key: false,
-                recovery_code: None,
+                recovery_phrase: None,
                 connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                     force_login: false,
                 },
                 udp_mode: Default::default(),
                 keep_alive_timeout: Some(Duration::from_secs(30)),
-                session_security_settings: Default::default(),
+                session_security_settings:
+                    citadel_internal_service_test_common::default_session_security_settings(),
                 server_password: None,
                 admission_token: None,
             });
@@ -838,15 +863,17 @@ mod tests {
         let request = InternalServicePayload::Request(InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "test_user".to_string(),
+            server_address: "bench.work.avarok.net".to_string(),
             password: Some(SecBuffer::from(b"password".to_vec())),
             security_key: false,
-            recovery_code: None,
+            recovery_phrase: None,
             connect_mode: citadel_internal_service_types::ConnectMode::Standard {
                 force_login: false,
             },
             udp_mode: Default::default(),
             keep_alive_timeout: Some(Duration::from_secs(30)),
-            session_security_settings: Default::default(),
+            session_security_settings:
+                citadel_internal_service_test_common::default_session_security_settings(),
             server_password: None,
             admission_token: None,
         });
@@ -1061,6 +1088,9 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+#[path = "websockets_origin_record_tests.rs"]
+mod origin_record_tests;
 #[cfg(test)]
 #[path = "websockets_unknown_request_tests.rs"]
 mod unknown_request_tests;

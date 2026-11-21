@@ -1,0 +1,29 @@
+[package]
+name = "citadel-identity"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The portable Citadel identity: handle@domain names, the ML-DSA-65 identity key, per-server passwords, bindings, the recovery phrase, /.well-known/citadel, the server challenge and the sign-in assertion."
+
+# No `workspace = true` keys, as in citadel-app-signature: the kernel, the agent, the browser wasm
+# client and the synchronized.work crates depend on this crate by path and must not need this
+# workspace's other members checked out to build it.
+#
+# Pure and wasm32-unknown-unknown clean: nothing here draws randomness, reads a clock or does I/O.
+# Seeds, nonces and the current time are the caller's. ML-DSA signing is deterministic from the
+# 32-byte seed, so `ml-dsa` builds without `rand_core`'s OS source.
+[dependencies]
+# The version and features citadel-app-signature uses; `zeroize` wipes the signing key on drop.
+ml-dsa = { version = "0.1.1", default-features = false, features = ["alloc", "zeroize"] }
+sha3 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+zeroize = "1.8"
+
+[dev-dependencies]
+# Only to prove an app signature by the same key is never an identity binding.
+citadel-app-signature = { path = "../citadel-app-signature", version = "0.1.0" }
+# Only to check the bundled word list against BIP-39's published sha256.
+sha2 = "0.10"

@@ -1,7 +1,7 @@
 //! Native notices over the real SDK (multi-window mw6).
 //!
-//! Alice's agent hosts her account; Bob runs a browser messenger and sends
-//! the bytes a web UI sends. The menu-bar app is a plain localhost connection
+//! Each agent hosts its account; Bob sends raw chat commands, the bytes a web
+//! UI's encoder writes. The menu-bar app is a plain localhost connection
 //! holding the launch token every test agent is started with.
 use citadel_internal_service_test_common as common;
 
@@ -10,7 +10,6 @@ mod tests {
     use crate::common::agent_ilm::*;
     use crate::common::group::recv_until;
     use crate::common::{open_localhost_connection, setup_log, TEST_NOTICE_TOKEN};
-    use citadel_internal_service_connector::messenger::ACCOUNT_ILM_OPTIONS;
     use citadel_internal_service_types::{
         AccountPreferences, ConfigCommand, InternalServiceRequest, InternalServiceResponse,
         NativeNotice, NoticeKind, NotificationPreview,
@@ -56,20 +55,10 @@ mod tests {
         }
     }
 
-    async fn answered(
-        tx: &UnboundedSender<InternalServiceRequest>,
-        rx: &mut UnboundedReceiver<InternalServiceResponse>,
-        request: InternalServiceRequest,
-    ) -> InternalServiceResponse {
-        let id = *request.request_id().expect("a request id");
-        tx.send(request).unwrap();
-        recv_until(rx, "the answer", |r| r.request_id() == Some(&id)).await
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     async fn only_the_launch_token_subscribes() {
         setup_log();
-        let world = mixed_hosting(ACCOUNT_ILM_OPTIONS).await;
+        let world = hosted_pair().await;
         let mut page = open_localhost_connection(world.alice_addr).await.unwrap();
         assert!(matches!(
             subscribe(&mut page, "a guess").await,
@@ -93,17 +82,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_message_is_noticed_unless_shown_or_muted() {
         setup_log();
-        let mut world = mixed_hosting(ACCOUNT_ILM_OPTIONS).await;
-        let (alice, bob) = (world.alice.2, world.bob.cid);
+        let mut world = hosted_pair().await;
+        let (alice, bob) = (world.alice.2, world.bob.2);
         let mut app = open_localhost_connection(world.alice_addr).await.unwrap();
         subscribe(&mut app, TEST_NOTICE_TOKEN).await;
 
-        world
-            .bob
-            .tx
-            .send_message_to(alice, fixture("message"))
-            .await
-            .expect("bob sends");
+        sends(&mut world.bob, alice, &fixture("message")).await;
         let first = next_notice(&mut app).await;
         assert_eq!(
             (first.kind, first.cid, first.body.as_str()),
@@ -122,12 +106,7 @@ mod tests {
             },
         };
         answered(&world.alice.0, &mut world.alice.1, focus(true)).await;
-        world
-            .bob
-            .tx
-            .send_message_to(alice, fixture("message-full"))
-            .await
-            .expect("bob sends");
+        sends(&mut world.bob, alice, &fixture("message-full")).await;
         recv_until(&mut world.alice.1, "the second message", |r| {
             matches!(r, InternalServiceResponse::ConversationEvent(e) if e.message_id.as_deref() == Some("id-full"))
         })
@@ -143,12 +122,7 @@ mod tests {
         };
         answered(&world.alice.0, &mut world.alice.1, set).await;
         answered(&world.alice.0, &mut world.alice.1, focus(false)).await;
-        world
-            .bob
-            .tx
-            .send_message_to(alice, fixture("message-long"))
-            .await
-            .expect("bob sends");
+        sends(&mut world.bob, alice, &fixture("message-long")).await;
         // The next notice is the third message's: the second was on screen.
         let third = next_notice(&mut app).await;
         assert!(
@@ -174,7 +148,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_window_may_report_focus_only_for_its_own_session() {
         setup_log();
-        let world = mixed_hosting(ACCOUNT_ILM_OPTIONS).await;
+        let world = hosted_pair().await;
         let mut stranger = open_localhost_connection(world.alice_addr).await.unwrap();
         let report = InternalServiceRequest::ConnectionManagement {
             request_id: Uuid::new_v4(),
@@ -191,7 +165,7 @@ mod tests {
     }
 
     async fn capabilities(window: &mut Conn) -> bool {
-        window.0.send(declare_agent_ilm()).unwrap();
+        window.0.send(declaration()).unwrap();
         match recv_until(&mut window.1, "capabilities", |r| {
             matches!(r, InternalServiceResponse::AgentCapabilities(_))
         })
@@ -219,7 +193,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_window_knows_whether_notices_are_shown() {
         setup_log();
-        let world = mixed_hosting(ACCOUNT_ILM_OPTIONS).await;
+        let world = hosted_pair().await;
         let mut window = open_localhost_connection(world.alice_addr).await.unwrap();
         assert!(!capabilities(&mut window).await, "no menu-bar app yet");
 

@@ -4,6 +4,7 @@
 //! channel, since the old one ends with the link it was reading.
 
 use crate::kernel::apps::net::grants::GrantCache;
+use crate::kernel::identity::challenge::ChallengeWaiters;
 use crate::kernel::session_route::SessionRoute;
 use crate::telemetry::TelemetryUplink;
 use citadel_internal_service_types::{InternalServiceResponse, MessageNotification};
@@ -25,6 +26,7 @@ pub(crate) fn spawn<R: Ratchet>(
     request_id: Uuid,
     telemetry: Option<Arc<TelemetryUplink>>,
     grants: Option<Arc<GrantCache>>,
+    challenges: Option<Arc<ChallengeWaiters>>,
 ) {
     if let Some(grants) = &grants {
         grants.link_up(cid);
@@ -39,6 +41,11 @@ pub(crate) fn spawn<R: Ratchet>(
             }
             if let Some(grants) = &grants {
                 if !grants.on_server_frame(cid, message.as_ref()) {
+                    continue;
+                }
+            }
+            if let Some(challenges) = &challenges {
+                if !challenges.on_server_frame(cid, message.as_ref()) {
                     continue;
                 }
             }

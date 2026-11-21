@@ -13,8 +13,7 @@ use super::handle;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::in_memory::InMemoryInterface;
 use citadel_sdk::prelude::{
-    PeerConnectionType, PeerEvent, PeerResponse, PeerSignal, SessionSecuritySettings,
-    StackedRatchet, Ticket, UdpMode,
+    PeerConnectionType, PeerEvent, PeerResponse, PeerSignal, StackedRatchet, Ticket, UdpMode,
 };
 
 type Svc = CitadelWorkspaceService<InMemoryInterface, StackedRatchet>;
@@ -34,7 +33,7 @@ fn post_connect_to_dialler(invitee_response: Option<PeerResponse>) -> PeerEvent 
             },
             ticket_opt: Some(Ticket(7)),
             invitee_response,
-            session_security_settings: SessionSecuritySettings::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             udp_mode: UdpMode::Disabled,
             session_password: None,
         },
@@ -49,6 +48,7 @@ async fn a_declined_answer_is_not_stored_as_an_incoming_offer() {
     let (_connector, svc): (_, Svc) = CitadelWorkspaceService::new_in_memory(
         crate::SERVER_RECONNECT,
         crate::BrowserTransferRoot::at(transfers.path().to_path_buf()),
+        citadel_sdk::prelude::CertVerification::SelfSignedAccepted,
     );
     handle(&svc, post_connect_to_dialler(Some(PeerResponse::Decline)))
         .await
@@ -67,6 +67,7 @@ async fn an_offer_is_stored_for_acceptance() {
     let (_connector, svc): (_, Svc) = CitadelWorkspaceService::new_in_memory(
         crate::SERVER_RECONNECT,
         crate::BrowserTransferRoot::at(transfers.path().to_path_buf()),
+        citadel_sdk::prelude::CertVerification::SelfSignedAccepted,
     );
     handle(&svc, post_connect_to_dialler(None)).await.unwrap();
     assert!(svc

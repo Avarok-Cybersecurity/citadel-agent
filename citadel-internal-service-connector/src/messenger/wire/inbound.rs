@@ -1,9 +1,5 @@
-//! A peer's decoded frame as the frame ILM consumes.
-//!
-//! One construction for every ILM host: the browser's messenger and the agent
-//! (multi-window mw3) both feed ILM from `MessageNotification`s, and the frame
-//! they build must be the same, or the two would disagree about what was
-//! delivered.
+//! A peer's decoded frame as the frame ILM consumes: the agent feeds its
+//! hosted ILM from `MessageNotification`s through this one construction.
 
 use super::Decoded;
 use crate::messenger::{InternalMessage, WrappedMessage};

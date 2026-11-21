@@ -11,6 +11,7 @@ members = [
     "citadel-release-signature",
     "citadel-app-id",
     "citadel-app-signature",
+    "citadel-identity",
     "citadel-app-net-policy",
     "citadel-ihttp-types",
     "citadel-app-sdk-types",
@@ -39,6 +40,21 @@ exclude = [
 [profile.release]
 overflow-checks = true
 
+# Optimise the password hash in debug and test builds. This is the one explanation; the
+# parent workspace and deploy/tenant-worker carry the same two lines and point here.
+#
+# The SDK hashes every password at its shipped Argon2 cost (64 MiB, 10 passes, 8 lanes) in
+# every build, and sets this same override in its own root Cargo.toml. Cargo applies only
+# the ROOT workspace's [profile] sections and ignores a dependency's, so the SDK's override
+# never reaches this workspace. Unoptimised, one hash cost ~3.7 s of CPU instead of ~0.3 s
+# (measured on this workspace's debug build). On a 4-vCPU runner each reconnect attempt then
+# spent its attempt timeout hashing: sign-in and reconnect tests failed "no answer from the
+# server in 8s", and a timed-out attempt still in flight refused the next login with
+# "Session for CID .. already exists". Only the hashing crate is optimised: the same
+# settings and code run, `test` inherits `dev`, and release builds are untouched.
+[profile.dev.package.rust-argon2]
+opt-level = 3
+
 [workspace.dependencies]
 
 # Workspace deps
@@ -52,20 +68,21 @@ citadel-internal-service-wasm-client = { path = "citadel-internal-service-wasm-c
 citadel-release-signature = { path = "citadel-release-signature", version = "0.1.0" }
 citadel-app-id = { path = "citadel-app-id", version = "0.1.0" }
 citadel-app-signature = { path = "citadel-app-signature", version = "0.1.0" }
+citadel-identity = { path = "citadel-identity", version = "0.1.0" }
 citadel-app-net-policy = { path = "citadel-app-net-policy", version = "0.1.0" }
 citadel-ihttp-types = { path = "citadel-ihttp-types", version = "0.1.0" }
 
 # Avarok deps
-citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "38fd3ddb" }
-citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "38fd3ddb" }
-citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "38fd3ddb" }
-citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "38fd3ddb" }
-citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "38fd3ddb" }
-citadel_proto = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "38fd3ddb" }
+citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "721029bb" }
+citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "721029bb" }
+citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "721029bb" }
+citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "721029bb" }
+citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "721029bb" }
+citadel_proto = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "721029bb" }
 # Tests only: a Flat group's application ciphertext, measured against the topic cap (app_topic.rs).
-citadel_treekem = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "38fd3ddb" }
+citadel_treekem = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "721029bb" }
 # Tests only: the server-side post-quantum sign-in settings (tests/common/src/pq.rs).
-citadel_user = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "38fd3ddb" }
+citadel_user = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "721029bb" }
 
 # Standard deps
 serde = { version = "1.0.104", features = ["derive"] }
@@ -85,8 +102,6 @@ parking_lot = { version = "0.12.1", features = ["deadlock_detection"] }
 structopt = { version = "0.3.26" }
 lazy_static = "1.4.0"
 async-trait = "0.1.83"
-itertools = "0.13.0"
-dashmap = "6.1.0"
 custom_debug = { version = "0.6.2" }
 # rfd is only used in citadel-internal-service for native file picker dialogs
 # Default features disabled to avoid wayland dependency issues in Docker

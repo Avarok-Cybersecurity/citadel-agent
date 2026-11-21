@@ -10,6 +10,7 @@ mod tests {
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_connector::connector::InternalServiceConnector;
+    use citadel_internal_service_test_common::node_settings::TestNode;
     use citadel_internal_service_types::{
         InternalServiceRequest, InternalServiceResponse, MessageNotification, MessageSendSuccess,
     };
@@ -38,6 +39,7 @@ mod tests {
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service = NodeBuilder::default()
@@ -45,6 +47,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -103,6 +106,7 @@ mod tests {
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
 
@@ -111,6 +115,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -169,6 +174,7 @@ mod tests {
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
 
@@ -177,6 +183,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -197,7 +204,7 @@ mod tests {
             full_name: "Full Name".into(),
             username: "Username".into(),
             proposed_password: "Password".into(),
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             connect_after_register: false,
             server_password: None,
             admission_token: None,
@@ -219,7 +226,7 @@ mod tests {
             full_name: "Full Name".into(),
             username: "Username".into(),
             proposed_password: "Password".into(),
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             connect_after_register: false,
             server_password: Some(PreSharedKey::from("IncorrectPassword".as_bytes())),
             admission_token: None,
@@ -241,7 +248,7 @@ mod tests {
             full_name: "Full Name".into(),
             username: "Username".into(),
             proposed_password: "Password".into(),
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             connect_after_register: false,
             server_password: Some(PreSharedKey::from("SecretPassword".as_bytes())),
             admission_token: None,
@@ -262,23 +269,21 @@ mod tests {
         let connect_command = InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "Username".into(),
+            server_address: server_bind_address.to_string(),
             password: Some("Password".into()),
             security_key: false,
-            recovery_code: None,
+            recovery_phrase: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             server_password: None,
             admission_token: None,
         };
         sink.send(connect_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::ConnectSuccess(
-            citadel_internal_service_types::ConnectSuccess {
-                cid: _,
-                request_id: _,
-            },
+            citadel_internal_service_types::ConnectSuccess { .. },
         ) = response_packet
         {
             panic!("Received Unexpected ConnectSuccess");
@@ -289,23 +294,21 @@ mod tests {
         let connect_command = InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "Username".into(),
+            server_address: server_bind_address.to_string(),
             password: Some("Password".into()),
             security_key: false,
-            recovery_code: None,
+            recovery_phrase: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             server_password: Some(PreSharedKey::from("IncorrectPassword".as_bytes())),
             admission_token: None,
         };
         sink.send(connect_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::ConnectSuccess(
-            citadel_internal_service_types::ConnectSuccess {
-                cid: _,
-                request_id: _,
-            },
+            citadel_internal_service_types::ConnectSuccess { .. },
         ) = response_packet
         {
             panic!("Received Unexpected ConnectSuccess");
@@ -316,23 +319,21 @@ mod tests {
         let connect_command = InternalServiceRequest::Connect {
             request_id: Uuid::new_v4(),
             username: "Username".into(),
+            server_address: server_bind_address.to_string(),
             password: Some("Password".into()),
             security_key: false,
-            recovery_code: None,
+            recovery_phrase: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             server_password: Some(PreSharedKey::from("SecretPassword".as_bytes())),
             admission_token: None,
         };
         sink.send(connect_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::ConnectSuccess(
-            citadel_internal_service_types::ConnectSuccess {
-                cid: _,
-                request_id: _,
-            },
+            citadel_internal_service_types::ConnectSuccess { .. },
         ) = response_packet
         {
             info!(target: "citadel", "Successfully Connected to Server using Pre-Shared Key");
@@ -371,6 +372,7 @@ mod tests {
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
 
@@ -379,6 +381,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -481,6 +484,7 @@ mod tests {
             bind_address_internal_service,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
 
@@ -489,6 +493,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel)
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -510,7 +515,7 @@ mod tests {
             full_name: String::from("John"),
             username: String::from("john_doe"),
             proposed_password: String::from("test12345").into_bytes().into(),
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             connect_after_register: true,
             request_id: Uuid::new_v4(),
             server_password: None,
@@ -519,8 +524,8 @@ mod tests {
 
         send(&mut sink, register_command).await?;
 
-        // The registration's own answer comes first (it carries the recovery codes of a
-        // post-quantum server; none here), then the connect's.
+        // The registration's own answer comes first (it carries the recovery phrase), then
+        // the connect's.
         let registered = stream.next().await.unwrap();
         assert!(
             matches!(registered, InternalServiceResponse::RegisterSuccess(_)),
@@ -529,10 +534,7 @@ mod tests {
         let response_packet = stream.next().await.unwrap();
 
         if let InternalServiceResponse::ConnectSuccess(
-            citadel_internal_service_types::ConnectSuccess {
-                cid: _,
-                request_id: _,
-            },
+            citadel_internal_service_types::ConnectSuccess { .. },
         ) = response_packet
         {
             Ok(())
@@ -661,7 +663,7 @@ mod tests {
             cid: peer_b_cid,
             peer_cid: peer_a_cid,
             udp_mode: Default::default(),
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             peer_session_password: expected_psk,
             turn: None,
         };
@@ -678,7 +680,7 @@ mod tests {
             cid: peer_a_cid,
             peer_cid: peer_b_cid,
             udp_mode: Default::default(),
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             peer_session_password: given_psk,
             turn: None,
         };
@@ -764,14 +766,16 @@ mod tests {
                 bind_address_internal_service,
                 citadel_internal_service::SERVER_RECONNECT,
                 crate::common::test_transfers(),
+                crate::common::TEST_SERVER_CERTIFICATE,
             )
             .await?;
 
             let internal_service = NodeBuilder::default()
                 .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
-                .with_backend(BackendType::Filesystem("filesystem".into()))
+                .with_backend(crate::common::test_backend())
                 .with_node_type(NodeType::Peer)
                 .with_insecure_skip_cert_verification()
+                .as_test_agent(&internal_service_kernel)
                 .build(internal_service_kernel)?;
 
             // Add NodeFuture for Internal Service to Vector to be spawned
@@ -814,7 +818,7 @@ mod tests {
             request_id: Uuid::new_v4(),
             cid: *peer_b_cid,
             peer_cid: *peer_a_cid,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             connect_after_register: false,
             peer_session_password: None,
         };
@@ -830,7 +834,7 @@ mod tests {
             request_id: Uuid::new_v4(),
             cid: *peer_a_cid,
             peer_cid: *peer_b_cid,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             connect_after_register: false,
             peer_session_password: None,
         };
@@ -1005,19 +1009,20 @@ mod tests {
 
         let bind_address_internal_service_a: SocketAddr =
             format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+        let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+            bind_address_internal_service_a,
+            citadel_internal_service::SERVER_RECONNECT,
+            crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
+        )
+        .await?;
         let internal_service = NodeBuilder::default()
             .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
-            .build(
-                CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
-                    bind_address_internal_service_a,
-                    citadel_internal_service::SERVER_RECONNECT,
-                    crate::common::test_transfers(),
-                )
-                .await?,
-            )?;
+            .as_test_agent(&internal_service_kernel)
+            .build(internal_service_kernel)?;
 
         let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
         internal_services.push(Box::pin(async move {
@@ -1101,6 +1106,7 @@ mod tests {
                 bind_address_internal_service,
                 citadel_internal_service::SERVER_RECONNECT,
                 crate::common::test_transfers(),
+                crate::common::TEST_SERVER_CERTIFICATE,
             )
             .await?;
 
@@ -1109,6 +1115,7 @@ mod tests {
                 .with_node_type(NodeType::Peer)
                 .with_backend(crate::common::test_backend())
                 .with_insecure_skip_cert_verification()
+                .as_test_agent(&internal_service_kernel)
                 .build(internal_service_kernel)?;
 
             internal_services.push(Box::pin(async move {
@@ -1157,7 +1164,7 @@ mod tests {
                     to_service_b,
                     from_service_b,
                     *cid_b,
-                    SessionSecuritySettings::default(),
+                    citadel_sdk::prelude::default_session_security_settings(),
                     None::<PreSharedKey>,
                 )
                 .await?;
@@ -1168,7 +1175,7 @@ mod tests {
                     to_service_b,
                     from_service_b,
                     *cid_b,
-                    SessionSecuritySettings::default(),
+                    citadel_sdk::prelude::default_session_security_settings(),
                     None::<PreSharedKey>,
                 )
                 .await?;

@@ -1,4 +1,4 @@
-//! What a session signed in with a recovery code may ask the agent for.
+//! What a recovery console session (signed in with the recovery phrase) may ask the agent for.
 //!
 //! The server already confines such a session: it drops every packet but connect, keep-alive,
 //! disconnect and peer commands, and refuses every signal but the two management changes a
@@ -7,17 +7,15 @@
 
 use citadel_internal_service_types::InternalServiceRequest;
 
-pub(crate) const RECOVERY_ONLY: &str = "This session signed in with a recovery code: it can \
-     only add a security key, set the sign-in policy, or sign out";
+pub(crate) const RECOVERY_ONLY: &str = "This session signed in to recover the account: it can \
+     only manage how the account signs in, or sign out";
 
 /// Whether a recovery session may make this request.
 pub(crate) fn allows(command: &InternalServiceRequest) -> bool {
     match command {
         InternalServiceRequest::Disconnect { .. } => true,
         // The SDK's rule, not a copy of it.
-        InternalServiceRequest::SignInManagement { op, .. } => {
-            citadel_sdk::prelude::SignInManagementOp::from(op.clone()).allowed_in_recovery()
-        }
+        InternalServiceRequest::SignInManagement { op, .. } => op.allowed_in_recovery(),
         _ => false,
     }
 }
@@ -42,9 +40,8 @@ mod tests {
     }
 
     #[test]
-    fn a_recovery_session_may_add_a_key_set_the_policy_and_sign_out() {
+    fn a_recovery_session_may_manage_its_sign_in_methods_and_sign_out() {
         let add = SignInManagementOp::AddSecurityKey {
-            credential_id: vec![1],
             label: "key".into(),
         };
         let policy = SignInManagementOp::SetSignInPolicy {
@@ -52,6 +49,16 @@ mod tests {
         };
         assert!(allows(&manage(add)));
         assert!(allows(&manage(policy)));
+        assert!(allows(&manage(SignInManagementOp::ListCredentials)));
+        assert!(allows(&manage(
+            SignInManagementOp::RegenerateRecoveryPhrase
+        )));
+        assert!(allows(&manage(SignInManagementOp::SetPassword {
+            new_password: "a new password".into(),
+        })));
+        assert!(allows(&manage(SignInManagementOp::RemoveCredential {
+            id: 1
+        })));
         let disconnect = InternalServiceRequest::Disconnect {
             request_id: Uuid::nil(),
             cid: 1,
@@ -61,17 +68,11 @@ mod tests {
 
     #[test]
     fn and_nothing_else() {
-        for op in [
-            SignInManagementOp::ListCredentials,
-            SignInManagementOp::RemoveCredential { id: 1 },
-            SignInManagementOp::RenameCredential {
-                id: 1,
-                label: "x".into(),
-            },
-            SignInManagementOp::RegenerateRecoveryCodes,
-        ] {
-            assert!(!allows(&manage(op.clone())), "{op:?}");
-        }
+        let rename = SignInManagementOp::RenameCredential {
+            id: 1,
+            label: "x".into(),
+        };
+        assert!(!allows(&manage(rename)));
         let peers = InternalServiceRequest::ListRegisteredPeers {
             request_id: Uuid::nil(),
             cid: 1,

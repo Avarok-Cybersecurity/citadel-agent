@@ -146,28 +146,34 @@ pub async fn disconnect(
     .await
 }
 
+/// A sign-in to `server`, the address the account was registered to.
 pub async fn connect(
     sink: &mut WrappedSink<TcpIOInterface>,
     stream: &mut Stream,
+    server: &str,
     username: &str,
 ) -> Result<InternalServiceResponse, Box<dyn Error>> {
-    connect_with_password(sink, stream, username, PASSWORD).await
+    connect_with_password(sink, stream, server, username, PASSWORD).await
 }
 
 /// A sign-in with `password`, which may be wrong.
 pub async fn connect_with_password(
     sink: &mut WrappedSink<TcpIOInterface>,
     stream: &mut Stream,
+    server: &str,
     username: &str,
     password: &str,
 ) -> Result<InternalServiceResponse, Box<dyn Error>> {
-    Ok(connect_observing(sink, stream, username, password).await?.0)
+    Ok(connect_observing(sink, stream, server, username, password)
+        .await?
+        .0)
 }
 
 /// A sign-in, and every link notification that arrived before its answer.
 pub async fn connect_observing(
     sink: &mut WrappedSink<TcpIOInterface>,
     stream: &mut Stream,
+    server: &str,
     username: &str,
     password: &str,
 ) -> Result<(InternalServiceResponse, Vec<String>), Box<dyn Error>> {
@@ -177,13 +183,14 @@ pub async fn connect_observing(
         InternalServiceRequest::Connect {
             request_id,
             username: username.to_string(),
+            server_address: server.to_string(),
             password: Some(password.as_bytes().to_vec().into()),
             security_key: false,
-            recovery_code: None,
+            recovery_phrase: None,
             connect_mode: citadel_sdk::prelude::ConnectMode::Standard { force_login: false },
             udp_mode: Default::default(),
             keep_alive_timeout: None,
-            session_security_settings: Default::default(),
+            session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             server_password: None,
             admission_token: None,
         },

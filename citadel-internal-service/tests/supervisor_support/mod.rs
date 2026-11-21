@@ -8,7 +8,8 @@ use citadel_internal_service::{SupervisorPolicy, SERVER_RECONNECT};
 use citadel_internal_service_connector::connector::WrappedSink;
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
 use citadel_internal_service_test_common as common;
-use citadel_internal_service_test_common::agent_ilm::declare_agent_ilm;
+use citadel_internal_service_test_common::agent_ilm::declaration;
+use citadel_internal_service_test_common::node_settings::TestNode;
 use citadel_internal_service_types::{
     AgentCapabilities, ConfigCommand, InternalServiceRequest, InternalServiceResponse,
     PeerRegisterSuccess,
@@ -45,6 +46,7 @@ pub async fn spawn_agent(
         bind,
         SERVER_RECONNECT,
         citadel_internal_service_test_common::test_transfers(),
+        citadel_internal_service_test_common::TEST_SERVER_CERTIFICATE,
     )
     .await?;
     if let Some(policy) = policy {
@@ -57,6 +59,7 @@ pub async fn spawn_agent(
         ))
         .with_node_type(NodeType::Peer)
         .with_insecure_skip_cert_verification()
+        .as_test_agent(&kernel)
         .build(kernel)?;
     Ok((
         bind,
@@ -66,9 +69,9 @@ pub async fn spawn_agent(
     ))
 }
 
-/// Declares the window hosted, and returns what the agent says it does.
+/// Declares the window's capabilities, and returns what the agent says it does.
 pub async fn declare(window: &mut (WrappedSink<TcpIOInterface>, Stream)) -> AgentCapabilities {
-    common::send(&mut window.0, declare_agent_ilm())
+    common::send(&mut window.0, declaration())
         .await
         .expect("the agent is up");
     expect(&mut window.1, |r| match r {
@@ -126,7 +129,7 @@ async fn peer_register(
         request_id: Uuid::new_v4(),
         cid,
         peer_cid,
-        session_security_settings: Default::default(),
+        session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
         connect_after_register: false,
         peer_session_password: None,
     };
@@ -155,7 +158,7 @@ pub fn peer_connect(cid: u64, peer_cid: u64) -> InternalServiceRequest {
         cid,
         peer_cid,
         udp_mode: UdpMode::Disabled,
-        session_security_settings: Default::default(),
+        session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
         peer_session_password: None,
         turn: None,
     }

@@ -8,6 +8,7 @@ mod tests {
         RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
+    use citadel_internal_service_test_common::node_settings::TestNode;
     use citadel_internal_service_types::{
         DeleteVirtualFileSuccess, DownloadFileSuccess, FileSource, FileTransferRequestNotification,
         FileTransferStatusNotification, InternalServiceRequest, InternalServiceResponse,
@@ -29,6 +30,7 @@ mod tests {
             service_addr,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
 
@@ -37,6 +39,7 @@ mod tests {
             .with_backend(BackendType::InMemory)
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&service)
             .build(service)?;
 
         tokio::task::spawn(internal_service);
@@ -74,7 +77,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -86,7 +89,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -105,6 +108,7 @@ mod tests {
             service_addr,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
 
@@ -113,6 +117,7 @@ mod tests {
             .with_backend(BackendType::InMemory)
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&service)
             .build(service)?;
 
         tokio::task::spawn(internal_service);
@@ -150,7 +155,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -162,7 +167,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -217,14 +222,16 @@ mod tests {
             service_addr,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
 
         let internal_service = NodeBuilder::default()
             .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
-            .with_backend(BackendType::Filesystem("filesystem".into()))
+            .with_backend(crate::common::test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&service)
             .build(service)?;
 
         tokio::task::spawn(internal_service);
@@ -262,7 +269,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -274,7 +281,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -364,14 +371,16 @@ mod tests {
             service_addr,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
 
         let internal_service = NodeBuilder::default()
             .with_stun_servers(crate::common::test_stun_servers().as_slice().to_vec())
-            .with_backend(BackendType::Filesystem("filesystem".into()))
+            .with_backend(crate::common::test_backend())
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&service)
             .build(service)?;
 
         tokio::task::spawn(internal_service);
@@ -409,7 +418,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;
@@ -421,7 +430,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettings::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None::<PreSharedKey>,
         )
         .await?;

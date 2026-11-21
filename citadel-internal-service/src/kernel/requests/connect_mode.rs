@@ -14,10 +14,9 @@
 //! It waits out the server's stale-session window instead (`kernel::reconnect`), and the user can
 //! end the wait by signing in.
 //!
-//! For its own dead session it no longer waits: from protocol 0.11.2 the server issues each
-//! session a resume token and replaces the session whose token a reconnect presents, after the
-//! credentials check (Citadel-Protocol #352). Not forcing still keeps anyone else's live session
-//! out of a reconnect's reach.
+//! For its own dead session it does not wait: the server issues each session a resume token and
+//! replaces the session whose token a reconnect presents, after the credentials check. Not
+//! forcing still keeps anyone else's live session out of a reconnect's reach.
 use citadel_sdk::prelude::ConnectMode;
 
 /// Who is asking the server for the session.

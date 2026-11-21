@@ -54,11 +54,11 @@ impl WatchIo for Fake {
         self.alive_checks.set(self.alive_checks.get() + 1);
         self.alive_checks.get() <= self.script.parent_alive_for
     }
-    fn spawn(&self, program: &Path, _args: &[String]) -> Result<Box<dyn Child>, String> {
+    fn spawn(&self, program: &Path, args: &[String]) -> Result<Box<dyn Child>, String> {
         let first = !self.events().iter().any(|e| e.starts_with("spawn"));
         self.events
             .borrow_mut()
-            .push(format!("spawn {}", program.display()));
+            .push(format!("spawn {} {}", program.display(), args.join(" ")));
         if first && self.script.spawn_fails {
             return Err("exec format error".to_string());
         }
@@ -101,16 +101,22 @@ fn plan() -> WatchPlan {
         backup: PathBuf::from("/a/.citadel-agent.previous"),
         health: "127.0.0.1:12345".parse().unwrap(),
         version: "0.9.0".to_string(),
-        args: vec!["--bind".to_string(), "127.0.0.1:12345".to_string()],
+        // A launch setting the release added, which the old version may not know.
+        args: ["--bind", "127.0.0.1:12345", "--new-setting", "1"]
+            .map(String::from)
+            .to_vec(),
+        restore_args: vec!["--bind".to_string(), "127.0.0.1:12345".to_string()],
         failed_marker: PathBuf::from("/c/failed-0.9.0"),
     }
 }
 
+const STARTS_NEW: &str = "spawn /a/citadel-agent --bind 127.0.0.1:12345 --new-setting 1";
+/// The old version comes back with its own command, not the new one's.
 const ROLLBACK: [&str; 4] = [
-    "spawn /a/citadel-agent",
+    STARTS_NEW,
     "mark /c/failed-0.9.0",
     "rename /a/.citadel-agent.previous /a/citadel-agent",
-    "spawn /a/citadel-agent",
+    "spawn /a/citadel-agent --bind 127.0.0.1:12345",
 ];
 
 #[test]
@@ -121,7 +127,7 @@ fn a_new_agent_that_answers_is_kept() {
         ..Default::default()
     });
     assert_eq!(supervise(&plan(), &io), Outcome::Healthy);
-    assert_eq!(io.events(), vec!["spawn /a/citadel-agent"]);
+    assert_eq!(io.events(), vec![STARTS_NEW]);
 }
 
 #[test]

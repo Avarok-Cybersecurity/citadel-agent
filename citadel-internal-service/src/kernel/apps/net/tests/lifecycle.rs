@@ -14,6 +14,7 @@ fn service() -> (tempfile::TempDir, Svc) {
     let (_connector, svc): (_, Svc) = CitadelWorkspaceService::new_in_memory(
         crate::SERVER_RECONNECT,
         crate::BrowserTransferRoot::at(transfers.path().to_path_buf()),
+        citadel_sdk::prelude::CertVerification::SelfSignedAccepted,
     );
     let config = AppNetConfig {
         page_origin_hosts: vec![PAGE.to_string()],

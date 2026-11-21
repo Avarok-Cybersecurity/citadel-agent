@@ -2,53 +2,43 @@
 
 use super::*;
 
-/// A `Connect` as a client from before post-quantum sign-in sends it: a password, and neither
-/// `security_key` nor `recovery_code` (nor `server_password`, which the UI never sends).
-fn legacy_connect_json() -> String {
+/// A current `Connect` as JSON, with `removed` taken out.
+fn connect_json_without(removed: &str) -> String {
     let current = InternalServiceRequest::Connect {
         request_id: Uuid::new_v4(),
         username: "alice".to_string(),
+        server_address: "bench.work.avarok.net".to_string(),
         password: Some(SecBuffer::from("hunter2")),
         security_key: true,
-        recovery_code: None,
+        recovery_phrase: None,
         connect_mode: ConnectMode::Standard { force_login: false },
         udp_mode: UdpMode::Enabled,
         keep_alive_timeout: None,
-        session_security_settings: SessionSecuritySettings::default(),
+        session_security_settings: crate::test_session_security_settings(),
         server_password: None,
         admission_token: None,
     };
     let mut value = serde_json::to_value(&current).unwrap();
     let fields = value["Connect"].as_object_mut().unwrap();
-    for added in [
-        "security_key",
-        "recovery_code",
-        "server_password",
-        "admission_token",
-    ] {
-        assert!(fields.remove(added).is_some(), "{added} is not a field");
-    }
+    assert!(fields.remove(removed).is_some(), "{removed} is not a field");
     value.to_string()
 }
 
 #[test]
-fn an_older_clients_connect_still_parses_as_a_password_sign_in() {
-    let request: InternalServiceRequest = serde_json::from_str(&legacy_connect_json()).unwrap();
-    let InternalServiceRequest::Connect {
-        password,
-        security_key,
-        recovery_code,
-        ..
-    } = request
-    else {
-        panic!("not a Connect: {request:?}");
-    };
-    assert_eq!(password.expect("the password").as_ref(), b"hunter2");
-    assert!(
-        !security_key,
-        "an older client cannot answer a key challenge"
-    );
-    assert!(recovery_code.is_none());
+fn a_connect_that_names_no_server_or_key_ability_is_refused() {
+    for required in ["server_address", "security_key"] {
+        let err = serde_json::from_str::<InternalServiceRequest>(&connect_json_without(required))
+            .unwrap_err();
+        assert!(err.to_string().contains(required), "{required}: {err}");
+    }
+}
+
+#[test]
+fn a_connect_may_leave_out_what_is_optional() {
+    for optional in ["recovery_phrase", "server_password", "admission_token"] {
+        serde_json::from_str::<InternalServiceRequest>(&connect_json_without(optional))
+            .unwrap_or_else(|err| panic!("{optional}: {err}"));
+    }
 }
 
 #[test]
@@ -65,13 +55,39 @@ fn a_prf_output_never_reaches_a_debug_string() {
 }
 
 #[test]
-fn a_registers_recovery_codes_never_reach_a_debug_string() {
+fn a_registrations_phrase_never_reaches_a_debug_string() {
     let success = InternalServiceResponse::RegisterSuccess(RegisterSuccess {
         cid: 7,
         request_id: None,
-        recovery_codes: RecoveryCodes(vec!["7H3Q-K2M9-PX4D-W8RT".to_string()]),
+        recovery_phrase: RecoveryCodes(vec!["zebra".to_string(); 24]),
+        identity: None,
     });
-    assert!(!format!("{success:?}").contains("7H3Q"));
+    let printed = format!("{success:?}");
+    assert!(!printed.contains("zebra"), "{printed}");
+}
+
+#[test]
+fn a_typed_phrase_never_reaches_a_debug_string() {
+    let recover = InternalServiceRequest::RecoverAccount {
+        request_id: Uuid::nil(),
+        server_addr: "acme.example".into(),
+        username: "alice".into(),
+        phrase: SecBuffer::from("zebra zebra zebra"),
+        device_label: "laptop".into(),
+        admission_token: Some("turnstile-secret".into()),
+        session_security_settings: crate::test_session_security_settings(),
+        server_password: None,
+    };
+    let printed = format!("{recover:?}");
+    assert!(!printed.contains("zebra"), "{printed}");
+    assert!(!printed.contains("turnstile-secret"), "{printed}");
+}
+
+/// A registration always carries its phrase: an answer without one is not a registration.
+#[test]
+fn a_registration_without_a_phrase_does_not_parse() {
+    let json = r#"{"cid":1,"request_id":null,"recovery_codes":["A"]}"#;
+    assert!(serde_json::from_str::<RegisterSuccess>(json).is_err());
 }
 
 #[test]
@@ -82,7 +98,10 @@ fn the_new_notification_is_a_notification_and_the_failures_are_errors() {
             request_id: None,
             challenge_id: Uuid::nil(),
             purpose: SecurityKeyPurpose::SignIn,
-            allowed_credential_ids: vec![],
+            rp_id: "work.avarok.net".to_string(),
+            ceremony: SecurityKeyCeremony::Authenticate {
+                credential_ids: vec![],
+            },
             prf_salt: vec![0; 32],
             expires_in_ms: 60_000,
         },
@@ -99,6 +118,7 @@ fn the_new_notification_is_a_notification_and_the_failures_are_errors() {
         cid: 0,
         request_id: None,
         message: String::new(),
+        reason: None,
     });
     assert!(failed.is_error());
 }
@@ -108,14 +128,15 @@ fn an_admission_token_never_reaches_a_debug_string() {
     let connect = InternalServiceRequest::Connect {
         request_id: Uuid::nil(),
         username: "alice".to_string(),
+        server_address: "bench.work.avarok.net".to_string(),
         password: None,
         security_key: false,
-        recovery_code: None,
+        recovery_phrase: None,
         admission_token: Some("0.turnstile-secret".to_string()),
         connect_mode: ConnectMode::Standard { force_login: false },
         udp_mode: UdpMode::Enabled,
         keep_alive_timeout: None,
-        session_security_settings: SessionSecuritySettings::default(),
+        session_security_settings: crate::test_session_security_settings(),
         server_password: None,
     };
     let printed = format!("{connect:?}");
@@ -140,7 +161,10 @@ fn a_key_challenge_and_its_answer_never_print_their_bytes() {
         request_id: None,
         challenge_id: Uuid::nil(),
         purpose: SecurityKeyPurpose::SignIn,
-        allowed_credential_ids: vec![credential.clone()],
+        rp_id: "work.avarok.net".to_string(),
+        ceremony: SecurityKeyCeremony::Authenticate {
+            credential_ids: vec![credential.clone()],
+        },
         prf_salt: salt.clone(),
         expires_in_ms: 60_000,
     };
@@ -157,4 +181,16 @@ fn a_key_challenge_and_its_answer_never_print_their_bytes() {
         assert!(!printed.contains(leading), "{printed}");
         assert!(!printed.contains("90, 90"), "{printed}");
     }
+}
+
+#[test]
+fn a_reason_from_a_newer_agent_decodes_as_unknown_and_keeps_its_failure() {
+    let reason: FailureReason = serde_json::from_str("\"some_reason_from_the_future\"").unwrap();
+    assert_eq!(reason, FailureReason::Unknown);
+    let failure: RegisterFailure = serde_json::from_str(
+        r#"{"cid":0,"message":"refused","request_id":null,"reason_code":"some_reason_from_the_future"}"#,
+    )
+    .unwrap();
+    assert_eq!(failure.reason_code, Some(FailureReason::Unknown));
+    assert_eq!(failure.message, "refused");
 }

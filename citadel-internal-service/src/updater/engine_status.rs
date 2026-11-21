@@ -52,7 +52,7 @@ impl Engine {
             download_url: offer.download_url.clone(),
             ready: offer
                 .staged
-                .as_deref()
+                .as_ref()
                 .is_some_and(|staged| self.io.installer.can_install(staged).is_ok()),
             // Nothing is staged before its signature verified (fetch.rs).
             mldsa_verified: offer.staged.is_some(),

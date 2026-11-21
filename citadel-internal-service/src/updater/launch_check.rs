@@ -13,7 +13,7 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-pub const CHECK_LAUNCH_FLAG: &str = "--check-launch";
+pub use super::launch_settings::CHECK_LAUNCH_FLAG;
 /// The check resolves settings and exits; one that has not answered by then is not an agent
 /// that would start.
 const CHECK_WITHIN: Duration = Duration::from_secs(30);

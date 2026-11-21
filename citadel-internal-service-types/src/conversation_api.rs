@@ -51,8 +51,6 @@ pub struct AccountPreferences {
     pub notification_preview: NotificationPreview,
     pub retention: Vec<PeerRetention>,
     /// Chats with a level above Standard; an absent chat admits every offer.
-    /// Absent from a UI that predates it, which pushed no minimum.
-    #[serde(default)]
     pub security_minimums: Vec<PeerSecurityMinimum>,
 }
 

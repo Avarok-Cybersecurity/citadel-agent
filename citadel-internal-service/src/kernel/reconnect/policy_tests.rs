@@ -84,7 +84,6 @@ fn account_errors_raised_here_are_refusals() {
         ErrorCode::AccountInvalidUsername,
         ErrorCode::AccountInvalidPassword,
         ErrorCode::AccountDisengaged,
-        ErrorCode::PreconnectCidNotRegistered,
     ] {
         assert_eq!(classify(code, ""), FailureKind::Refused, "{code:?}");
     }
@@ -105,37 +104,22 @@ fn a_server_refusal_is_recognised_by_its_rendered_text() {
     );
 }
 
-/// Captured from a server that restarted without its accounts: every attempt failed with
-/// this, and it was retried for ten minutes.
+/// A server that restarted without its accounts refuses the connect's first packet
+/// (`PreconnectRefused`), exactly as it refuses one that does not authenticate: neither is
+/// cured by asking again with the same keys, so neither is retried for ten minutes.
 #[test]
-fn a_server_without_the_account_is_a_refusal() {
-    // The code and text exactly as the agent logged them.
+fn a_refused_first_packet_is_a_refusal() {
     assert_eq!(
-        classify(
-            ErrorCode::Generic,
-            "CID not registered to this node: CID 6062579214020710934 is not registered to this node"
-        ),
+        classify(ErrorCode::PreconnectRefused, ""),
         FailureKind::Refused
     );
+    let rendered = ErrorCode::PreconnectRefused.raw_string();
+    assert_eq!(classify(ErrorCode::Generic, rendered), FailureKind::Refused);
     let remote = ErrorCode::RemoteConnectFailed;
+    assert_eq!(classify(remote, rendered), FailureKind::Refused);
+    // A mention is not the error.
     assert_eq!(
-        classify(remote, "CID 7 is not registered to this node"),
-        FailureKind::Refused
-    );
-    // The placeholder must hold something, and the form must be the error, not a mention.
-    assert_eq!(
-        classify(remote, "CID  is not registered to this node"),
-        FailureKind::Transient
-    );
-    assert_eq!(
-        classify(
-            remote,
-            "retrying since CID 7 is not registered to this node"
-        ),
-        FailureKind::Transient
-    );
-    assert_eq!(
-        classify(remote, "CID 7 is not registered to this node yet, retry"),
+        classify(remote, &format!("retrying since {rendered}")),
         FailureKind::Transient
     );
 }

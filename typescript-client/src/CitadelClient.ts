@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import { v4 as uuidv4 } from 'uuid';
+import { defaultKemAlgorithm } from '@avarok/citadel-protocol-types';
 import {
     InternalServicePayload,
     InternalServiceRequest,
@@ -11,27 +12,29 @@ import {
     MessageNotification
 } from './types/index.js';
 import { isResponseType, isVariant } from './type-guards.js';
-import type { ConnectMode, UdpMode, SessionSecuritySettings, PreSharedKey, SecurityLevel } from '@avarok/citadel-protocol-types';
 
 export interface CitadelClientConfig {
     url: string;
     username: string;
+    /** The server the account is on: the agent signs in only the account of this name there. */
+    serverAddress: string;
     password: string;
     timeout?: number;
 }
 
+type ConnectFields = Extract<InternalServiceRequest, { Connect: unknown }>['Connect'];
+type MessageFields = Extract<InternalServiceRequest, { Message: unknown }>['Message'];
+
+/** The Connect request's settings, camel-cased, each typed by the generated request. */
 export interface ConnectOptions {
-    connectMode?: ConnectMode;
-    udpMode?: UdpMode;
-    keepAliveTimeout?: { secs: number; nanos: number } | null;
-    sessionSecuritySettings?: SessionSecuritySettings;
-    serverPassword?: PreSharedKey | null;
+    connectMode?: ConnectFields['connect_mode'];
+    udpMode?: ConnectFields['udp_mode'];
+    keepAliveTimeout?: ConnectFields['keep_alive_timeout'];
+    sessionSecuritySettings?: ConnectFields['session_security_settings'];
+    serverPassword?: ConnectFields['server_password'];
 }
 
-export interface MessageOptions {
-    peer_cid?: bigint | null;
-    security_level?: SecurityLevel;
-}
+export type MessageOptions = Partial<Pick<MessageFields, 'peer_cid' | 'security_level'>>;
 
 export class CitadelClient {
     private ws: WebSocket | null = null;
@@ -90,10 +93,10 @@ export class CitadelClient {
             Connect: {
                 request_id: requestId,
                 username: this.config.username,
+                server_address: this.config.serverAddress,
                 password: Array.from(passwordBytes),
                 // A password sign-in: this client cannot answer a security-key challenge.
                 security_key: false,
-                recovery_code: null,
                 connect_mode: options.connectMode || { Standard: { force_login: false } },
                 udp_mode: options.udpMode || "Disabled",
                 keep_alive_timeout: options.keepAliveTimeout || { secs: 30, nanos: 0 },
@@ -102,7 +105,7 @@ export class CitadelClient {
                     secrecy_mode: "BestEffort",
                     crypto_params: {
                         encryption_algorithm: "AES_GCM_256",
-                        kem_algorithm: "MlKem",
+                        kem_algorithm: defaultKemAlgorithm(),
                         sig_algorithm: "None"
                     },
                     header_obfuscator_settings: "Disabled"

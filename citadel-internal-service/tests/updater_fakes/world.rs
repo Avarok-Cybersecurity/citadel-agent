@@ -1,10 +1,11 @@
 //! The recorders for what would restart the agent, and the world a test runs in.
 
 use super::staging::ReadsVersion;
-use super::{release_public_key, FakeSource, FakeVerifier};
+use super::{release_public_key, FakeSource, FakeVerifier, RELEASE_SEED};
 use async_trait::async_trait;
 use citadel_internal_service::updater::engine::Engine;
 use citadel_internal_service::updater::io::*;
+use citadel_internal_service::updater::launch_settings::ASSET_NAME as LAUNCH_ASSET;
 use citadel_internal_service::updater::platform::Plan;
 use citadel_internal_service::updater::staging::FsStaging;
 use citadel_internal_service_types::UpdateAvailable;
@@ -23,13 +24,13 @@ pub struct Recorder {
 }
 
 impl Installer for Recorder {
-    fn can_install(&self, _staged: &Path) -> Result<(), String> {
+    fn can_install(&self, _staged: &Staged) -> Result<(), String> {
         Ok(())
     }
-    fn install(&self, staged: &Path, version: &Version) -> Result<(), String> {
+    fn install(&self, staged: &Staged, version: &Version) -> Result<(), String> {
         self.installs
             .lock()
-            .push((staged.to_path_buf(), version.to_string()));
+            .push((staged.path.clone(), version.to_string()));
         Ok(())
     }
 }
@@ -60,6 +61,9 @@ impl SessionCount {
         self.0.signed_in.store(n, Ordering::SeqCst);
     }
 }
+
+/// The launch settings every fixture release carries: one setting, as the identity release's.
+pub const LAUNCH: &str = r#"{"v":1,"settings":{"--identity-unlock-idle-secs":"900"}}"#;
 
 pub struct World {
     pub engine: Engine,
@@ -107,8 +111,18 @@ impl World {
     }
 
     fn with(tag: &str, plan: Plan, prints: &str, runs_agent: bool) -> Self {
+        Self::with_script(
+            tag,
+            plan,
+            &format!("#!/bin/sh\necho '{prints}'\n"),
+            runs_agent,
+        )
+    }
+
+    /// The release's agent is `agent_script`, its `citadel-agent-launch.json` is `LAUNCH`.
+    pub fn with_script(tag: &str, plan: Plan, agent_script: &str, runs_agent: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let agent_script = format!("#!/bin/sh\necho '{prints}'\n");
+        let agent_script = agent_script.to_string();
         let payload = tarball(dir.path(), &agent_script);
         let names = [
             "citadel-agent-linux-x64.tar.gz",
@@ -117,6 +131,7 @@ impl World {
             "Citadel-Agent-x64.msi",
         ];
         let source = Arc::new(FakeSource::new(tag, &names, &payload));
+        source.publish_signed(&RELEASE_SEED, LAUNCH_ASSET, LAUNCH.as_bytes());
         let recorder = Arc::new(Recorder::default());
         let release_key = release_public_key();
         let mut world = Self {
@@ -173,6 +188,10 @@ impl World {
     }
     pub fn installed(&self) -> Vec<(PathBuf, String)> {
         self.recorder.installs.lock().clone()
+    }
+    /// Where this world keeps what a test writes beside it.
+    pub fn dir(&self) -> &Path {
+        self.dir.path()
     }
     pub fn staged_dir_exists(&self, version: &str) -> bool {
         self.dir.path().join("cache").join(version).exists()

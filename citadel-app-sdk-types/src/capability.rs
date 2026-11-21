@@ -58,6 +58,7 @@ capabilities! {
     StorageBlob = "storage.blob" => Storage,
     StorageFiles = "storage.files" => Storage,
     StorageLocal = "storage.local" => Storage,
+    StorageNodeAuthored = "storage.node.authored" => Storage,
     NetHost = "net.host" => Net,
     NetHostPrivate = "net.host.private" => Net,
     NetServer = "net.server" => Net,

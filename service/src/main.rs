@@ -1,13 +1,20 @@
-mod data_format;
-
-use citadel_internal_service::kernel::CitadelWorkspaceService;
+use citadel_internal_service::kernel::{p2p_kex, revfs_seed, CitadelWorkspaceService};
 use citadel_internal_service::stun::{StunServers, STUN_SERVERS_ENV};
 use citadel_internal_service::{sweep_stale_browser_transfers, BrowserTransferRoot};
-use citadel_sdk::prelude::{BackendType, NodeBuilder, NodeType, StackedRatchet};
+use citadel_sdk::prelude::{
+    BackendType, CertVerification, LinkManagerMode, MaxSecurityLevel, NodeBuilder, NodeType,
+    SecurityLevel, StackedRatchet,
+};
 use std::error::Error;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
+
+/// What this agent demands of a workspace server's certificate. The generic agent takes a server
+/// that says its certificate is self-signed, as self-hosted workspace servers present; an identity
+/// account still proves its server by the key it pinned. The agent shipped with Citadel Workspaces
+/// is a separate build (the parent repository's binary) and verifies the certificate.
+const SERVER_CERTIFICATE: CertVerification = CertVerification::SelfSignedAccepted;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -42,6 +49,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         opts.bind,
         citadel_internal_service::SERVER_RECONNECT,
         browser_transfers,
+        SERVER_CERTIFICATE,
     )
     .await?
     .with_supervisor(citadel_internal_service::AGENT_SUPERVISOR);
@@ -71,11 +79,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
         );
     }
 
+    let revfs_keys = service.revfs_key_source(revfs_seed::vault_for(&backend)?)?;
+    let kex_identity = service
+        .p2p_kex_identity(p2p_kex::peer_key_store_for(&backend)?)
+        .await?;
+
     let mut builder = NodeBuilder::default();
     let mut builder = stun_servers
         .apply(&mut builder)
         .with_backend(backend)
-        .with_node_type(NodeType::Peer);
+        .with_node_type(NodeType::Peer)
+        // The owner's production maximum for the agent (2026-11-18); the SDK has no default.
+        .with_max_security_level(MaxSecurityLevel::new(SecurityLevel::Custom(10))?)
+        // Managed links are not switched on in this release.
+        .with_link_manager(LinkManagerMode::Legacy)
+        .with_revfs_key_source(revfs_keys)
+        .with_p2p_kex_identity(kex_identity);
 
     if opts.dangerous.unwrap_or(false) {
         builder = builder.with_insecure_skip_cert_verification()
@@ -173,7 +192,7 @@ fn resolve_backend(opts: &Options) -> Result<BackendType, Box<dyn Error>> {
             // change would otherwise present as an agent that cannot read its
             // own accounts, with deleting the volume as the only apparent
             // remedy -- and the keys in it do not come back.
-            data_format::check_data_dir(&path)?;
+            citadel_internal_service::data_format::check_data_dir(&path)?;
             Ok(BackendType::Filesystem(path_str))
         }
     }

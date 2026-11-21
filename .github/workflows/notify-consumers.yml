@@ -1,0 +1,48 @@
+name: Notify consumers
+
+# The parent pins this repository through its submodule pointer, so every
+# commit on master is a release of the agent's wire types, WASM client and
+# TypeScript client (TYPES-SYNC D2). This tells the parent, whose types-bump
+# workflow moves the pointer, regenerates the committed pkg, and opens or
+# updates ONE bump PR. The parent's nightly run finds it anyway if this fails.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: The types-sync App is configured
+        env:
+          APP_ID: ${{ vars.TYPES_SYNC_APP_ID }}
+          APP_KEY: ${{ secrets.TYPES_SYNC_APP_PRIVATE_KEY }}
+        run: |
+          missing=""
+          [ -n "$APP_ID" ] || missing="$missing variable TYPES_SYNC_APP_ID"
+          [ -n "$APP_KEY" ] || missing="$missing secret TYPES_SYNC_APP_PRIVATE_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::not configured:$missing (see TYPES-SYNC-DESIGN.md, 'Creating the types-sync App'). citadel-workspace was NOT told about $GITHUB_SHA; its nightly types-bump will still find it."
+            exit 1
+          fi
+      - uses: actions/create-github-app-token@v1
+        id: app
+        with:
+          app-id: ${{ vars.TYPES_SYNC_APP_ID }}
+          private-key: ${{ secrets.TYPES_SYNC_APP_PRIVATE_KEY }}
+          owner: Avarok-Cybersecurity
+          repositories: citadel-workspace
+      - name: Dispatch types-released
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          gh api repos/Avarok-Cybersecurity/citadel-workspace/dispatches \
+            -f event_type=types-released \
+            -f "client_payload[producer]=agent" \
+            -f "client_payload[rev]=$GITHUB_SHA"
+          echo "told citadel-workspace: agent $GITHUB_SHA"

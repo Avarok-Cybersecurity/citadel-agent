@@ -85,7 +85,7 @@ pub async fn disconnect_any<R: Ratchet>(
         ClientServerRemote::new(
             VirtualTargetType::LocalGroupServer { session_cid: cid },
             remote.clone(),
-            Default::default(),
+            citadel_sdk::prelude::default_session_security_settings(),
             None,
             None,
         )

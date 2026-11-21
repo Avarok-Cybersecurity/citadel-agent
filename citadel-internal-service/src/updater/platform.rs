@@ -152,6 +152,16 @@ pub fn plan(kind: &InstallKind, os: Os, arch: Arch) -> Plan {
     }
 }
 
+/// Whether this install replaces itself, said before anything is downloaded: `Err` names why
+/// not, and the offer is then a download link (`ready: false`), so a window shows Download
+/// rather than a Restart that could never finish.
+pub fn self_update(plan: &Plan) -> Result<(), String> {
+    match plan {
+        Plan::Apply { .. } => Ok(()),
+        Plan::LinkOnly { why, .. } => Err(why.clone()),
+    }
+}
+
 /// `…/Name.app` when `exe` is `…/Name.app/Contents/MacOS/<file>`.
 fn mac_bundle_of(exe: &std::path::Path) -> Option<PathBuf> {
     let macos = exe.parent()?;

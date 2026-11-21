@@ -1,6 +1,7 @@
-//! A recovery code signs in once, to a session that may only add a security key, set the
-//! sign-in policy, or sign out. The agent answers everything else with a clear refusal rather
-//! than leaving it to the server, which drops it silently.
+//! The recovery phrase signs in to the recovery console: a session that may manage how the
+//! account signs in (list, add a key, remove one, set the policy, set the password, replace the
+//! phrase) and sign out, and nothing else. The agent answers everything else with a clear refusal
+//! rather than leaving it to the server, which drops it silently.
 
 use citadel_internal_service_test_common::pq::{spawn_agent, spawn_server, Server};
 use citadel_internal_service_test_common::pq_accounts::{account, add_key};
@@ -11,18 +12,18 @@ use citadel_internal_service_types::{SignInManagementOp, SignInManagementOutcome
 use std::error::Error;
 use uuid::Uuid;
 
-const RECOVERY_ONLY: &str = "signed in with a recovery code";
+/// The agent's refusal (kernel/sign_in/recovery.rs `RECOVERY_ONLY`).
+const RECOVERY_ONLY: &str = "signed in to recover the account";
 
-fn recovery(code: &str) -> Offer {
+fn phrase(typed: &str) -> Offer {
     Offer {
-        recovery_code: Some(code.to_string()),
+        recovery_phrase: Some(typed.to_string()),
         ..Default::default()
     }
 }
 
 #[tokio::test]
-async fn a_recovery_session_is_restricted_and_its_code_signs_in_once() -> Result<(), Box<dyn Error>>
-{
+async fn the_phrase_opens_the_recovery_console_and_nothing_more() -> Result<(), Box<dyn Error>> {
     setup_log();
     let server = spawn_server(Server::PostQuantum);
     let mut window = Window::open(spawn_agent().await?).await?;
@@ -33,9 +34,11 @@ async fn a_recovery_session_is_restricted_and_its_code_signs_in_once() -> Result
         &FakeKey::new(1),
     )
     .await?;
-    let code = user.codes.0[3].clone();
+    let typed = user.registered.typed_phrase();
 
-    let cid = window.sign_in(&user.username, &recovery(&code)).await??;
+    let cid = window
+        .sign_in(server, &user.username, &phrase(&typed))
+        .await??;
 
     // A normal request: refused at once, saying why.
     let request_id = Uuid::new_v4();
@@ -48,15 +51,24 @@ async fn a_recovery_session_is_restricted_and_its_code_signs_in_once() -> Result
         "a recovery session listed peers: {peers:?}"
     );
     // Management it may not make.
-    let list = window
-        .manage(cid, SignInManagementOp::ListCredentials, None, None)
-        .await?;
+    let rename = SignInManagementOp::RenameCredential {
+        id: 1,
+        label: "x".into(),
+    };
+    let renamed = window.manage(cid, rename, None, None).await?;
     assert!(
-        matches!(list, Err(ref message) if message.contains(RECOVERY_ONLY)),
-        "a recovery session listed credentials: {list:?}"
+        matches!(renamed, Err(ref message) if message.contains(RECOVERY_ONLY)),
+        "a recovery session renamed a credential: {renamed:?}"
     );
 
-    // What it is for: a new key, and a policy that uses it.
+    // What it is for: review the credentials, a new key, and a policy that uses it.
+    let listed = window
+        .manage(cid, SignInManagementOp::ListCredentials, None, None)
+        .await??;
+    assert!(
+        matches!(listed, SignInManagementOutcome::Credentials { .. }),
+        "{listed:?}"
+    );
     let key = FakeKey::new(5);
     let added = window.manage(cid, add_key(), None, Some(&key)).await??;
     assert!(
@@ -70,13 +82,11 @@ async fn a_recovery_session_is_restricted_and_its_code_signs_in_once() -> Result
     assert_eq!(set, SignInManagementOutcome::PolicySet);
     window.disconnect(cid).await?;
 
-    let again = window.sign_in(&user.username, &recovery(&code)).await?;
-    assert!(again.is_err(), "a recovery code signed in twice");
     let with_key = Offer {
         key: Some(key),
         ..Default::default()
     };
-    let signed_in = window.sign_in(&user.username, &with_key).await?;
+    let signed_in = window.sign_in(server, &user.username, &with_key).await?;
     assert!(
         signed_in.is_ok(),
         "the recovered key did not sign in: {signed_in:?}"
@@ -85,8 +95,7 @@ async fn a_recovery_session_is_restricted_and_its_code_signs_in_once() -> Result
 }
 
 #[tokio::test]
-async fn a_malformed_recovery_code_is_refused_without_reaching_the_server(
-) -> Result<(), Box<dyn Error>> {
+async fn a_malformed_phrase_is_refused_without_reaching_the_server() -> Result<(), Box<dyn Error>> {
     setup_log();
     let server = spawn_server(Server::PostQuantum);
     let mut window = Window::open(spawn_agent().await?).await?;
@@ -98,8 +107,12 @@ async fn a_malformed_recovery_code_is_refused_without_reaching_the_server(
     )
     .await?;
     let refused = window
-        .sign_in(&user.username, &recovery("not a code"))
+        .sign_in(server, &user.username, &phrase("not a phrase"))
         .await?;
-    assert_eq!(refused, Err("That is not a recovery code".to_string()));
+    let message = refused.expect_err("a malformed phrase signed in");
+    assert!(
+        message.starts_with("That is not a recovery phrase") && message.contains("24 words"),
+        "{message}"
+    );
     Ok(())
 }

@@ -18,15 +18,15 @@ pub(crate) struct Store<'a> {
     pub(crate) own: u64,
 }
 
-/// Keys are scoped by the owning account; records written before that are
-/// under the peer alone, and are still read -- but only an unstamped one or
-/// one stamped for this account.
+/// Every key is scoped by the owning account. A record under the peer alone
+/// was written before that and is never read.
 pub(crate) fn scoped(own: u64, peer: u64) -> String {
-    format!("{PAGINATED_PREFIX}{own}_with_{peer}")
+    format!("{}{peer}", own_prefix(own))
 }
 
-pub(crate) fn legacy(peer: u64) -> String {
-    format!("{PAGINATED_PREFIX}{peer}")
+/// The prefix of every one of this account's conversation keys.
+pub(crate) fn own_prefix(own: u64) -> String {
+    format!("{PAGINATED_PREFIX}{own}_with_")
 }
 
 fn stored_err(e: stored::StoredError) -> String {
@@ -51,16 +51,10 @@ impl Store<'_> {
     }
 
     pub(crate) async fn load_metadata(&self, peer: u64) -> KvResult<Option<ConversationMetadata>> {
-        if let Some(found) = self
+        let found = self
             .metadata_at(&format!("{}_metadata", scoped(self.own, peer)))
-            .await?
-        {
-            return Ok(Some(found));
-        }
-        let legacy = self
-            .metadata_at(&format!("{}_metadata", legacy(peer)))
             .await?;
-        Ok(legacy.filter(|m| m.owner_cid.is_none_or(|owner| owner == self.own)))
+        Ok(found.filter(|m| m.owner_cid == self.own))
     }
 
     pub(crate) async fn load_page(
@@ -68,13 +62,8 @@ impl Store<'_> {
         peer: u64,
         number: u32,
     ) -> KvResult<Option<ConversationPage>> {
-        if let Some(page) = self
-            .page_at(&format!("{}_{number}", scoped(self.own, peer)))
-            .await?
-        {
-            return Ok(Some(page));
-        }
-        self.page_at(&format!("{}_{number}", legacy(peer))).await
+        self.page_at(&format!("{}_{number}", scoped(self.own, peer)))
+            .await
     }
 
     pub(crate) async fn save_metadata(&self, metadata: &ConversationMetadata) -> KvResult<()> {
@@ -105,7 +94,7 @@ impl Store<'_> {
         let is_new = existing.is_none();
         let mut metadata = existing.unwrap_or(ConversationMetadata {
             peer_cid: peer,
-            owner_cid: Some(self.own),
+            owner_cid: self.own,
             peer_username,
             total_message_count: 0.0,
             oldest_message_timestamp: message.timestamp,
@@ -116,8 +105,6 @@ impl Store<'_> {
             last_message_index: 0.0,
             last_updated: now,
         });
-        // Adopt an unstamped record the first time this account writes to it.
-        metadata.owner_cid.get_or_insert(self.own);
 
         let mut page = self
             .load_page(peer, metadata.latest_page)

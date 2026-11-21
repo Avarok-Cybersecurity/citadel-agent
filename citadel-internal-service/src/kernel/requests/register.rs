@@ -20,16 +20,23 @@
 //! - `register.rs` (this file) → `remote.register()` → Creates NEW account with NEW CID
 //! - `connect.rs` → `remote.connect()` → Connects to EXISTING account, SAME CID
 
+use crate::kernel::account_server::Refusal;
 use crate::kernel::requests::{handle_request, HandledRequestResult};
 use crate::kernel::session_route::deliver;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    InternalServiceRequest, InternalServiceResponse, RecoveryCodes,
+    FailureReason, InternalServiceRequest, InternalServiceResponse, RecoveryCodes,
 };
 use citadel_sdk::logging::info;
 use citadel_sdk::prelude::{ConnectMode, ProtocolRemoteExt, Ratchet};
 use uuid::Uuid;
+
+/// A server that issued no recovery phrase registered an account nothing could recover, and
+/// whose files would have no root (kernel/revfs_seed).
+pub(crate) const NO_PHRASE: &str = "The server registered the account but issued no recovery \
+     phrase. This agent registers only on servers that recover accounts with a phrase; update \
+     the server, then register again under another username";
 
 pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
@@ -65,20 +72,24 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     // A failed lookup is answered, not logged: registration is a foreground
     // action and "Registration timed out" is what the user saw for a name that
     // simply does not resolve.
-    let refuse = |message: String| {
+    let refuse_held = |message: String, held_for_server: Option<String>| {
         Some(HandledRequestResult {
             response: InternalServiceResponse::RegisterFailure(
                 citadel_internal_service_types::RegisterFailure {
                     cid: 0,
                     message,
                     request_id: Some(request_id),
-                    reason_code: None,
+                    reason_code: held_for_server
+                        .as_ref()
+                        .map(|_| FailureReason::UsernameHeldForAnotherServer),
                     admission_challenge: None,
+                    held_for_server,
                 },
             ),
             uuid,
         })
     };
+    let refuse = |message: String| refuse_held(message, None);
 
     let address = match crate::kernel::server_address::classify(&server_addr) {
         Err(err) => return refuse(format!("invalid server address {server_addr}: {err}")),
@@ -90,6 +101,30 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         Err(err) => return refuse(format!("invalid server address {server_addr}: {err}")),
         Ok(server_host) => server_host,
     };
+    // The canonical domain the account's recovery phrase is bound to. Never `None`: a server
+    // that recovers accounts would register this one with no recovery credential at all.
+    let recovery_domain = match crate::kernel::recovery_domain::of_server(&server_host) {
+        Err(err) => return refuse(format!("Cannot register at {server_addr}: {err}")),
+        Ok(domain) => domain.to_string(),
+    };
+
+    // One agent holds one account per username: the SDK stores an account by
+    // `username_to_cid(username)` and saves a new registration over whatever is there.
+    // Registering a name this agent holds for another server would erase that account
+    // here, so it is refused before anything is dialled. The same server is the
+    // server's to decide (a username it already has is refused there).
+    match crate::kernel::account_server::check(remote, &username, &server_addr).await {
+        Ok(()) | Err(Refusal::NoSuchAccount) => {}
+        Err(Refusal::OnAnotherServer(held)) => {
+            return refuse_held(
+                format!("This device already has an account named {username} on {held}; one device holds one account per username"),
+                Some(held),
+            )
+        }
+        Err(Refusal::InvalidServer(err)) => {
+            return refuse(format!("could not check this device's accounts for {username}: {err}"))
+        }
+    }
 
     let registered = match address {
         crate::kernel::server_address::ServerAddress::WebSocket(endpoint) => {
@@ -103,6 +138,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     session_security_settings,
                     server_password.clone(),
                     admission_token,
+                    Some(recovery_domain.clone()),
+                    this.server_certificate,
                 )
                 .await
         }
@@ -124,6 +161,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     session_security_settings,
                     server_password.clone(),
                     admission_token,
+                    Some(recovery_domain.clone()),
+                    this.server_certificate,
                 )
                 .await
         }
@@ -146,14 +185,33 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
     match registered {
         Ok(res) => {
-            // The codes exist only here: the SDK derived them on this client, and the server
-            // keeps only their keys. They go to the window that registered, once, and nowhere
-            // else -- not to a log, not to the store.
+            // The phrase exists only here: the SDK drew it on this client, and the server keeps
+            // only its factor's public key. The words go to the window that registered, once,
+            // and nowhere else -- not to a log, not to the store. Their seed is the account's
+            // RE-VFS root, stored sealed before anything can use a key.
+            let Some(words) = res.recovery_phrase.map(RecoveryCodes) else {
+                citadel_sdk::logging::warn!(target: "citadel", "[Register] {} registered at {}, which issued no recovery phrase", res.cid, server_host);
+                return Some(HandledRequestResult {
+                    response: InternalServiceResponse::RegisterFailure(
+                        citadel_internal_service_types::RegisterFailure {
+                            cid: res.cid,
+                            reason_code: None,
+                            admission_challenge: None,
+                            held_for_server: None,
+                            message: NO_PHRASE.to_string(),
+                            request_id: Some(request_id),
+                        },
+                    ),
+                    uuid,
+                });
+            };
+            store_root(this, res.cid, &words).await;
             let response = InternalServiceResponse::RegisterSuccess(
                 citadel_internal_service_types::RegisterSuccess {
                     cid: res.cid,
                     request_id: Some(request_id),
-                    recovery_codes: RecoveryCodes(res.recovery_codes),
+                    recovery_phrase: words,
+                    identity: None,
                 },
             );
             if !connect_after_register {
@@ -161,13 +219,15 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             }
             // Sent ahead of the connect's own answer, which keeps the request id.
             if deliver(&this.tx_to_localhost_clients, &[uuid], response).is_empty() {
-                citadel_sdk::logging::warn!(target: "citadel", "[Register] {} registered, but its window left before the recovery codes reached it", res.cid);
+                citadel_sdk::logging::warn!(target: "citadel", "[Register] {} registered, but its window left before the recovery phrase reached it", res.cid);
             }
             let connect_command = InternalServiceRequest::Connect {
                 username,
+                // The host just recorded for the account: the Connect signs in exactly it.
+                server_address: server_host,
                 password: Some(proposed_password),
                 security_key: false,
-                recovery_code: None,
+                recovery_phrase: None,
                 keep_alive_timeout: None,
                 udp_mode: Default::default(),
                 // The Connect handler sets force_login by origin (requests/connect_mode.rs).
@@ -186,6 +246,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     cid: 0,
                     reason_code: crate::kernel::sign_in::failure_reason(err.code),
                     admission_challenge: crate::kernel::sign_in::admission_challenge(&err),
+                    held_for_server: None,
                     message: err.into_string(),
                     request_id: Some(request_id),
                 },
@@ -193,5 +254,27 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
             Some(HandledRequestResult { response, uuid })
         }
+    }
+}
+
+/// The issued phrase's seed becomes the account's RE-VFS root. Logged, not answered as a
+/// failure: the account exists at the server and the words must still reach the window. Without
+/// a stored root the account's sign-ins here are refused (`revfs_seed::NO_ROOT`) until the phrase
+/// recovers it on this device, which stores the root then.
+async fn store_root<T: IOInterface + Sync, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    cid: u64,
+    words: &RecoveryCodes,
+) {
+    use crate::kernel::revfs_seed::{self, Adopt};
+    let stored = match revfs_seed::seed_of_words(&words.0) {
+        Ok(seed) => {
+            let (vault, remote) = (this.revfs_vault.get(), this.remote());
+            revfs_seed::adopt_phrase(vault, remote, cid, &seed, Adopt::Replace).await
+        }
+        Err(err) => Err(err),
+    };
+    if let Err(err) = stored {
+        citadel_sdk::logging::warn!(target: "citadel", "[Register] {cid} registered, but its RE-VFS root was not stored: {err}");
     }
 }

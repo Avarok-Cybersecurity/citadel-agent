@@ -10,12 +10,11 @@
 #[path = "updater_fakes/mod.rs"]
 mod fakes;
 
-use citadel_internal_service::updater::io::Installer;
+use citadel_internal_service::updater::io::{Installer, Staged};
 use citadel_internal_service::updater::platform::{Method, Plan};
 use citadel_internal_service::updater::policy::Trigger;
 use fakes::*;
 use semver::Version;
-use std::path::Path;
 use std::sync::Arc;
 
 const REFUSAL: &str = "no STUN servers configured";
@@ -31,10 +30,10 @@ fn tarball_plan() -> Plan {
 struct WouldNotStart;
 
 impl Installer for WouldNotStart {
-    fn can_install(&self, _staged: &Path) -> Result<(), String> {
+    fn can_install(&self, _staged: &Staged) -> Result<(), String> {
         Err(REFUSAL.to_string())
     }
-    fn install(&self, _staged: &Path, version: &Version) -> Result<(), String> {
+    fn install(&self, _staged: &Staged, version: &Version) -> Result<(), String> {
         panic!("{version} was installed although it would not start");
     }
 }

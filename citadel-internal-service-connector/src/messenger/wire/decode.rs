@@ -28,10 +28,11 @@ pub enum DecodeError {
     /// Not an ILM frame at all. Raw traffic -- Yjs updates, the plain
     /// messaging service -- takes this route by design and is forwarded as is.
     NotAFrame(String),
-    /// An ILM frame whose extension cannot be honoured: an unknown codec, a
-    /// dictionary this build does not have, contents that do not decompress
-    /// or would expand past the ceiling. It is dropped, loudly, and never
-    /// forwarded: these bytes are not a message anyone should see.
+    /// An ILM frame this build cannot honour: an Ack or Poll without a
+    /// capability advertisement, an unknown codec, a dictionary this build
+    /// does not have, contents that do not decompress or would expand past the
+    /// ceiling. It is dropped, loudly, and never forwarded: these bytes are not
+    /// a message anyone should see, and the sender is not downgraded.
     Unreadable(String),
 }
 
@@ -65,8 +66,16 @@ pub fn decode_notification(bytes: &[u8]) -> Result<Decoded, DecodeError> {
         }),
         WireWrapper::ISMAux { signal } => {
             let evidence = match &*signal {
+                // Every peer advertises on every Ack and Poll. One that does
+                // not is refused, never taken for a peer that offers less.
                 InternalMessage::Ack { .. } | InternalMessage::Poll { .. } => {
-                    CapabilityEvidence::Advertised(advertisement::read(rest))
+                    let advertised = advertisement::read(rest).map_err(|reason| {
+                        DecodeError::Unreadable(format!(
+                            "an Ack or Poll from {}: {reason}",
+                            signal.source_id()
+                        ))
+                    })?;
+                    CapabilityEvidence::Advertised(advertised)
                 }
                 // A loopback payload, not a peer's control frame: it says
                 // nothing about what the peer accepts.

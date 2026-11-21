@@ -7,6 +7,7 @@ mod tests {
         spawn_services, InternalServicesFutures, RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
+    use citadel_internal_service_test_common::node_settings::TestNode;
     use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
     use citadel_sdk::logging::info;
     use citadel_sdk::prelude::*;
@@ -33,6 +34,7 @@ mod tests {
             bind_addr_1,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service_1 = NodeBuilder::default()
@@ -40,12 +42,14 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel_1)
             .build(internal_service_kernel_1)?;
 
         let internal_service_kernel_2 = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             bind_addr_2,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service_2 = NodeBuilder::default()
@@ -53,6 +57,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel_2)
             .build(internal_service_kernel_2)?;
 
         let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
@@ -173,6 +178,7 @@ mod tests {
             bind_addr_1,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service_1 = NodeBuilder::default()
@@ -180,12 +186,14 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel_1)
             .build(internal_service_kernel_1)?;
 
         let internal_service_kernel_2 = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             bind_addr_2,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service_2 = NodeBuilder::default()
@@ -193,6 +201,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel_2)
             .build(internal_service_kernel_2)?;
 
         let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
@@ -298,6 +307,7 @@ mod tests {
             bind_addr_1,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service_1 = NodeBuilder::default()
@@ -305,12 +315,14 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel_1)
             .build(internal_service_kernel_1)?;
 
         let internal_service_kernel_2 = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
             bind_addr_2,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service_2 = NodeBuilder::default()
@@ -318,6 +330,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
+            .as_test_agent(&internal_service_kernel_2)
             .build(internal_service_kernel_2)?;
 
         let mut internal_services: Vec<InternalServicesFutures> = Vec::new();

@@ -108,7 +108,7 @@ impl Handoff {
 pub enum Reauth {
     /// The password alone opened it.
     Password(SecBuffer),
-    /// It needed the user, a security-key touch or a recovery code, which a reconnect cannot
+    /// It needed the user, a security-key touch or the recovery phrase, which a reconnect cannot
     /// ask for unprompted: the reconnect gives up with this reason, and the user signs in.
     NeedsUser(&'static str),
 }

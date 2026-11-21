@@ -12,7 +12,6 @@ import type { PendingGroupInvite } from "./PendingGroupInvite";
 export type GroupListJoinedSuccess = { cid: bigint, groups: MessageGroupKey[], request_id: string | null, 
 /**
  * Invitations this session has not answered, kept by the agent so one sent while no tab
- * was open is still shown. `None` from an older agent, which does not keep them; last and
- * defaulted, so that agent's response still parses.
+ * was open is still shown.
  */
-pending_invites?: Array<PendingGroupInvite>, };
+pending_invites: Array<PendingGroupInvite>, };

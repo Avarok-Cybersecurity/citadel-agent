@@ -6,10 +6,12 @@
 //! response is logged whole at debug level, and a credential id identifies a user's key.
 //!
 //! The conversions match every variant with no catch-all, so a variant the SDK adds is a compile
-//! error here rather than a silent gap.
+//! error here rather than a silent gap. The SDK's retired recovery-code slots are uninhabited:
+//! the SDK refuses them when it decodes, so they never reach a conversion.
 
 use crate::{plaintext_debug_fmt, RecoveryCodes};
 use citadel_types::auth as sdk;
+use citadel_types::crypto::SecBuffer;
 use custom_debug::Debug;
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +35,7 @@ pub enum SignInPolicy {
 pub enum FactorKind {
     Password,
     SecurityKey,
-    RecoveryCode,
+    RecoveryPhrase,
 }
 
 /// One enrolled factor (`citadel_types::auth::SignInCredential`).
@@ -51,19 +53,19 @@ pub struct SignInCredential {
     pub created_ms: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint | null"))]
     pub last_used_ms: Option<u64>,
-    /// A recovery code that has been used. It can never sign in again.
+    /// The SDK's flag for a used single-use factor; no factor the agent offers is single-use.
     pub consumed: bool,
 }
 
 /// A change to the account's sign-in factors (`citadel_types::auth::SignInManagementOp`).
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
 pub enum SignInManagementOp {
     ListCredentials,
+    /// The SDK asks a window to create the key's credential (a `Register` ceremony) once the
+    /// server has named the relying party and the keys the account already has.
     AddSecurityKey {
-        #[debug(with = plaintext_debug_fmt)]
-        credential_id: Vec<u8>,
         label: String,
     },
     RenameCredential {
@@ -76,11 +78,21 @@ pub enum SignInManagementOp {
     SetSignInPolicy {
         policy: SignInPolicy,
     },
-    RegenerateRecoveryCodes,
+    /// Set the account's password: a forgotten one from the recovery console (no step-up), or a
+    /// change from a full session (the step-up holds the current password). The SDK turns the
+    /// new password into a fresh factor on this device; the server never sees it.
+    SetPassword {
+        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        new_password: SecBuffer,
+    },
+    /// Replace the recovery phrase with a new one. The agent binds it to the canonical domain of
+    /// the account's server (`kernel/recovery_domain.rs`), so a window never names one. The new
+    /// phrase's seed becomes the root of the account's RE-VFS key: every object the account
+    /// stored is sealed again under it (`kernel/revfs_seed/rekey.rs`).
+    RegenerateRecoveryPhrase,
 }
 
-/// What a management change did (`citadel_types::auth::SignInManagementOutcome`). The new
-/// recovery codes are [`RecoveryCodes`], which never print.
+/// What a management change did (`citadel_types::auth::SignInManagementOutcome`).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
@@ -95,7 +107,9 @@ pub enum SignInManagementOutcome {
     Renamed,
     Removed,
     PolicySet,
-    RecoveryCodes(RecoveryCodes),
+    PasswordSet,
+    /// The new recovery phrase's words, which never print either.
+    RecoveryPhrase(RecoveryCodes),
 }
 
 fn optional_bytes_fmt(val: &Option<Vec<u8>>, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -130,7 +144,8 @@ impl From<sdk::FactorKind> for FactorKind {
         match kind {
             sdk::FactorKind::Password => Self::Password,
             sdk::FactorKind::SecurityKey => Self::SecurityKey,
-            sdk::FactorKind::RecoveryCode => Self::RecoveryCode,
+            sdk::FactorKind::RetiredRecoveryCode(retired) => match retired {},
+            sdk::FactorKind::RecoveryPhrase => Self::RecoveryPhrase,
         }
     }
 }
@@ -149,26 +164,31 @@ impl From<sdk::SignInCredential> for SignInCredential {
     }
 }
 
-impl From<SignInManagementOp> for sdk::SignInManagementOp {
-    fn from(op: SignInManagementOp) -> Self {
-        match op {
-            SignInManagementOp::ListCredentials => Self::ListCredentials,
-            SignInManagementOp::AddSecurityKey {
-                credential_id,
-                label,
-            } => Self::AddSecurityKey {
-                credential_id,
-                label,
-            },
-            SignInManagementOp::RenameCredential { id, label } => {
-                Self::RenameCredential { id, label }
+impl SignInManagementOp {
+    /// The SDK's change. `canonical_domain` is read by `RegenerateRecoveryPhrase` alone; the
+    /// new password of `SetPassword` is not part of the SDK's op (it goes to `set_password`).
+    pub fn to_sdk(&self, canonical_domain: &str) -> sdk::SignInManagementOp {
+        match self.clone() {
+            Self::ListCredentials => sdk::SignInManagementOp::ListCredentials,
+            Self::AddSecurityKey { label } => sdk::SignInManagementOp::AddSecurityKey { label },
+            Self::RenameCredential { id, label } => {
+                sdk::SignInManagementOp::RenameCredential { id, label }
             }
-            SignInManagementOp::RemoveCredential { id } => Self::RemoveCredential { id },
-            SignInManagementOp::SetSignInPolicy { policy } => Self::SetSignInPolicy {
+            Self::RemoveCredential { id } => sdk::SignInManagementOp::RemoveCredential { id },
+            Self::SetSignInPolicy { policy } => sdk::SignInManagementOp::SetSignInPolicy {
                 policy: policy.into(),
             },
-            SignInManagementOp::RegenerateRecoveryCodes => Self::RegenerateRecoveryCodes,
+            Self::SetPassword { .. } => sdk::SignInManagementOp::SetPassword,
+            Self::RegenerateRecoveryPhrase => sdk::SignInManagementOp::RegenerateRecoveryPhrase {
+                canonical_domain: canonical_domain.to_string(),
+            },
         }
+    }
+
+    /// Whether a recovery console session may make this change: the SDK's rule, which reads the
+    /// kind of change only, so no domain is needed to ask it.
+    pub fn allowed_in_recovery(&self) -> bool {
+        self.to_sdk("").allowed_in_recovery()
     }
 }
 
@@ -186,8 +206,10 @@ impl From<sdk::SignInManagementOutcome> for SignInManagementOutcome {
             sdk::SignInManagementOutcome::Renamed => Self::Renamed,
             sdk::SignInManagementOutcome::Removed => Self::Removed,
             sdk::SignInManagementOutcome::PolicySet => Self::PolicySet,
-            sdk::SignInManagementOutcome::RecoveryCodes(codes) => {
-                Self::RecoveryCodes(RecoveryCodes(codes))
+            sdk::SignInManagementOutcome::RetiredRecoveryCodes(retired) => match retired {},
+            sdk::SignInManagementOutcome::PasswordSet => Self::PasswordSet,
+            sdk::SignInManagementOutcome::RecoveryPhrase(words) => {
+                Self::RecoveryPhrase(RecoveryCodes(words))
             }
         }
     }

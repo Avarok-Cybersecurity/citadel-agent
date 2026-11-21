@@ -5,6 +5,7 @@
 //! poisoned (zero lanes), as in the SDK's suites: a post-quantum server never runs Argon2, and
 //! if it tried, these tests would fail.
 
+use crate::node_settings::TestNode;
 use crate::{server_test_node_skip_cert_verification, test_backend, test_stun_servers};
 use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service::SERVER_RECONNECT;
@@ -24,6 +25,8 @@ use uuid::Uuid;
 pub const PASSWORD: &str = "correct horse battery";
 /// The WebAuthn credential id of the tests' security key.
 pub const CRED: &[u8] = b"yubikey-5-credential";
+/// The relying party the tests' server scopes its security keys to.
+pub const RP_ID: &str = "localhost";
 
 /// Which sign-in the server runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,17 +72,30 @@ impl AdmissionPolicy for Turnstile {
     }
 }
 
+/// What every test server runs: post-quantum sign-in, which issues the recovery phrase the agent
+/// requires of a registration (requests/register.rs). A fresh OPRF seed per server.
+pub fn pq_server_misc() -> ServerMiscSettings {
+    let settings = PqAuthServerSettings::new(
+        OprfSeed::generate(),
+        KsfParams::FLOOR,
+        ThrottlePolicy::RECOMMENDED,
+    )
+    .and_then(|settings| settings.with_security_key_rp_id(RP_ID))
+    .expect("the floor parameters and the relying party are accepted");
+    ServerMiscSettings {
+        pq_sign_in: Some(settings),
+        ..Default::default()
+    }
+}
+
 fn spawn(_kind: Server, admission: Option<Arc<dyn AdmissionPolicy>>) -> SocketAddr {
     let (node, addr) = server_test_node_skip_cert_verification(
         EmptyKernel::<StackedRatchet>::default(),
         |builder| {
-            let settings = PqAuthServerSettings::new(OprfSeed::generate(), KsfParams::FLOOR)
-                .expect("the floor parameters are accepted");
             let _ = builder
                 .with_server_misc_settings(ServerMiscSettings {
-                    pq_sign_in: Some(settings),
                     admission,
-                    ..Default::default()
+                    ..pq_server_misc()
                 })
                 .with_server_argon_settings(ArgonDefaultServerSettings {
                     lanes: 0,
@@ -99,6 +115,7 @@ pub async fn spawn_agent() -> Result<SocketAddr, Box<dyn Error>> {
         bind,
         SERVER_RECONNECT,
         crate::test_transfers(),
+        crate::TEST_SERVER_CERTIFICATE,
     )
     .await?;
     let node = test_stun_servers()
@@ -106,6 +123,7 @@ pub async fn spawn_agent() -> Result<SocketAddr, Box<dyn Error>> {
         .with_backend(test_backend())
         .with_node_type(NodeType::Peer)
         .with_insecure_skip_cert_verification()
+        .as_test_agent(&kernel)
         .build(kernel)?;
     drop(tokio::spawn(node));
     Ok(bind)

@@ -1,6 +1,7 @@
-pub use crate::messenger::backend_channel::{BackendChannel, RequestChannel};
+pub use crate::messenger::backend_channel::BackendChannel;
 use crate::messenger::backend_map::{mutate, MapStore, State};
-use crate::messenger::{sleep_internal, MessengerTx, WrappedMessage};
+use crate::messenger::stored_map;
+use crate::messenger::{sleep_internal, WrappedMessage};
 use async_trait::async_trait;
 use citadel_internal_service_types::{
     BatchedResponseData, InternalServiceRequest, InternalServiceResponse, KEY_NOT_FOUND,
@@ -14,14 +15,12 @@ use uuid::Uuid;
 
 /// ILM's storage for one account, over the agent's LocalDB.
 ///
-/// The I/O is `channel`: the browser's [`RequestChannel`] sends LocalDB requests
-/// over its socket to the agent and waits for the replies; the agent's own
-/// channel (citadel-internal-service `kernel/ilm`) answers them in-process.
-/// Everything else here -- the keys, the map serialisation, the read and write
-/// outcomes, the gates -- is one implementation for both, so an account's state
-/// written by a browser is read back by the agent byte for byte.
+/// The I/O is `channel`: the agent's own channel (citadel-internal-service
+/// `kernel/ilm`) answers the LocalDB requests in-process. Everything else here
+/// -- the keys, the map serialisation, the read and write outcomes, the gates --
+/// does not depend on the channel.
 #[derive(Clone)]
-pub struct CitadelWorkspaceBackend<C: BackendChannel = RequestChannel> {
+pub struct CitadelWorkspaceBackend<C: BackendChannel> {
     pub cid: u64,
     channel: C,
     // Each map is one serialized blob under one key, so every mutation is a
@@ -37,6 +36,16 @@ pub struct CitadelWorkspaceBackend<C: BackendChannel = RequestChannel> {
 // Constants for storage prefixes
 pub const INBOUND_MESSAGE_PREFIX: &str = "inbound_messages";
 pub const OUTBOUND_MESSAGE_PREFIX: &str = "outbound_messages";
+
+/// A map prefix must name one of the two queues; any other prefix is a caller's bug.
+fn queue_prefix(prefix: &str) -> Result<(), BackendError<WrappedMessage>> {
+    match prefix {
+        OUTBOUND_MESSAGE_PREFIX | INBOUND_MESSAGE_PREFIX => Ok(()),
+        other => Err(BackendError::StorageError(format!(
+            "Not a message queue: {other}"
+        ))),
+    }
+}
 
 /// Did that write actually happen?
 ///
@@ -123,13 +132,13 @@ impl<C: BackendChannel> CitadelWorkspaceBackend<C> {
         match self.request(request, request_id).await? {
             InternalServiceResponse::LocalDBGetKVSuccess(success_response) => {
                 citadel_logging::debug!(target: "citadel", "[GET_MAP] Got {} map successfully", prefix);
-                let state: State =
-                    bincode2::deserialize(&success_response.value).map_err(|err| {
-                        BackendError::StorageError(format!(
-                            "Failed to deserialize {prefix} map: {err}"
-                        ))
-                    })?;
-                Ok(state)
+                queue_prefix(prefix)?;
+                match stored_map::decode(&success_response.value) {
+                    stored_map::Decoded::Current(state) => Ok(state),
+                    stored_map::Decoded::Unreadable(why) => {
+                        self.quarantine(prefix, success_response.value, &why).await
+                    }
+                }
             }
             InternalServiceResponse::LocalDBGetKVFailure(failure_response) => {
                 let failure_message = failure_response.message;
@@ -159,7 +168,7 @@ impl<C: BackendChannel> CitadelWorkspaceBackend<C> {
         let key = format!("{}-{}", prefix, self.cid);
         let new_state = State::new();
 
-        let value = bincode2::serialize(&new_state).map_err(|err| {
+        let value = stored_map::encode(&new_state).map_err(|err| {
             BackendError::StorageError(format!("Failed to serialize {prefix} map: {err}"))
         })?;
 
@@ -189,7 +198,7 @@ impl<C: BackendChannel> CitadelWorkspaceBackend<C> {
     ) -> Result<(), BackendError<WrappedMessage>> {
         let key = format!("{}-{}", prefix, self.cid);
 
-        let value = bincode2::serialize(&state).map_err(|err| {
+        let value = stored_map::encode(&state).map_err(|err| {
             BackendError::StorageError(format!("Failed to serialize {prefix} map: {err}"))
         })?;
 
@@ -210,6 +219,31 @@ impl<C: BackendChannel> CitadelWorkspaceBackend<C> {
         .inspect(|_| {
             citadel_logging::debug!(target: "citadel", "[UPDATE_MAP] Updated {} map successfully", prefix);
         })
+    }
+
+    /// Keep an unreadable queue's bytes under `quarantine_{prefix}-{cid}` and start
+    /// the queue empty, so one blob in an older layout does not refuse every send
+    /// from then on. The bytes are appended (a list of blobs), never overwritten:
+    /// a second incident must not erase the first. If keeping them fails, the
+    /// queue is NOT reset, and the read fails as it did before.
+    async fn quarantine(
+        &self,
+        prefix: &str,
+        bytes: Vec<u8>,
+        why: &str,
+    ) -> Result<State, BackendError<WrappedMessage>> {
+        citadel_logging::error!(target: "citadel", "[GET_MAP] {prefix}-{} is unreadable ({why}); quarantining {} bytes and starting the queue empty", self.cid, bytes.len());
+        let key = format!("quarantine_{prefix}");
+        let mut kept: Vec<Vec<u8>> = match self.load_value(&key).await? {
+            Some(existing) => bincode2::deserialize(&existing)
+                .map_err(|err| BackendError::StorageError(format!("Unreadable {key}: {err}")))?,
+            None => Vec::new(),
+        };
+        kept.push(bytes);
+        let value = bincode2::serialize(&kept)
+            .map_err(|err| BackendError::StorageError(format!("Serialising {key}: {err}")))?;
+        self.store_value(&key, &value).await?;
+        self.initialize_map(prefix).await
     }
 
     // Convenience methods that use the generic functions
@@ -634,67 +668,6 @@ impl<C: BackendChannel> Backend<WrappedMessage> for CitadelWorkspaceBackend<C> {
         Ok(())
     }
 }
-
-#[async_trait]
-pub trait CitadelBackendExt: Backend<WrappedMessage> + Clone + Send + Sync + 'static {
-    /// Creates a new instance of the backend
-    async fn new(
-        cid: u64,
-        handle: &MessengerTx<Self>,
-    ) -> Result<Self, BackendError<WrappedMessage>>;
-
-    /// Inspects a payload to see if it is relevant to the backend. If it is, the response
-    /// is not returned. Otherwise, the response is returned to the caller for further processing.
-    async fn inspect_received_payload(
-        &self,
-        response: InternalServiceResponse,
-    ) -> Result<Option<InternalServiceResponse>, BackendError<WrappedMessage>> {
-        Ok(Some(response))
-    }
-
-    /// The request carrying `request_id` did not leave, so nothing will answer
-    /// it: fail whoever is waiting for that answer.
-    fn abandon_request(&self, _request_id: &Uuid) {}
-
-    /// The connection to the agent has ended, so no outstanding request will be
-    /// answered: fail every one of them now rather than leave them waiting.
-    fn abandon_all_requests(&self) {}
-}
-
-#[async_trait]
-impl CitadelBackendExt for CitadelWorkspaceBackend<RequestChannel> {
-    async fn new(
-        cid: u64,
-        handle: &MessengerTx<Self>,
-    ) -> Result<Self, BackendError<WrappedMessage>> {
-        Ok(Self::with_channel(
-            cid,
-            RequestChannel::new(cid, handle.bypass_ism_outbound_tx.clone()),
-        ))
-    }
-
-    async fn inspect_received_payload(
-        &self,
-        response: InternalServiceResponse,
-    ) -> Result<Option<InternalServiceResponse>, BackendError<WrappedMessage>> {
-        citadel_logging::debug!(target: "citadel", "Inspecting received payload: {:?}", response);
-        Ok(self.channel.claim_reply(response))
-    }
-
-    fn abandon_request(&self, request_id: &Uuid) {
-        self.channel.abandon(request_id);
-    }
-
-    fn abandon_all_requests(&self) {
-        self.channel.abandon_all();
-    }
-}
-
-#[cfg(test)]
-mod a_reply_that_beats_its_waiter;
-
-#[cfg(test)]
-mod a_late_reply_is_still_the_answer;
 
 #[cfg(test)]
 mod response_classification {

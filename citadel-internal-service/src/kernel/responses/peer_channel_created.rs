@@ -20,7 +20,7 @@ use futures::StreamExt;
 /// 2. Adds the peer to the session's peers map (using the send half)
 /// 3. Spawns a task to read incoming messages from the receive half
 /// 4. Notifies the UI that the P2P connection is established
-pub async fn handle<T: IOInterface, R: Ratchet>(
+pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     peer_channel_created: PeerChannelCreated<R>,
 ) -> Result<(), NetworkError> {
@@ -36,6 +36,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let path_watch = PathWatch::new(&channel.p2p_path_cell());
     this.peer_path_up(session_cid, peer_cid, channel.p2p_path_cell());
     let (path, upgrading) = path_watch.current();
+    let negotiated = channel.session_security_settings();
+    let peer_identity = crate::kernel::p2p_kex::mark(channel.peer_kex_identity());
     this.supervisors
         .set_path_control(session_cid, peer_cid, channel.path_control());
     if let Some(restored) = channel.take_restored_udp() {
@@ -144,6 +146,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                     peer_cid,
                     path,
                     upgrading,
+                    session_security_settings: negotiated,
+                    peer_identity,
                     request_id: None,
                 },
             ))
@@ -151,6 +155,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         {
             warn!(target: "citadel", "[PeerChannelCreated] No localhost connection owns CID {session_cid} - PeerConnectSuccess dropped");
         }
+        // Objects the account stored with this peer may wait for a re-key (kernel/revfs_seed).
+        crate::kernel::revfs_seed::resume(this, session_cid);
         // After the success above, on the same route: the application hears of the connection
         // before any change to its path.
         path_watch.forward(session_cid, peer_cid, route, this.supervisors.clone());

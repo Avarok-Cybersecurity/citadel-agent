@@ -26,5 +26,9 @@ ts-rs = { version = "11", optional = true, features = [
     "chrono-impl",
 ]}
 
+[build-dependencies]
+# CITADEL_TYPES_HASH (build_types_hash.rs). Already in the lock via the SDK.
+sha3 = "0.10"
+
 [dev-dependencies]
 serde_json = "1.0"

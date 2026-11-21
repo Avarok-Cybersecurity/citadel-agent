@@ -39,7 +39,7 @@ async fn a_dropped_link_tells_its_windows_its_peers_are_gone() -> Result<(), Box
         &mut tx_b,
         &mut rx_b,
         cid_b,
-        SessionSecuritySettings::default(),
+        citadel_sdk::prelude::default_session_security_settings(),
         None::<PreSharedKey>,
     )
     .await?;
@@ -50,7 +50,7 @@ async fn a_dropped_link_tells_its_windows_its_peers_are_gone() -> Result<(), Box
         &mut tx_b,
         &mut rx_b,
         cid_b,
-        SessionSecuritySettings::default(),
+        citadel_sdk::prelude::default_session_security_settings(),
         None::<PreSharedKey>,
     )
     .await?;

@@ -53,6 +53,8 @@ impl HostNetAuthority for FakeAuthority {
                     app_id,
                     hosts,
                     private,
+                    servers: Vec::new(),
+                    session: None,
                 }),
             },
             Ok((kind, ..)) if kind == "changed" => AuthoritySignal::InstallsChanged,

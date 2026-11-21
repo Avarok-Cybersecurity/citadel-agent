@@ -71,6 +71,11 @@ impl IOInterface for TcpIOInterface {
     /// would break the CLI and desktop contract.
     const CALLER_CAN_ALREADY_READ_LOCAL_FILES: bool = true;
 
+    /// Raw framed TCP has no handshake headers: a native client, never a browser.
+    fn handshake_origin(_sink: &Self::Sink) -> Option<&str> {
+        None
+    }
+
     async fn next_connection(&mut self) -> Option<(Self::Sink, Self::Stream)> {
         self.listener
             .accept()

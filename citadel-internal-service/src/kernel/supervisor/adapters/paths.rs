@@ -19,8 +19,8 @@ pub(super) struct SdkPaths<T, R: Ratchet> {
 }
 
 impl<T: IOInterface + Sync, R: Ratchet> Paths for SdkPaths<T, R> {
-    /// The SDK refuses it for a peer below protocol 0.12.1, and once the campaign has ended
-    /// or the connection closed; those are refusals, not failures.
+    /// The SDK refuses it once the campaign has ended or the connection closed; those are
+    /// refusals, not failures. (A peer on an older protocol never connects at all.)
     fn upgrade(&self, peer: Cid, restore_udp: bool) -> BoxFuture<'static, Result<(), PathError>> {
         let control = self.supervisors.path_control(self.cid, peer);
         async move {
@@ -63,6 +63,7 @@ mod tests {
         let (_connector, this): (_, Svc) = CitadelWorkspaceService::new_in_memory(
             crate::SERVER_RECONNECT,
             crate::BrowserTransferRoot::at(transfers.path().to_path_buf()),
+            citadel_sdk::prelude::CertVerification::SelfSignedAccepted,
         );
         let paths = SdkPaths {
             supervisors: this.supervisors.clone(),

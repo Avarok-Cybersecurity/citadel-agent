@@ -4,7 +4,6 @@ import type { SignInCredential } from "./SignInCredential";
 import type { SignInPolicy } from "./SignInPolicy";
 
 /**
- * What a management change did (`citadel_types::auth::SignInManagementOutcome`). The new
- * recovery codes are [`RecoveryCodes`], which never print.
+ * What a management change did (`citadel_types::auth::SignInManagementOutcome`).
  */
-export type SignInManagementOutcome = { "Credentials": { policy: SignInPolicy, credentials: Array<SignInCredential>, } } | { "Added": { id: number, } } | "Renamed" | "Removed" | "PolicySet" | { "RecoveryCodes": RecoveryCodes };
+export type SignInManagementOutcome = { "Credentials": { policy: SignInPolicy, credentials: Array<SignInCredential>, } } | { "Added": { id: number, } } | "Renamed" | "Removed" | "PolicySet" | "PasswordSet" | { "RecoveryPhrase": RecoveryCodes };

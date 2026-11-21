@@ -1,6 +1,7 @@
 use super::*;
 use crate::kernel::conversations::kv::{ConversationKv, MemoryKv};
-use crate::kernel::conversations::store::{legacy, scoped, MESSAGES_PER_PAGE};
+use crate::kernel::conversations::store::{scoped, MESSAGES_PER_PAGE, PAGINATED_PREFIX};
+use crate::kernel::conversations::stored;
 use citadel_internal_service_types::{MessageType, Reaction};
 
 const ME: u64 = 1001;
@@ -56,7 +57,7 @@ async fn appending_creates_a_stamped_conversation_and_counts_unread_inbound_only
     let meta = s.load_metadata(PEER).await.unwrap().unwrap();
     assert_eq!(
         (meta.owner_cid, meta.total_message_count, meta.unread_count),
-        (Some(ME), 2.0, 1.0)
+        (ME, 2.0, 1.0)
     );
     assert_eq!(
         (meta.oldest_message_timestamp, meta.newest_message_timestamp),
@@ -91,32 +92,28 @@ async fn a_redelivered_message_is_stored_once_across_a_page_boundary() {
     assert_eq!((meta.latest_page, meta.total_message_count), (1, 51.0));
 }
 
-/// History written before records were scoped by account is read and adopted;
-/// another account's legacy record is not.
+/// A record under the peer alone was written before keys were scoped by
+/// account: it is not read, listed or adopted, and a write starts a new one.
 #[tokio::test]
-async fn legacy_records_are_read_only_when_unstamped_or_ours() {
-    let fixture = |name: &str| {
-        std::fs::read(format!(
-            "{}/tests/fixtures/conversation_store/{name}",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .unwrap()
-    };
+async fn an_unscoped_record_is_never_read() {
     let kv = MemoryKv::default();
+    let unscoped = format!("{PAGINATED_PREFIX}{PEER}");
     kv.set(
-        &format!("{}_metadata", legacy(PEER)),
-        fixture("metadata-unattributed.json"),
+        &format!("{unscoped}_metadata"),
+        stored::encode_metadata(&stored::tests::metadata(PEER, ME)).unwrap(),
     )
     .await
     .unwrap();
-    kv.set(&format!("{}_0", legacy(PEER)), fixture("page-0.json"))
-        .await
-        .unwrap();
+    kv.set(
+        &format!("{unscoped}_0"),
+        stored::encode_page(&stored::tests::page(PEER, ME)).unwrap(),
+    )
+    .await
+    .unwrap();
     let s = store(&kv);
-    assert_eq!(
-        s.load_page(PEER, 0).await.unwrap().unwrap().messages.len(),
-        4
-    );
+    assert!(s.load_metadata(PEER).await.unwrap().is_none());
+    assert!(s.load_page(PEER, 0).await.unwrap().is_none());
+    assert!(s.list().await.unwrap().is_empty());
     assert!(
         append(
             &s,
@@ -124,27 +121,8 @@ async fn legacy_records_are_read_only_when_unstamped_or_ours() {
         )
         .await
     );
-    let scoped_meta = kv
-        .get(&format!("{}_metadata", scoped(ME, PEER)))
-        .await
-        .unwrap();
-    assert!(
-        scoped_meta.is_some(),
-        "the adopted record was not written under this account"
-    );
-    assert_eq!(
-        s.load_metadata(PEER).await.unwrap().unwrap().owner_cid,
-        Some(ME)
-    );
-
-    let someone_else = Store { kv: &kv, own: 777 };
-    kv.set(
-        &format!("{}_metadata", legacy(PEER)),
-        fixture("metadata.json"),
-    )
-    .await
-    .unwrap(); // owner 1001
-    assert!(someone_else.load_metadata(PEER).await.unwrap().is_none());
+    let meta = s.load_metadata(PEER).await.unwrap().unwrap();
+    assert_eq!((meta.owner_cid, meta.total_message_count), (ME, 1.0));
 }
 
 #[path = "store_tests_more.rs"]

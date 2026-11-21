@@ -14,7 +14,6 @@ use citadel_internal_service_test_common as common;
 
 #[cfg(test)]
 mod tests {
-    use crate::common::agent_ilm::declare_agent_ilm;
     use crate::common::setup_log;
     use crate::common::turn_harness::{next_matching, two_registered_agents};
     use crate::common::PeerReturnHandle;
@@ -30,11 +29,6 @@ mod tests {
 
     /// `A` dials, `B`'s agent answers: `B` holds a channel-only connection to `A`.
     async fn a_dials_hosted_b(a: &mut PeerReturnHandle, b: &mut PeerReturnHandle) {
-        b.0.send(declare_agent_ilm()).unwrap();
-        next_matching(&mut b.1, "AgentCapabilities", |r| {
-            matches!(r, InternalServiceResponse::AgentCapabilities(_)).then_some(())
-        })
-        .await;
         a.0.send(InternalServiceRequest::PeerConnect {
             request_id: Uuid::new_v4(),
             cid: a.2,

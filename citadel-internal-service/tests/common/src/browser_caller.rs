@@ -30,6 +30,11 @@ impl IOInterface for BrowserLikeTcp {
     type Stream = <TcpIOInterface as IOInterface>::Stream;
     const CALLER_CAN_ALREADY_READ_LOCAL_FILES: bool = false;
 
+    /// Browser-like for file paths only: TCP carries no `Origin`.
+    fn handshake_origin(sink: &Self::Sink) -> Option<&str> {
+        TcpIOInterface::handshake_origin(sink)
+    }
+
     // The trait is `#[async_trait]`; this is the signature it expands to.
     fn next_connection<'a, 'f>(
         &'a mut self,

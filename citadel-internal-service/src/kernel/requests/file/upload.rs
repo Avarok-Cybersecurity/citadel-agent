@@ -1,5 +1,6 @@
 use super::transfer_root::BrowserTransferRoot;
 use crate::kernel::requests::HandledRequestResult;
+use crate::kernel::send_correlation::PendingStore;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -7,7 +8,9 @@ use citadel_internal_service_types::{
     SendFileRequestSuccess,
 };
 use citadel_sdk::logging::{error, info, warn};
-use citadel_sdk::prelude::{NetworkError, NodeRequest, Ratchet, SendObject, VirtualTargetType};
+use citadel_sdk::prelude::{
+    NetworkError, NodeRequest, Ratchet, SendObject, TransferType, VirtualTargetType,
+};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -636,6 +639,30 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         }
     }
 
+    // A RE-VFS store holds the account's key until it ends, and is refused while the account
+    // is re-keyed (kernel/revfs_seed): it is sealed under the key the session holds now.
+    let revfs_store = match &transfer_type {
+        TransferType::RemoteEncryptedVirtualFilesystem {
+            virtual_path,
+            security_level,
+        } => match crate::kernel::revfs_seed::begin_use(this.revfs_vault.get(), cid) {
+            Ok(token) => Some((virtual_path.clone(), *security_level, token)),
+            Err(message) => {
+                return Some(HandledRequestResult {
+                    response: InternalServiceResponse::SendFileRequestFailure(
+                        SendFileRequestFailure {
+                            cid,
+                            message,
+                            request_id: Some(request_id),
+                        },
+                    ),
+                    uuid,
+                })
+            }
+        },
+        _ => None,
+    };
+
     // Resolve the source to a filesystem path. For ByteContents, this also
     // schedules the temp-file cleanup (see `materialize_byte_contents`).
     //
@@ -839,11 +866,15 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     // this request. See kernel/send_correlation.rs.
                     let ticket = subscription.callback_key().ticket.0;
                     if let Some(conn) = this.server_connection_map.write().get_mut(&cid) {
+                        let revfs_store = revfs_store.map(|(path, level, token)| {
+                            PendingStore::settled(&path, level, peer_cid, &conn.revfs_key, token)
+                        });
                         conn.send_correlations.register(
                             ticket,
                             crate::kernel::send_correlation::PendingSend {
                                 request_id,
                                 payload_dir: payload_dir.clone(),
+                                revfs_store,
                             },
                         );
                     }

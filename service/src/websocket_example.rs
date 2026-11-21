@@ -66,6 +66,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         websocket_interface,
         citadel_internal_service::SERVER_RECONNECT,
         citadel_internal_service::BrowserTransferRoot::in_system_temp_dir(),
+        // The example's own server is self-signed.
+        citadel_sdk::prelude::CertVerification::SelfSignedAccepted,
     );
     let revfs_keys = service.revfs_key_source(std::sync::Arc::new(MemoryRevfsVault::default()))?;
     let kex_identity = service

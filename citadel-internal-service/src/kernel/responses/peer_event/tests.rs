@@ -48,6 +48,7 @@ async fn a_declined_answer_is_not_stored_as_an_incoming_offer() {
     let (_connector, svc): (_, Svc) = CitadelWorkspaceService::new_in_memory(
         crate::SERVER_RECONNECT,
         crate::BrowserTransferRoot::at(transfers.path().to_path_buf()),
+        citadel_sdk::prelude::CertVerification::SelfSignedAccepted,
     );
     handle(&svc, post_connect_to_dialler(Some(PeerResponse::Decline)))
         .await
@@ -66,6 +67,7 @@ async fn an_offer_is_stored_for_acceptance() {
     let (_connector, svc): (_, Svc) = CitadelWorkspaceService::new_in_memory(
         crate::SERVER_RECONNECT,
         crate::BrowserTransferRoot::at(transfers.path().to_path_buf()),
+        citadel_sdk::prelude::CertVerification::SelfSignedAccepted,
     );
     handle(&svc, post_connect_to_dialler(None)).await.unwrap();
     assert!(svc

@@ -75,7 +75,6 @@ pub(crate) mod revfs_correlation;
 pub mod revfs_seed;
 pub(crate) mod send_correlation;
 pub(crate) mod server_address;
-pub(crate) mod server_certificate;
 pub(crate) mod server_host;
 pub mod server_link;
 pub(crate) mod session_route;
@@ -153,6 +152,9 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) key_challenges: Arc<sign_in::key_relay::KeyChallenges>,
     /// Where browser uploads are written before they are sent (requests/file/transfer_root.rs).
     pub(crate) browser_transfers: BrowserTransferRoot,
+    /// What every connection this service makes to a workspace server demands of the server's
+    /// certificate. The binary states it (each build has one value); there is no default.
+    pub(crate) server_certificate: CertVerification,
     /// Opt-in telemetry uploads, when the shipped binary configured them (telemetry/uplink).
     pub(crate) telemetry: Option<Arc<crate::telemetry::TelemetryUplink>>,
     /// Citadel apps: host egress, `local` storage, the internal-HTTP relay (kernel/apps).
@@ -196,6 +198,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             updates: self.updates.clone(),
             key_challenges: self.key_challenges.clone(),
             browser_transfers: self.browser_transfers.clone(),
+            server_certificate: self.server_certificate,
             telemetry: self.telemetry.clone(),
             apps: self.apps.clone(),
             identity: self.identity.clone(),
@@ -215,6 +218,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
         io: T,
         reconnect_policy: ReconnectPolicy,
         browser_transfers: BrowserTransferRoot,
+        server_certificate: CertVerification,
     ) -> Self {
         let clients: Clients = Arc::new(RwLock::new(Default::default()));
         CitadelWorkspaceService {
@@ -240,6 +244,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             updates: Default::default(),
             key_challenges: Default::default(),
             browser_transfers,
+            server_certificate,
             telemetry: None,
             apps: Default::default(),
             identity: None,
@@ -335,12 +340,14 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
         bind_address: SocketAddr,
         reconnect_policy: ReconnectPolicy,
         browser_transfers: BrowserTransferRoot,
+        server_certificate: CertVerification,
     ) -> std::io::Result<CitadelWorkspaceService<TcpIOInterface, R>> {
         let io = TcpIOInterface::new(bind_address).await?;
         Ok(CitadelWorkspaceService::new(
             io,
             reconnect_policy,
             browser_transfers,
+            server_certificate,
         ))
     }
 
@@ -353,12 +360,14 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
         origins: OriginPolicy,
         reconnect_policy: ReconnectPolicy,
         browser_transfers: BrowserTransferRoot,
+        server_certificate: CertVerification,
     ) -> std::io::Result<CitadelWorkspaceService<WebSocketInterface, R>> {
         let ws_server_io = WebSocketInterface::new(bind_address, origins).await?;
         Ok(CitadelWorkspaceService::new(
             ws_server_io,
             reconnect_policy,
             browser_transfers,
+            server_certificate,
         ))
     }
 
@@ -377,6 +386,7 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
         private_key: &[u8],
         reconnect_policy: ReconnectPolicy,
         browser_transfers: BrowserTransferRoot,
+        server_certificate: CertVerification,
     ) -> std::io::Result<CitadelWorkspaceService<WebSocketInterface, R>> {
         let ws_server_io =
             WebSocketInterface::new_tls(bind_address, origins, certificate_chain, private_key)
@@ -385,6 +395,7 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
             ws_server_io,
             reconnect_policy,
             browser_transfers,
+            server_certificate,
         ))
     }
 }
@@ -395,6 +406,7 @@ impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {
     pub fn new_in_memory(
         reconnect_policy: ReconnectPolicy,
         browser_transfers: BrowserTransferRoot,
+        server_certificate: CertVerification,
     ) -> (
         InternalServiceConnector<InMemoryInterface>,
         CitadelWorkspaceService<InMemoryInterface, R>,
@@ -411,7 +423,12 @@ impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {
             sink: Some(tx_to_consumer),
             stream: Some(rx_from_svc),
         };
-        let kernel = CitadelWorkspaceService::new(io, reconnect_policy, browser_transfers);
+        let kernel = CitadelWorkspaceService::new(
+            io,
+            reconnect_policy,
+            browser_transfers,
+            server_certificate,
+        );
         (connector, kernel)
     }
 }

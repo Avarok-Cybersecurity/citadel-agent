@@ -57,6 +57,9 @@ use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
+/// What a test agent demands of a test server's certificate: test servers are self-signed.
+pub const TEST_SERVER_CERTIFICATE: CertVerification = CertVerification::SelfSignedAccepted;
+
 /// A browser-transfer root of this test's own: a fresh temporary directory, never the
 /// shared `$TMPDIR/citadel-browser-transfers`, whose 256 MiB cap every earlier run's leftovers
 /// counted against. Call it inside the test's runtime: a task of that runtime holds the
@@ -288,6 +291,7 @@ pub async fn services_connected_to_server_at<R: Ratchet, I: BindableInterface>(
             I::bind(bind_address_internal_service).await?,
             citadel_internal_service::SERVER_RECONNECT,
             crate::test_transfers(),
+            crate::TEST_SERVER_CERTIFICATE,
         )
         .with_notice_token(test_notice_token());
         let internal_service = test_stun_servers()
@@ -1265,6 +1269,7 @@ pub async fn sessions_on_one_service_reaching(
         service_addr,
         citadel_internal_service::SERVER_RECONNECT,
         crate::test_transfers(),
+        crate::TEST_SERVER_CERTIFICATE,
     )
     .await?;
     let internal_service = test_stun_servers()

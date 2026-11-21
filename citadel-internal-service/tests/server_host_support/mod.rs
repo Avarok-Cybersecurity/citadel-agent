@@ -60,6 +60,7 @@ pub async fn spawn_agent_with(
         bind,
         policy,
         citadel_internal_service_test_common::test_transfers(),
+        citadel_internal_service_test_common::TEST_SERVER_CERTIFICATE,
     )
     .await?;
     let backend = BackendType::Filesystem(store.to_string_lossy().into_owned());

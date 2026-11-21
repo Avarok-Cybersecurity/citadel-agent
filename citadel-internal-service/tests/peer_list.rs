@@ -34,6 +34,7 @@ mod tests {
             bind_addr_1,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service_1 = NodeBuilder::default()
@@ -48,6 +49,7 @@ mod tests {
             bind_addr_2,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service_2 = NodeBuilder::default()
@@ -176,6 +178,7 @@ mod tests {
             bind_addr_1,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service_1 = NodeBuilder::default()
@@ -190,6 +193,7 @@ mod tests {
             bind_addr_2,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service_2 = NodeBuilder::default()
@@ -303,6 +307,7 @@ mod tests {
             bind_addr_1,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service_1 = NodeBuilder::default()
@@ -317,6 +322,7 @@ mod tests {
             bind_addr_2,
             citadel_internal_service::SERVER_RECONNECT,
             crate::common::test_transfers(),
+            crate::common::TEST_SERVER_CERTIFICATE,
         )
         .await?;
         let internal_service_2 = NodeBuilder::default()

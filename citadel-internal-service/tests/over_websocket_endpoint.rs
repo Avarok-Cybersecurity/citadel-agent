@@ -46,6 +46,7 @@ async fn spawn_agent(insecure: bool) -> Result<SocketAddr, Box<dyn Error>> {
         bind,
         citadel_internal_service::SERVER_RECONNECT,
         crate::common::test_transfers(),
+        crate::common::TEST_SERVER_CERTIFICATE,
     )
     .await?;
     let mut builder = NodeBuilder::default();

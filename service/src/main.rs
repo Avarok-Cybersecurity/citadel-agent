@@ -4,13 +4,19 @@ use citadel_internal_service::kernel::{p2p_kex, revfs_seed, CitadelWorkspaceServ
 use citadel_internal_service::stun::{StunServers, STUN_SERVERS_ENV};
 use citadel_internal_service::{sweep_stale_browser_transfers, BrowserTransferRoot};
 use citadel_sdk::prelude::{
-    BackendType, LinkManagerMode, MaxSecurityLevel, NodeBuilder, NodeType, SecurityLevel,
-    StackedRatchet,
+    BackendType, CertVerification, LinkManagerMode, MaxSecurityLevel, NodeBuilder, NodeType,
+    SecurityLevel, StackedRatchet,
 };
 use std::error::Error;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
+
+/// What this agent demands of a workspace server's certificate. The generic agent takes a server
+/// that says its certificate is self-signed, as self-hosted workspace servers present; an identity
+/// account still proves its server by the key it pinned. The agent shipped with Citadel Workspaces
+/// is a separate build (the parent repository's binary) and verifies the certificate.
+const SERVER_CERTIFICATE: CertVerification = CertVerification::SelfSignedAccepted;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -45,6 +51,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         opts.bind,
         citadel_internal_service::SERVER_RECONNECT,
         browser_transfers,
+        SERVER_CERTIFICATE,
     )
     .await?
     .with_supervisor(citadel_internal_service::AGENT_SUPERVISOR);

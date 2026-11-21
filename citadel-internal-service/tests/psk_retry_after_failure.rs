@@ -130,6 +130,7 @@ mod tests {
                 addr,
                 citadel_internal_service::SERVER_RECONNECT,
                 crate::common::test_transfers(),
+                crate::common::TEST_SERVER_CERTIFICATE,
             )
             .await?;
             let node = NodeBuilder::default()

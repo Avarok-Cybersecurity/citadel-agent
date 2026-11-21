@@ -139,7 +139,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     server_password.clone(),
                     admission_token,
                     Some(recovery_domain.clone()),
-                    crate::kernel::server_certificate::SERVER_CERTIFICATE,
+                    this.server_certificate,
                 )
                 .await
         }
@@ -162,7 +162,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     server_password.clone(),
                     admission_token,
                     Some(recovery_domain.clone()),
-                    crate::kernel::server_certificate::SERVER_CERTIFICATE,
+                    this.server_certificate,
                 )
                 .await
         }

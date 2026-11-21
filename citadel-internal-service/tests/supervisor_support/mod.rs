@@ -46,6 +46,7 @@ pub async fn spawn_agent(
         bind,
         SERVER_RECONNECT,
         citadel_internal_service_test_common::test_transfers(),
+        citadel_internal_service_test_common::TEST_SERVER_CERTIFICATE,
     )
     .await?;
     if let Some(policy) = policy {

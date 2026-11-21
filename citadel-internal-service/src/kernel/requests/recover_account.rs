@@ -109,7 +109,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             device_label,
             admission: admission_token,
         };
-        let certificate = crate::kernel::server_certificate::SERVER_CERTIFICATE;
+        let certificate = this.server_certificate;
         info!(target: "citadel", "[Recover] Recovering {username} at {server_host}");
         let recovered = match address {
             ServerAddress::WebSocket(endpoint) => {

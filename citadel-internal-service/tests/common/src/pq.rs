@@ -115,6 +115,7 @@ pub async fn spawn_agent() -> Result<SocketAddr, Box<dyn Error>> {
         bind,
         SERVER_RECONNECT,
         crate::test_transfers(),
+        crate::TEST_SERVER_CERTIFICATE,
     )
     .await?;
     let node = test_stun_servers()

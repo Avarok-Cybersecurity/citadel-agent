@@ -162,6 +162,7 @@ pub async fn spawn_identity_agent_pinning(
         bind,
         citadel_internal_service::SERVER_RECONNECT,
         common::test_transfers(),
+        common::TEST_SERVER_CERTIFICATE,
     )
     .await?
     .with_identity(IdentityConfig {

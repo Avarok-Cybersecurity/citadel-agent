@@ -167,6 +167,7 @@ async fn the_ownership_gate_answers_a_request_for_a_session_nobody_holds() {
     ) = CitadelWorkspaceService::new_in_memory(
         crate::SERVER_RECONNECT,
         crate::BrowserTransferRoot::at(transfers.path().to_path_buf()),
+        citadel_sdk::prelude::CertVerification::SelfSignedAccepted,
     );
     for request in [set(ALICE, true), get(ALICE)] {
         let handled = handle_request(&svc, Uuid::new_v4(), request)

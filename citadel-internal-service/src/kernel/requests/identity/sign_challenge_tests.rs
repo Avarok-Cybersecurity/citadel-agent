@@ -37,6 +37,7 @@ fn service(fetch: Arc<dyn WellKnownFetch>) -> (tempfile::TempDir, Svc) {
     let (_connector, svc): (_, Svc) = CitadelWorkspaceService::new_in_memory(
         crate::SERVER_RECONNECT,
         crate::BrowserTransferRoot::at(transfers.path().to_path_buf()),
+        citadel_sdk::prelude::CertVerification::SelfSignedAccepted,
     );
     (
         transfers,

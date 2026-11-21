@@ -40,6 +40,7 @@ async fn spawn_agent(backend: BackendType) -> SocketAddr {
         addr,
         citadel_internal_service::SERVER_RECONNECT,
         crate::common::test_transfers(),
+        crate::common::TEST_SERVER_CERTIFICATE,
     )
     .await
     .unwrap();

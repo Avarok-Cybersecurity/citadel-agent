@@ -35,6 +35,7 @@ async fn agent_with(transfers: BrowserTransferRoot) -> SocketAddr {
         addr,
         citadel_internal_service::SERVER_RECONNECT,
         transfers,
+        citadel_sdk::prelude::CertVerification::SelfSignedAccepted,
     )
     .await
     .unwrap();

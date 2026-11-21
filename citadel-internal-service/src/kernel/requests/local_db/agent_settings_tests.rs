@@ -55,6 +55,7 @@ async fn a_window_cannot_read_write_or_delete_the_agents_settings() {
     let (_connector, svc): (_, Svc) = CitadelWorkspaceService::new_in_memory(
         crate::SERVER_RECONNECT,
         crate::BrowserTransferRoot::at(transfers.path().to_path_buf()),
+        citadel_sdk::prelude::CertVerification::SelfSignedAccepted,
     );
     for key in [PRIVATE_NETWORK_KEY, AUTO_INSTALL_KEY, "agent:anything"] {
         for request in requests(key) {

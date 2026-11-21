@@ -2460,9 +2460,8 @@ pub struct AccountInformation {
     /// The `host[:port]` the account registered to, as the user typed it (a hosted
     /// tenant as `acme.work.avarok.net`, an IP as the IP). The resolved address
     /// (`SessionInformation::server_address`) is, behind an edge, shared by many
-    /// workspaces. For an account registered before the agent recorded the host, the
-    /// host of the WebSocket endpoint it kept, else the address it dials. This is the
-    /// server a `Connect` for the account must name. `None` when it could not be read.
+    /// workspaces. This is the server a `Connect` for the account must name. `None` when
+    /// it could not be read.
     #[serde(default)]
     pub server_host: Option<String>,
     /// The highest session security level this account can sign in at: the level it

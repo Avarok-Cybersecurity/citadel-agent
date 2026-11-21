@@ -8,23 +8,17 @@
 //! that username is registered to that server.
 //!
 //! The account's server is the host the agent recorded at registration
-//! (`server_host.rs`); for an account registered before it recorded one, the
-//! WebSocket endpoint the SDK kept, else the address in its connection info.
+//! (`server_host.rs`). An account with none was registered by an earlier agent
+//! and is refused by name.
 
-use crate::kernel::server_address::{classify, ServerAddress};
+use crate::kernel::server_address::classify;
 use citadel_internal_service_types::{ConnectFailure, FailureReason, InternalServiceResponse};
-use citadel_sdk::prelude::{NodeRemote, ProtocolRemoteExt, Ratchet};
-use std::net::SocketAddr;
+use citadel_sdk::prelude::{NodeRemote, Ratchet};
 use uuid::Uuid;
 
-/// Where an account is registered, as far as it can be read.
+/// Where an account is registered: a `host[:port]` as `server_host::from_typed` writes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum AccountServer {
-    /// A `host[:port]` as `server_host::from_typed` writes it.
-    Host(String),
-    /// Only a resolved address is known (an account registered by address, before hosts were recorded).
-    Addr(SocketAddr),
-}
+pub(crate) struct AccountServer(pub(crate) String);
 
 /// Why a Connect is refused before it is dialled (and a Register, for `OnAnotherServer`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,12 +29,9 @@ pub(crate) enum Refusal {
     InvalidServer(String),
 }
 
-/// Whether the requested server (canonical host, and what it resolves to) is the account's.
-pub(crate) fn decide(account: &AccountServer, requested: &str, resolved: &[SocketAddr]) -> bool {
-    match account {
-        AccountServer::Host(host) => host == requested,
-        AccountServer::Addr(addr) => requested == addr.to_string() || resolved.contains(addr),
-    }
+/// Whether the requested server (canonical host) is the account's.
+pub(crate) fn decide(account: &AccountServer, requested: &str) -> bool {
+    account.0 == requested
 }
 
 /// The requested server in the form `server_host` records, so equal servers compare equal.
@@ -51,36 +42,37 @@ pub(crate) fn canonical(requested: &str) -> Result<String, String> {
 impl AccountServer {
     /// The server as a Connect for this account names it.
     pub(crate) fn as_requested(&self) -> String {
-        match self {
-            AccountServer::Host(host) => host.clone(),
-            AccountServer::Addr(addr) => addr.to_string(),
-        }
+        self.0.clone()
     }
 }
 
-/// The account's server; `None` when the agent holds no account `cid`.
+/// The account's server; `None` when the agent holds no account `cid`, and an error for an
+/// account that recorded none.
 pub(crate) async fn account_server<R: Ratchet>(
     remote: &NodeRemote<R>,
     cid: u64,
 ) -> Result<Option<AccountServer>, String> {
     if let Some(host) = crate::kernel::server_host::load(remote, cid).await? {
-        return Ok(Some(AccountServer::Host(host)));
+        return Ok(Some(AccountServer(host)));
     }
-    if let Some(endpoint) = remote
-        .server_endpoint(cid)
-        .await
-        .map_err(|err| err.into_string())?
-    {
-        return crate::kernel::server_host::from_typed(&ServerAddress::WebSocket(endpoint))
-            .map(|h| Some(AccountServer::Host(h)));
-    }
-    let cnac = remote
+    let held = remote
         .account_manager()
         .get_persistence_handler()
         .get_cnac_by_cid(cid)
         .await
         .map_err(|err| err.into_string())?;
-    Ok(cnac.map(|cnac| AccountServer::Addr(cnac.get_connect_info().addr)))
+    match held {
+        None => Ok(None),
+        Some(_) => Err(unrecorded(cid)),
+    }
+}
+
+/// An account this agent holds with no recorded server.
+pub(crate) fn unrecorded(cid: u64) -> String {
+    format!(
+        "account {cid} recorded no server: it was registered by an earlier agent, which this \
+         one does not read. Remove the agent's data directory and register again"
+    )
 }
 
 /// The server of this agent's account `username`, on whichever server it is; `None` when the
@@ -117,17 +109,7 @@ pub(crate) async fn check<R: Ratchet>(
     else {
         return Err(Refusal::NoSuchAccount);
     };
-    // Resolved only for an account known by address alone; a recorded host compares as text.
-    let resolved: Vec<SocketAddr> = match &account {
-        AccountServer::Host(_) => Vec::new(),
-        AccountServer::Addr(_) => tokio::net::lookup_host(requested.as_str())
-            .await
-            .map(Iterator::collect)
-            .map_err(|err| {
-                Refusal::InvalidServer(format!("could not resolve {requested}: {err}"))
-            })?,
-    };
-    if decide(&account, &requested, &resolved) {
+    if decide(&account, &requested) {
         Ok(())
     } else {
         Err(Refusal::OnAnotherServer(account.as_requested()))
@@ -168,22 +150,16 @@ mod tests {
 
     #[test]
     fn a_recorded_host_matches_only_itself() {
-        let account = AccountServer::Host("bench.work.avarok.net".into());
-        assert!(decide(&account, "bench.work.avarok.net", &[]));
-        assert!(!decide(&account, "acme.work.avarok.net", &[]));
+        let account = AccountServer("bench.work.avarok.net".into());
+        assert!(decide(&account, "bench.work.avarok.net"));
+        assert!(!decide(&account, "acme.work.avarok.net"));
     }
 
     #[test]
-    fn an_address_matches_itself_or_what_the_name_resolves_to() {
-        let addr: SocketAddr = "10.0.0.7:12400".parse().unwrap();
-        let account = AccountServer::Addr(addr);
-        assert!(decide(&account, "10.0.0.7:12400", &[]));
-        assert!(decide(&account, "citadel.example.com:12400", &[addr]));
-        assert!(!decide(
-            &account,
-            "citadel.example.com:12400",
-            &["10.0.0.8:12400".parse().unwrap()]
-        ));
+    fn an_account_with_no_recorded_server_is_refused_by_name() {
+        let why = unrecorded(7);
+        assert!(why.contains("registered by an earlier agent"), "{why}");
+        assert!(why.contains("Remove the agent's data directory"), "{why}");
     }
 
     #[test]

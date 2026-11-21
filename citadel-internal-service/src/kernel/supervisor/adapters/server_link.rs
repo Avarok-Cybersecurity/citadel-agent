@@ -23,8 +23,8 @@ pub(super) struct KernelLink<T, R: Ratchet> {
 
 impl<T: IOInterface + Sync, R: Ratchet> ServerLink for KernelLink<T, R> {
     /// The SDK's probe: one authenticated round trip now, not on the 15 minute keep-alive
-    /// schedule. A server below protocol 0.12.1 cannot answer one, which the SDK reports as
-    /// an error, and an error says nothing about the path: such a link is not probed.
+    /// schedule. The SDK reports an error when the probe could not be sent (the session is not
+    /// connected), and an error says nothing about the path: such a link is not probed.
     fn probe(&self, timeout: Duration) -> BoxFuture<'static, ProbeOutcome> {
         let (this, cid, probed) = (self.this.clone(), self.cid, self.probed.clone());
         async move {

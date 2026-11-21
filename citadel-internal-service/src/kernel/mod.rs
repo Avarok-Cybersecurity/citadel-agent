@@ -50,6 +50,7 @@ mod inbound_connect;
 pub(crate) mod media;
 pub(crate) mod peer_path;
 pub(crate) mod peer_paths;
+pub(crate) mod peer_session_passwords;
 pub(crate) mod pending_group_invites;
 pub(crate) mod picked_files;
 pub(crate) mod pulled_files;
@@ -502,6 +503,8 @@ pub struct Connection<R: Ratchet> {
     pub credential_fingerprint: Option<Vec<u8>>,
     /// The relay half a window last sent; see requests/peer/answer.rs.
     pub(crate) window_relay: Option<PeerTurnConfig>,
+    /// The peer session passwords windows gave, per peer; see kernel/peer_session_passwords.rs.
+    pub(crate) peer_session_passwords: peer_session_passwords::PeerSessionPasswords,
     /// What the session was opened with, so a server drop can be reconnected.
     /// In memory only. See kernel/reconnect/mod.rs.
     pub(crate) reconnect: reconnect::Credentials,
@@ -604,6 +607,7 @@ impl<R: Ratchet> Connection<R> {
             received_reads: pulled_reads::PulledReads::new(received_reads::MAX_CACHED_RECEIVED),
             credential_fingerprint,
             window_relay: None,
+            peer_session_passwords: Default::default(),
             reconnect,
             sign_in,
             revfs_key,

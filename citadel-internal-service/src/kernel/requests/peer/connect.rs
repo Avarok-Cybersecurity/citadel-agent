@@ -24,6 +24,12 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
 
+    super::answer::remember_peer_session_password(
+        this,
+        cid,
+        peer_cid,
+        peer_session_password.as_ref(),
+    );
     info!(target: "citadel", "[PeerConnect] *** RECEIVED PeerConnect REQUEST *** cid={}, peer_cid={}, request_id={:?}", cid, peer_cid, request_id);
 
     let response = super::dial::dial(

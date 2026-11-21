@@ -29,6 +29,12 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
 
+    super::answer::remember_peer_session_password(
+        this,
+        cid,
+        peer_cid,
+        peer_session_password.as_ref(),
+    );
     info!(target: "citadel", "[PeerRegister] Received request: cid={}, peer_cid={}, connect_after_register={}, request_id={:?}", cid, peer_cid, connect_after_register, request_id);
 
     let remote = this.remote();

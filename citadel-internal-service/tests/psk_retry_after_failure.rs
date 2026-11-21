@@ -1,8 +1,9 @@
 //! One wrong peer session password does not lock the pair out.
 //!
-//! Round one: B offers a password and A answers with none, so the key exchange fails and both
-//! sides are told. Round two: both present the same, correct password, and the pair connects.
-//! The dials cross in both rounds; a failed round leaves neither side holding half of its
+//! Every account is agent-hosted, so an offer is answered by the acceptor's agent with the
+//! password the acceptor's window last gave for that peer (here, as A registered). Round one: B
+//! dials with a mistyped password, so the key exchange fails. Round two: B dials with the right
+//! one, and the pair connects: the failed round leaves neither side holding half of its
 //! exchange, so the retry is not turned away as one already in progress.
 
 use citadel_internal_service_test_common as common;
@@ -38,17 +39,6 @@ mod tests {
         }
     }
 
-    /// The two peers, threaded through each round as one value so the round
-    /// helper does not take nine arguments.
-    struct Pair<'a> {
-        a_sink: &'a mut UnboundedSender<InternalServiceRequest>,
-        a_stream: &'a mut UnboundedReceiver<InternalServiceResponse>,
-        a_cid: u64,
-        b_sink: &'a mut UnboundedSender<InternalServiceRequest>,
-        b_stream: &'a mut UnboundedReceiver<InternalServiceResponse>,
-        b_cid: u64,
-    }
-
     fn peer_connect(
         cid: u64,
         peer_cid: u64,
@@ -65,55 +55,58 @@ mod tests {
         }
     }
 
-    fn peer_register(cid: u64, peer_cid: u64) -> InternalServiceRequest {
+    fn peer_register(
+        cid: u64,
+        peer_cid: u64,
+        peer_session_password: Option<PreSharedKey>,
+    ) -> InternalServiceRequest {
         InternalServiceRequest::PeerRegister {
             request_id: Uuid::new_v4(),
             cid,
             peer_cid,
             session_security_settings: citadel_sdk::prelude::default_session_security_settings(),
             connect_after_register: false,
-            peer_session_password: None,
+            peer_session_password,
         }
     }
 
-    /// One connect round: B offers `b_psk`, A answers with `a_psk`. Returns the
-    /// response each side saw. `round` is in every wait message, so a timeout
-    /// says which round failed.
-    async fn connect_round(
-        pair: &mut Pair<'_>,
-        b_psk: Option<PreSharedKey>,
-        a_psk: Option<PreSharedKey>,
+    /// One connect round: `dialer` dials `acceptor` with `psk`, and the acceptor's agent answers
+    /// with the password the acceptor's window last gave for the dialer. Returns the dialer's
+    /// response. `round` is in every wait message, so a timeout says which round failed.
+    async fn dial_round(
+        dialer: (
+            &mut UnboundedSender<InternalServiceRequest>,
+            &mut UnboundedReceiver<InternalServiceResponse>,
+            u64,
+        ),
+        acceptor: (&mut UnboundedReceiver<InternalServiceResponse>, u64),
+        psk: Option<PreSharedKey>,
         round: &str,
-    ) -> (InternalServiceResponse, InternalServiceResponse) {
-        pair.b_sink
-            .send(peer_connect(pair.b_cid, pair.a_cid, b_psk))
-            .expect("send B connect");
-
-        // A is notified of the inbound attempt.
-        let _notification = recv_or_fail(
-            pair.a_stream,
-            &format!("[{round}] Peer A's connect notification"),
+    ) -> InternalServiceResponse {
+        let (dialer_sink, dialer_stream, dialer_cid) = dialer;
+        let (acceptor_stream, acceptor_cid) = acceptor;
+        dialer_sink
+            .send(peer_connect(dialer_cid, acceptor_cid, psk))
+            .expect("send connect");
+        let notification = recv_or_fail(
+            acceptor_stream,
+            &format!("[{round}] the acceptor's notification"),
         )
         .await;
-
-        pair.a_sink
-            .send(peer_connect(pair.a_cid, pair.b_cid, a_psk))
-            .expect("send A connect");
-
-        let a_response = recv_or_fail(
-            pair.a_stream,
-            &format!("[{round}] Peer A's connect response"),
+        assert!(
+            matches!(
+                notification,
+                InternalServiceResponse::PeerConnectNotification(ref n) if n.answered_by_agent
+            ),
+            "[{round}] the acceptor's agent answers the offer itself; got {notification:?}"
+        );
+        recv_or_fail(
+            dialer_stream,
+            &format!("[{round}] the dialer's connect response"),
         )
-        .await;
-        let b_response = recv_or_fail(
-            pair.b_stream,
-            &format!("[{round}] Peer B's connect response"),
-        )
-        .await;
-        (a_response, b_response)
+        .await
     }
 
-    #[ignore = "every account is agent-hosted, and the agent answers a registered peer's offer itself with no peer session password, so a window's password never reaches an inbound connect; no UI sets one"]
     #[tokio::test]
     async fn the_correct_password_still_works_after_a_wrong_one() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
@@ -172,58 +165,49 @@ mod tests {
         let (ref mut b_sink, ref mut b_stream, b_cid) = &mut second[0];
         let (a_cid, b_cid) = (*a_cid, *b_cid);
 
-        // Register the pair so PeerConnect has a target.
+        let password = PreSharedKey::from("PeerSessionPassword".as_bytes());
+        // Register the pair so PeerConnect has a target. A's window gives the pair's password
+        // as it registers; its agent answers B's offers with it.
         b_sink
-            .send(peer_register(b_cid, a_cid))
+            .send(peer_register(b_cid, a_cid, None))
             .expect("B register");
         let _ = recv_or_fail(a_stream, "Peer A's register notification").await;
         a_sink
-            .send(peer_register(a_cid, b_cid))
+            .send(peer_register(a_cid, b_cid, Some(password.clone())))
             .expect("A register");
         let _ = recv_or_fail(a_stream, "Peer A's register response").await;
         let _ = recv_or_fail(b_stream, "Peer B's register response").await;
 
-        let password = PreSharedKey::from("PeerSessionPassword".as_bytes());
-        let mut pair = Pair {
-            a_sink,
-            a_stream,
-            a_cid,
-            b_sink,
-            b_stream,
-            b_cid,
-        };
-
-        // Round one: A answers with no password at all. Both sides should be
-        // told it failed -- this part already works.
-        let (a_first, _b_first) = connect_round(
-            &mut pair,
-            Some(password.clone()),
-            None,
+        // Round one: B mistypes the password, so the key exchange with A's answer fails.
+        let b_first = dial_round(
+            (&mut *b_sink, &mut *b_stream, b_cid),
+            (&mut *a_stream, a_cid),
+            Some(PreSharedKey::from("MistypedPassword".as_bytes())),
             "round 1 (mismatched)",
         )
         .await;
         assert!(
-            matches!(a_first, InternalServiceResponse::PeerConnectFailure(..)),
-            "a mismatched password must fail the connect; got {a_first:?}"
+            matches!(b_first, InternalServiceResponse::PeerConnectFailure(..)),
+            "a mismatched password must fail the connect; got {b_first:?}"
         );
 
-        // Round two: both sides now present the SAME, correct password. This is
-        // the user retyping it, and it must work.
-        let (a_second, b_second) = connect_round(
-            &mut pair,
-            Some(password.clone()),
+        // Round two: B retypes it correctly, and the pair connects.
+        let b_second = dial_round(
+            (&mut *b_sink, &mut *b_stream, b_cid),
+            (&mut *a_stream, a_cid),
             Some(password),
             "round 2 (both correct)",
         )
         .await;
         assert!(
-            matches!(a_second, InternalServiceResponse::PeerConnectSuccess(..)),
-            "one mistyped password must not lock the pair out: the retry carried \
-             the correct password and still failed with {a_second:?}"
-        );
-        assert!(
             matches!(b_second, InternalServiceResponse::PeerConnectSuccess(..)),
-            "the initiator must see the retry succeed too; got {b_second:?}"
+            "one mistyped password must not lock the pair out: the retry carried \
+             the correct password and still failed with {b_second:?}"
+        );
+        let a_second = recv_or_fail(a_stream, "[round 2] the acceptor's connect response").await;
+        assert!(
+            matches!(a_second, InternalServiceResponse::PeerConnectSuccess(..)),
+            "the acceptor must see the retry succeed too; got {a_second:?}"
         );
 
         Ok(())

@@ -611,10 +611,10 @@ pub async fn connect_p2p_with_turn(
         }
     };
 
-    // Service B's window accepts, unless B's agent answers the offer itself: a window
-    // answering too would race the agent's own answer. A peer session password is the
-    // exception, because only the window holds it.
-    if !answered_by_agent || session_password.is_some() {
+    // Service B's window accepts, unless B's agent answers the offer itself (with the
+    // peer session password B's window gave on registering): a window answering too
+    // would race the agent's own answer.
+    if !answered_by_agent {
         to_service_b
             .send(InternalServiceRequest::PeerConnect {
                 request_id: Uuid::new_v4(),

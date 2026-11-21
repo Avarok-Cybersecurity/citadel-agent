@@ -77,6 +77,12 @@ pub enum FailureReason {
     /// The server's verified `/.well-known/citadel` has no `citadel` member: an issuer-only
     /// server (work.avarok.net) that runs no node, so there is nothing to register on.
     NoCitadelEndpoint,
+    /// The server runs a Citadel protocol version this agent does not accept (SDK code 550):
+    /// one side must be updated.
+    ProtocolVersionUnsupported,
+    /// The server sealed this account's files in a format this agent does not read (SDK code
+    /// 495).
+    RevfsSealUnrecognised,
     /// A reason this build does not know: a newer agent's. Decoded rather than refused, so
     /// the failure it rides on still reaches the page (as "update the page"); an unknown
     /// variant otherwise failed the whole response, and the page waited out a timeout.

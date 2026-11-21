@@ -77,6 +77,8 @@ pub(crate) fn failure_reason(code: citadel_io::ErrorCode) -> Option<FailureReaso
     match code {
         ErrorCode::PqSignInAdmissionRequired => Some(FailureReason::AdmissionRequired),
         ErrorCode::PqSignInAdmissionFailed => Some(FailureReason::AdmissionFailed),
+        ErrorCode::ProtocolVersionUnsupported => Some(FailureReason::ProtocolVersionUnsupported),
+        ErrorCode::RevfsSealUnrecognised => Some(FailureReason::RevfsSealUnrecognised),
         _ => None,
     }
 }
@@ -172,6 +174,19 @@ mod tests {
             management_failure_reason(true, ErrorCode::PqSignInFactorMissing),
             None,
             "a key that was not touched is not the server's age"
+        );
+    }
+
+    #[test]
+    fn a_version_or_seal_refusal_reaches_the_page_by_name() {
+        use citadel_io::ErrorCode;
+        assert_eq!(
+            failure_reason(ErrorCode::ProtocolVersionUnsupported),
+            Some(FailureReason::ProtocolVersionUnsupported)
+        );
+        assert_eq!(
+            failure_reason(ErrorCode::RevfsSealUnrecognised),
+            Some(FailureReason::RevfsSealUnrecognised)
         );
     }
 }

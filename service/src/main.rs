@@ -1,5 +1,3 @@
-mod data_format;
-
 use citadel_internal_service::kernel::{p2p_kex, revfs_seed, CitadelWorkspaceService};
 use citadel_internal_service::stun::{StunServers, STUN_SERVERS_ENV};
 use citadel_internal_service::{sweep_stale_browser_transfers, BrowserTransferRoot};
@@ -194,7 +192,7 @@ fn resolve_backend(opts: &Options) -> Result<BackendType, Box<dyn Error>> {
             // change would otherwise present as an agent that cannot read its
             // own accounts, with deleting the volume as the only apparent
             // remedy -- and the keys in it do not come back.
-            data_format::check_data_dir(&path)?;
+            citadel_internal_service::data_format::check_data_dir(&path)?;
             Ok(BackendType::Filesystem(path_str))
         }
     }

@@ -1245,7 +1245,6 @@ dependencies = [
  "libc",
  "parking_lot",
  "structopt",
- "tempfile",
  "tokio",
 ]
 

@@ -152,7 +152,7 @@ dependencies = [
  "raw-window-handle",
  "serde",
  "serde_repr",
- "tokio 1.50.0",
+ "tokio",
  "url",
  "wayland-backend",
  "wayland-client",
@@ -298,11 +298,11 @@ dependencies = [
 [[package]]
 name = "async_ip"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "async-trait",
  "auto_impl",
- "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_io",
  "futures",
  "reqwest",
  "serde",
@@ -865,7 +865,7 @@ dependencies = [
  "citadel-internal-service-test-common",
  "citadel-internal-service-types",
  "citadel-release-signature",
- "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_io",
  "citadel_proto",
  "citadel_sdk",
  "citadel_treekem",
@@ -892,7 +892,7 @@ dependencies = [
  "sigstore-types",
  "sigstore-verify",
  "tempfile",
- "tokio 1.50.0",
+ "tokio",
  "tracing-log",
  "tracing-subscriber",
  "uuid",
@@ -912,8 +912,8 @@ dependencies = [
  "citadel-internal-service-test-common",
  "citadel-internal-service-types",
  "citadel_crypt",
- "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
- "citadel_logging 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_io",
+ "citadel_logging",
  "citadel_sdk",
  "dashmap",
  "env_logger",
@@ -929,7 +929,7 @@ dependencies = [
  "rustls-pemfile",
  "serde",
  "serde_json",
- "tokio 1.50.0",
+ "tokio",
  "tokio-rustls",
  "tokio-tungstenite 0.21.0",
  "tungstenite 0.21.0",
@@ -960,7 +960,7 @@ dependencies = [
  "citadel_user",
  "futures",
  "tempfile",
- "tokio 1.50.0",
+ "tokio",
  "uuid",
 ]
 
@@ -988,7 +988,7 @@ dependencies = [
  "citadel-app-signature",
  "citadel-internal-service-connector",
  "citadel-internal-service-types",
- "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_io",
  "console_error_panic_hook",
  "console_log",
  "dashmap",
@@ -1024,7 +1024,7 @@ dependencies = [
 [[package]]
 name = "citadel_crypt"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "arrayvec",
  "async-trait",
@@ -1037,7 +1037,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "chacha20poly1305",
- "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_io",
  "citadel_negotiation",
  "citadel_pqcrypto",
  "citadel_types",
@@ -1060,41 +1060,19 @@ dependencies = [
 [[package]]
 name = "citadel_io"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#5dce68187d74ee9284e405a156e622840b5b44a7"
-dependencies = [
- "bytes",
- "citadel_io_macros 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master)",
- "futures",
- "getrandom 0.3.4",
- "parking_lot",
- "rand 0.8.8",
- "serde",
- "tokio 1.36.0",
- "tokio 1.50.0",
- "tokio-stream 0.1.14",
- "tokio-stream 0.1.18",
- "tokio-util 0.7.10",
- "tokio-util 0.7.18",
- "url",
- "wasmtimer 0.4.3",
-]
-
-[[package]]
-name = "citadel_io"
-version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "bincode",
  "bytes",
- "citadel_io_macros 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_io_macros",
  "futures",
  "getrandom 0.3.4",
  "parking_lot",
  "rand 0.8.8",
  "serde",
- "tokio 1.50.0",
- "tokio-stream 0.1.18",
- "tokio-util 0.7.18",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
  "url",
  "wasmtimer 0.4.3",
 ]
@@ -1102,17 +1080,7 @@ dependencies = [
 [[package]]
 name = "citadel_io_macros"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#5dce68187d74ee9284e405a156e622840b5b44a7"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.116",
-]
-
-[[package]]
-name = "citadel_io_macros"
-version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1122,7 +1090,7 @@ dependencies = [
 [[package]]
 name = "citadel_link"
 version = "0.1.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "citadel_media",
  "citadel_negotiation",
@@ -1133,16 +1101,7 @@ dependencies = [
 [[package]]
 name = "citadel_logging"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master#5dce68187d74ee9284e405a156e622840b5b44a7"
-dependencies = [
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "citadel_logging"
-version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -1151,7 +1110,7 @@ dependencies = [
 [[package]]
 name = "citadel_media"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "bytes",
 ]
@@ -1159,10 +1118,10 @@ dependencies = [
 [[package]]
 name = "citadel_negotiation"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "bincode",
- "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_io",
  "citadel_types",
  "serde",
  "sha3",
@@ -1171,7 +1130,7 @@ dependencies = [
 [[package]]
 name = "citadel_phrase"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "sha3",
  "zeroize",
@@ -1180,7 +1139,7 @@ dependencies = [
 [[package]]
 name = "citadel_pqcrypto"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1188,7 +1147,7 @@ dependencies = [
  "bincode",
  "bytes",
  "chacha20poly1305",
- "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_io",
  "citadel_types",
  "fn-dsa",
  "generic-array",
@@ -1208,7 +1167,7 @@ dependencies = [
 [[package]]
 name = "citadel_proto"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1220,9 +1179,9 @@ dependencies = [
  "bytes",
  "chrono",
  "citadel_crypt",
- "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_io",
  "citadel_link",
- "citadel_logging 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_logging",
  "citadel_negotiation",
  "citadel_pqcrypto",
  "citadel_treekem",
@@ -1254,12 +1213,12 @@ dependencies = [
 [[package]]
 name = "citadel_sdk"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "anyhow",
  "bytes",
- "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
- "citadel_logging 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_io",
+ "citadel_logging",
  "citadel_media",
  "citadel_negotiation",
  "citadel_proto",
@@ -1287,19 +1246,19 @@ dependencies = [
  "parking_lot",
  "structopt",
  "tempfile",
- "tokio 1.50.0",
+ "tokio",
 ]
 
 [[package]]
 name = "citadel_treekem"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "arrayvec",
  "bincode",
  "blake3",
  "chacha20poly1305",
- "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_io",
  "citadel_pqcrypto",
  "citadel_types",
  "rand 0.8.8",
@@ -1312,11 +1271,11 @@ dependencies = [
 [[package]]
 name = "citadel_types"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "bincode",
  "bytes",
- "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_io",
  "getrandom 0.2.17",
  "libc",
  "log",
@@ -1333,7 +1292,7 @@ dependencies = [
 [[package]]
 name = "citadel_user"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "async-trait",
  "bincode",
@@ -1341,7 +1300,7 @@ dependencies = [
  "bytes",
  "chrono",
  "citadel_crypt",
- "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_io",
  "citadel_negotiation",
  "citadel_phrase",
  "citadel_pqcrypto",
@@ -1366,14 +1325,14 @@ dependencies = [
 [[package]]
 name = "citadel_wire"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "anyhow",
  "async-trait-with-sync",
  "async_ip",
  "bincode",
  "bytes",
- "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_io",
  "citadel_types",
  "either",
  "futures",
@@ -1967,16 +1926,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dns-parser"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4d33be9473d06f75f58220f71f7a9317aca647dc061dbd3c361b0bef505fbea"
-dependencies = [
- "byteorder",
- "quick-error",
-]
-
-[[package]]
 name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2468,8 +2417,8 @@ dependencies = [
  "http",
  "indexmap",
  "slab",
- "tokio 1.50.0",
- "tokio-util 0.7.18",
+ "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -2692,7 +2641,7 @@ dependencies = [
  "pin-project-lite",
  "pin-utils",
  "smallvec",
- "tokio 1.50.0",
+ "tokio",
  "want",
 ]
 
@@ -2706,7 +2655,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "rustls",
- "tokio 1.50.0",
+ "tokio",
  "tokio-rustls",
  "tower-service",
  "webpki-roots",
@@ -2730,7 +2679,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "socket2",
- "tokio 1.50.0",
+ "tokio",
  "tower-service",
  "tracing",
 ]
@@ -2902,7 +2851,7 @@ dependencies = [
  "netlink-sys",
  "rtnetlink",
  "system-configuration",
- "tokio 1.50.0",
+ "tokio",
  "windows",
 ]
 
@@ -2921,7 +2870,7 @@ dependencies = [
  "hyper-util",
  "log",
  "rand 0.10.3",
- "tokio 1.50.0",
+ "tokio",
  "url",
  "xmltree",
 ]
@@ -2955,8 +2904,8 @@ dependencies = [
  "auto_impl",
  "bincode2",
  "brotli",
- "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master)",
- "citadel_logging 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?branch=master)",
+ "citadel_io",
+ "citadel_logging",
  "dashmap",
  "flate2",
  "futures",
@@ -2965,7 +2914,7 @@ dependencies = [
  "log",
  "num",
  "serde",
- "tokio 1.50.0",
+ "tokio",
  "wasm-bindgen-futures",
  "wasmtimer 0.2.1",
  "zstd-rs",
@@ -3426,14 +3375,14 @@ dependencies = [
 [[package]]
 name = "netbeam"
 version = "0.14.0"
-source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace#ce7acace13bdbbdb124cae34f79b712a49da36e8"
+source = "git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=721029bb#721029bb41b6bdd74486d1b00f0fb7a6233fecd9"
 dependencies = [
  "anyhow",
  "async-stream",
  "async-trait",
  "bincode",
  "bytes",
- "citadel_io 0.14.0 (git+https://github.com/Avarok-Cybersecurity/Citadel-Protocol?rev=ce7acace)",
+ "citadel_io",
  "futures",
  "getrandom 0.2.17",
  "log",
@@ -3488,7 +3437,7 @@ dependencies = [
  "futures-util",
  "libc",
  "log",
- "tokio 1.50.0",
+ "tokio",
 ]
 
 [[package]]
@@ -4118,7 +4067,7 @@ dependencies = [
  "rustls",
  "socket2",
  "thiserror 2.0.18",
- "tokio 1.50.0",
+ "tokio",
  "tracing",
  "web-time",
 ]
@@ -4390,7 +4339,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "sync_wrapper",
- "tokio 1.50.0",
+ "tokio",
  "tokio-rustls",
  "tower",
  "tower-http",
@@ -4455,7 +4404,7 @@ dependencies = [
  "netlink-sys",
  "nix 0.30.1",
  "thiserror 1.0.69",
- "tokio 1.50.0",
+ "tokio",
 ]
 
 [[package]]
@@ -5199,7 +5148,7 @@ dependencies = [
  "ring",
  "subtle",
  "thiserror 1.0.69",
- "tokio 1.50.0",
+ "tokio",
  "url",
  "webrtc-util",
 ]
@@ -5463,18 +5412,6 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.36.0"
-source = "git+https://github.com/second-state/wasi_tokio.git?branch=v1.36.x#9ecb42d137be73e51d010e5669e31cfe028739bc"
-dependencies = [
- "backtrace",
- "bytes",
- "pin-project-lite",
- "tokio-macros 2.2.0",
- "wasmedge_wasi_socket",
-]
-
-[[package]]
-name = "tokio"
 version = "1.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27ad5e34374e03cfffefc301becb44e9dc3c17584f414349ebe29ed26661822d"
@@ -5486,19 +5423,9 @@ dependencies = [
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",
- "tokio-macros 2.6.0",
+ "tokio-macros",
  "tracing",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "tokio-macros"
-version = "2.2.0"
-source = "git+https://github.com/second-state/wasi_tokio.git?branch=v1.36.x#9ecb42d137be73e51d010e5669e31cfe028739bc"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.116",
 ]
 
 [[package]]
@@ -5519,17 +5446,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
  "rustls",
- "tokio 1.50.0",
-]
-
-[[package]]
-name = "tokio-stream"
-version = "0.1.14"
-source = "git+https://github.com/second-state/wasi_tokio.git?branch=v1.36.x#9ecb42d137be73e51d010e5669e31cfe028739bc"
-dependencies = [
- "futures-core",
- "pin-project-lite",
- "tokio 1.36.0",
+ "tokio",
 ]
 
 [[package]]
@@ -5540,7 +5457,7 @@ checksum = "32da49809aab5c3bc678af03902d4ccddea2a87d028d86392a4b1560c6906c70"
 dependencies = [
  "futures-core",
  "pin-project-lite",
- "tokio 1.50.0",
+ "tokio",
 ]
 
 [[package]]
@@ -5551,7 +5468,7 @@ checksum = "c83b561d025642014097b66e6c1bb422783339e0909e4429cde4749d1990bc38"
 dependencies = [
  "futures-util",
  "log",
- "tokio 1.50.0",
+ "tokio",
  "tungstenite 0.21.0",
 ]
 
@@ -5563,21 +5480,8 @@ checksum = "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857"
 dependencies = [
  "futures-util",
  "log",
- "tokio 1.50.0",
+ "tokio",
  "tungstenite 0.28.0",
-]
-
-[[package]]
-name = "tokio-util"
-version = "0.7.10"
-source = "git+https://github.com/second-state/wasi_tokio.git?branch=v1.36.x#9ecb42d137be73e51d010e5669e31cfe028739bc"
-dependencies = [
- "bytes",
- "futures-core",
- "futures-sink",
- "pin-project-lite",
- "tokio 1.36.0",
- "tracing",
 ]
 
 [[package]]
@@ -5591,7 +5495,7 @@ dependencies = [
  "futures-sink",
  "pin-project-lite",
  "slab",
- "tokio 1.50.0",
+ "tokio",
 ]
 
 [[package]]
@@ -5634,7 +5538,7 @@ dependencies = [
  "futures-util",
  "pin-project-lite",
  "sync_wrapper",
- "tokio 1.50.0",
+ "tokio",
  "tower-layer",
  "tower-service",
 ]
@@ -6103,18 +6007,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasmedge_wasi_socket"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92f497b1ae9b1929be4532ee2fc87ea9a8fa67485e02c7af730c2faf54e58521"
-dependencies = [
- "bytes",
- "dns-parser",
- "libc",
- "rand 0.8.8",
-]
-
-[[package]]
 name = "wasmparser"
 version = "0.244.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6302,7 +6194,7 @@ dependencies = [
  "nix 0.26.4",
  "rand 0.8.8",
  "thiserror 1.0.69",
- "tokio 1.50.0",
+ "tokio",
  "winapi",
 ]
 
@@ -6841,7 +6733,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_repr",
- "tokio 1.50.0",
+ "tokio",
  "tracing",
  "uds_windows",
  "uuid",

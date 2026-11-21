@@ -116,12 +116,18 @@ mod tests {
 
     #[test]
     fn a_matching_version_proceeds() {
-        assert_eq!(verdict(Some(AGENT_DATA_FORMAT), true), FormatVerdict::Proceed);
+        assert_eq!(
+            verdict(Some(AGENT_DATA_FORMAT), true),
+            FormatVerdict::Proceed
+        );
     }
 
     #[test]
     fn a_fresh_directory_is_stamped() {
-        assert_eq!(verdict(None, false), FormatVerdict::Stamp(AGENT_DATA_FORMAT));
+        assert_eq!(
+            verdict(None, false),
+            FormatVerdict::Stamp(AGENT_DATA_FORMAT)
+        );
     }
 
     #[test]

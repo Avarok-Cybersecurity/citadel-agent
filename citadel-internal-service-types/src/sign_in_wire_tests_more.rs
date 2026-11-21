@@ -112,43 +112,30 @@ fn every_outcome_crosses_the_wire_as_the_sdk_writes_it() {
     ];
     for outcome in outcomes {
         let sdk = serde_json::to_value(&outcome).unwrap();
-        let ours =
-            serde_json::to_value(SignInManagementOutcome::try_from(outcome).unwrap()).unwrap();
+        let ours = serde_json::to_value(SignInManagementOutcome::from(outcome)).unwrap();
         assert_eq!(ours, sdk);
     }
 }
 
 #[test]
 fn no_credential_id_reaches_a_debug_string() {
-    let listed = SignInManagementOutcome::try_from(sdk::SignInManagementOutcome::Credentials {
+    let listed = SignInManagementOutcome::from(sdk::SignInManagementOutcome::Credentials {
         policy: sdk::SignInPolicy::KeyOnly,
         credentials: vec![credential()],
-    })
-    .unwrap();
+    });
     let needle = format!("{:?}", CRED.to_vec());
     let printed = format!("{listed:?}");
     assert!(!printed.contains(&needle), "{printed}");
     assert!(!printed.contains("yubikey-5"), "{printed}");
 }
 
-/// Recovery codes are not a supported path: the SDK's codes outcome, and a listed code, are
-/// refused rather than converted.
+/// Recovery codes are retired: a server's codes outcome, or a listed code, is refused when the
+/// SDK decodes it, so neither reaches the agent's conversions.
 #[test]
-fn recovery_codes_from_the_sdk_are_refused() {
-    let codes = sdk::SignInManagementOutcome::RecoveryCodes(vec!["A-B".into()]);
-    assert_eq!(
-        SignInManagementOutcome::try_from(codes),
-        Err(RecoveryCodesUnsupported)
-    );
-    let listed_code = sdk::SignInManagementOutcome::Credentials {
-        policy: sdk::SignInPolicy::Password,
-        credentials: vec![sdk::SignInCredential {
-            kind: sdk::FactorKind::RecoveryCode,
-            ..credential()
-        }],
-    };
-    assert_eq!(
-        SignInManagementOutcome::try_from(listed_code),
-        Err(RecoveryCodesUnsupported)
-    );
+fn recovery_codes_from_a_server_are_refused() {
+    let codes = serde_json::json!({ "RecoveryCodes": ["A-B"] });
+    assert!(serde_json::from_value::<sdk::SignInManagementOutcome>(codes).is_err());
+    let listed_code = serde_json::json!({ "RecoveryCode": null });
+    assert!(serde_json::from_value::<sdk::FactorKind>(listed_code).is_err());
+    assert!(serde_json::from_value::<sdk::FactorKind>(serde_json::json!("RecoveryCode")).is_err());
 }

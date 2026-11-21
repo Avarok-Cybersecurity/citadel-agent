@@ -94,8 +94,7 @@ pub use sign_in::{
 };
 pub use sign_in_ceremony::SecurityKeyCeremony;
 pub use sign_in_wire::{
-    FactorKind, RecoveryCodesUnsupported, SignInCredential, SignInManagementOp,
-    SignInManagementOutcome, SignInPolicy,
+    FactorKind, SignInCredential, SignInManagementOp, SignInManagementOutcome, SignInPolicy,
 };
 pub use supervisor::{SupervisorNotification, SupervisorState};
 pub use turn::{IceServer, P2pPathReport, PeerTurnConfig, TurnPolicy};

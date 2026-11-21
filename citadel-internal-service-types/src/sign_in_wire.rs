@@ -6,8 +6,8 @@
 //! response is logged whole at debug level, and a credential id identifies a user's key.
 //!
 //! The conversions match every variant with no catch-all, so a variant the SDK adds is a compile
-//! error here rather than a silent gap. The SDK still names recovery codes; the agent signs in
-//! and recovers with the phrase only, so a codes variant converts to [`RecoveryCodesUnsupported`].
+//! error here rather than a silent gap. The SDK's retired recovery-code slots are uninhabited:
+//! the SDK refuses them when it decodes, so they never reach a conversion.
 
 use crate::{plaintext_debug_fmt, RecoveryCodes};
 use citadel_types::auth as sdk;
@@ -139,41 +139,28 @@ impl From<sdk::SignInPolicy> for SignInPolicy {
     }
 }
 
-/// The SDK named recovery codes, which the agent does not support: an account holding them, or
-/// a server issuing them, is refused rather than shown a factor nothing here can use.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecoveryCodesUnsupported;
-
-impl std::fmt::Display for RecoveryCodesUnsupported {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("The server answered with recovery codes; this agent recovers accounts with the recovery phrase only")
-    }
-}
-
-impl TryFrom<sdk::FactorKind> for FactorKind {
-    type Error = RecoveryCodesUnsupported;
-    fn try_from(kind: sdk::FactorKind) -> Result<Self, Self::Error> {
+impl From<sdk::FactorKind> for FactorKind {
+    fn from(kind: sdk::FactorKind) -> Self {
         match kind {
-            sdk::FactorKind::Password => Ok(Self::Password),
-            sdk::FactorKind::SecurityKey => Ok(Self::SecurityKey),
-            sdk::FactorKind::RecoveryCode => Err(RecoveryCodesUnsupported),
-            sdk::FactorKind::RecoveryPhrase => Ok(Self::RecoveryPhrase),
+            sdk::FactorKind::Password => Self::Password,
+            sdk::FactorKind::SecurityKey => Self::SecurityKey,
+            sdk::FactorKind::RetiredRecoveryCode(retired) => match retired {},
+            sdk::FactorKind::RecoveryPhrase => Self::RecoveryPhrase,
         }
     }
 }
 
-impl TryFrom<sdk::SignInCredential> for SignInCredential {
-    type Error = RecoveryCodesUnsupported;
-    fn try_from(c: sdk::SignInCredential) -> Result<Self, Self::Error> {
-        Ok(Self {
+impl From<sdk::SignInCredential> for SignInCredential {
+    fn from(c: sdk::SignInCredential) -> Self {
+        Self {
             id: c.id,
-            kind: c.kind.try_into()?,
+            kind: c.kind.into(),
             label: c.label,
             credential_id: c.credential_id,
             created_ms: c.created_ms,
             last_used_ms: c.last_used_ms,
             consumed: c.consumed,
-        })
+        }
     }
 }
 
@@ -205,30 +192,26 @@ impl SignInManagementOp {
     }
 }
 
-impl TryFrom<sdk::SignInManagementOutcome> for SignInManagementOutcome {
-    type Error = RecoveryCodesUnsupported;
-    fn try_from(outcome: sdk::SignInManagementOutcome) -> Result<Self, Self::Error> {
-        Ok(match outcome {
+impl From<sdk::SignInManagementOutcome> for SignInManagementOutcome {
+    fn from(outcome: sdk::SignInManagementOutcome) -> Self {
+        match outcome {
             sdk::SignInManagementOutcome::Credentials {
                 policy,
                 credentials,
             } => Self::Credentials {
                 policy: policy.into(),
-                credentials: credentials
-                    .into_iter()
-                    .map(TryInto::try_into)
-                    .collect::<Result<_, _>>()?,
+                credentials: credentials.into_iter().map(Into::into).collect(),
             },
             sdk::SignInManagementOutcome::Added { id } => Self::Added { id },
             sdk::SignInManagementOutcome::Renamed => Self::Renamed,
             sdk::SignInManagementOutcome::Removed => Self::Removed,
             sdk::SignInManagementOutcome::PolicySet => Self::PolicySet,
-            sdk::SignInManagementOutcome::RecoveryCodes(_) => return Err(RecoveryCodesUnsupported),
+            sdk::SignInManagementOutcome::RetiredRecoveryCodes(retired) => match retired {},
             sdk::SignInManagementOutcome::PasswordSet => Self::PasswordSet,
             sdk::SignInManagementOutcome::RecoveryPhrase(words) => {
                 Self::RecoveryPhrase(RecoveryCodes(words))
             }
-        })
+        }
     }
 }
 

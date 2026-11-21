@@ -99,10 +99,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     match outcome {
         Ok(outcome) => {
             info!(target: "citadel", "[SignIn] {kind} for session {cid} succeeded");
-            let outcome = match SignInManagementOutcome::try_from(outcome) {
-                Ok(outcome) => outcome,
-                Err(unsupported) => return failure(unsupported.to_string(), None),
-            };
+            let outcome = SignInManagementOutcome::from(outcome);
             if let SignInManagementOutcome::RecoveryPhrase(words) = &outcome {
                 new_root(this, cid, words).await;
             }

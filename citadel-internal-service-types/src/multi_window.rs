@@ -84,19 +84,14 @@ pub struct SessionAttached {
 
 /// What a connection's client can do, declared once per connection.
 ///
-/// A client that declares `agent_ilm` never runs an ILM of its own for a
-/// session: it sends reliable messages with `SendReliable` and the agent hosts
-/// the session's ILM. A client that declares nothing is treated as one that
-/// predates this (citadel-workspace `docs/plans/multi-window-sessions.md`).
+/// The agent hosts every session's ILM whether or not a window declares; a
+/// declaration says only what this window takes on top of that.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
 pub struct ClientCapabilities {
-    pub agent_ilm: bool,
     /// This window hosts Citadel apps and takes `IhttpFrameNotification`s. Only such windows
-    /// are given one; an older client's declaration has no such field, which is `false`.
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript", ts(as = "Option<bool>", optional))]
+    /// are given one.
     pub ihttp: bool,
 }
 
@@ -108,23 +103,16 @@ pub struct AgentCapabilities {
     /// Always 0: capabilities belong to the agent, not to a session.
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
-    /// The agent hosts each session's ILM for a client that declared it.
-    pub agent_ilm: bool,
     /// A session may be attached to several connections (`AttachSession`).
     pub multi_window: bool,
     /// The agent keeps this account's peers connected itself; see
     /// `ServiceConnectionAccepted::supervises_p2p`.
-    #[serde(default)]
     pub supervises_p2p: bool,
     /// Something on the agent's side shows its native notices: the menu-bar app
-    /// is subscribed. Kept current by `NoticesHeardNotification`. Absent from an
-    /// older agent, which is what `false` means here.
-    #[serde(default)]
+    /// is subscribed. Kept current by `NoticesHeardNotification`.
     pub notices_heard: bool,
     /// The agent relays internal HTTP for the accounts whose ILM it hosts (`IhttpSend`), and
-    /// its ILM advertises that to peers. Absent from an older agent, which is `false`.
-    #[serde(default)]
-    #[cfg_attr(feature = "typescript", ts(as = "Option<bool>", optional))]
+    /// its ILM advertises that to peers.
     pub ihttp: bool,
     pub request_id: Option<Uuid>,
 }
@@ -166,18 +154,5 @@ mod tests {
         }
         let password = AttachProof::Password(crate::SecBuffer::from(b"hunter2".to_vec()));
         assert!(!format!("{password:?}").contains("hunter2"));
-    }
-
-    /// A browser reads the greeting to decide whether to declare. An older
-    /// agent's greeting has no `agent_ilm`, and must read as "does not host",
-    /// or the browser would wait on a declaration that agent never answers.
-    #[test]
-    fn an_older_agents_greeting_offers_no_hosting() {
-        let older: crate::ServiceConnectionAccepted =
-            serde_json::from_str(r#"{"cid":0,"request_id":null}"#).unwrap();
-        assert!(!older.agent_ilm);
-        let newer: crate::ServiceConnectionAccepted =
-            serde_json::from_str(r#"{"cid":0,"request_id":null,"agent_ilm":true}"#).unwrap();
-        assert!(newer.agent_ilm);
     }
 }

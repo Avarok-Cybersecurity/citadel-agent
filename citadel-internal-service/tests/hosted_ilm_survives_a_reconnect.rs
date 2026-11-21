@@ -17,7 +17,6 @@ mod support;
 use citadel_internal_service_connector::connector::WrappedSink;
 use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
 use citadel_internal_service_test_common as common;
-use citadel_internal_service_test_common::agent_ilm::declare_agent_ilm;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, MessageStatus, MessageType, SecurityLevel,
 };
@@ -85,11 +84,6 @@ async fn a_hosted_account_still_sends_after_its_link_comes_back() -> Result<(), 
     let (agent, _node) = spawn_agent(&store).await?;
     let (mut sink, mut stream) = open(agent).await?;
 
-    common::send(&mut sink, declare_agent_ilm()).await?;
-    expect(&mut stream, |r| {
-        matches!(r, InternalServiceResponse::AgentCapabilities(_)).then_some(())
-    })
-    .await?;
     let cid = register(&mut sink, &mut stream, &proxy.addr.to_string(), &username()).await??;
 
     let before = conversation_send(&mut sink, &mut stream, cid, "before the drop").await?;

@@ -124,28 +124,16 @@ fn a_peer_that_did_not_advertise_internal_http_is_never_sent_a_frame() {
 
 #[test]
 fn only_windows_that_declared_ihttp_receive_a_frame() {
-    let (modern, legacy, undeclared) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let (hosts_apps, no_apps, undeclared) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
     let caps = HashMap::from([
-        (
-            modern,
-            ClientCapabilities {
-                agent_ilm: true,
-                ihttp: true,
-            },
-        ),
-        (
-            legacy,
-            ClientCapabilities {
-                agent_ilm: true,
-                ihttp: false,
-            },
-        ),
+        (hosts_apps, ClientCapabilities { ihttp: true }),
+        (no_apps, ClientCapabilities { ihttp: false }),
     ]);
     assert_eq!(
-        receivers(&[modern, legacy, undeclared], &caps),
-        vec![modern]
+        receivers(&[hosts_apps, no_apps, undeclared], &caps),
+        vec![hosts_apps]
     );
-    assert!(receivers(&[legacy, undeclared], &caps).is_empty());
+    assert!(receivers(&[no_apps, undeclared], &caps).is_empty());
 }
 
 /// What an agent that predates internal HTTP does with an envelope: its conversation store

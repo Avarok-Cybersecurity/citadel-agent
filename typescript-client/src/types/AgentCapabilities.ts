@@ -9,10 +9,6 @@ export type AgentCapabilities = {
  */
 cid: bigint, 
 /**
- * The agent hosts each session's ILM for a client that declared it.
- */
-agent_ilm: boolean, 
-/**
  * A session may be attached to several connections (`AttachSession`).
  */
 multi_window: boolean, 
@@ -23,12 +19,11 @@ multi_window: boolean,
 supervises_p2p: boolean, 
 /**
  * Something on the agent's side shows its native notices: the menu-bar app
- * is subscribed. Kept current by `NoticesHeardNotification`. Absent from an
- * older agent, which is what `false` means here.
+ * is subscribed. Kept current by `NoticesHeardNotification`.
  */
 notices_heard: boolean, 
 /**
  * The agent relays internal HTTP for the accounts whose ILM it hosts (`IhttpSend`), and
- * its ILM advertises that to peers. Absent from an older agent, which is `false`.
+ * its ILM advertises that to peers.
  */
-ihttp?: boolean, request_id: string | null, };
+ihttp: boolean, request_id: string | null, };

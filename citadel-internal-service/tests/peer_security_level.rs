@@ -21,10 +21,13 @@ use citadel_internal_service_test_common as common;
 
 #[cfg(test)]
 mod tests {
+    use crate::common::agent_ilm::{answered, require_level};
     use crate::common::setup_log;
     use crate::common::turn_harness::{next_matching, two_registered_agents, STEP};
     use crate::common::PeerReturnHandle;
-    use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
+    use citadel_internal_service_types::{
+        ChatSecurityLevel, InternalServiceRequest, InternalServiceResponse,
+    };
     use citadel_sdk::prelude::*;
     use std::error::Error;
     use std::time::Duration;
@@ -200,15 +203,21 @@ mod tests {
         Ok(())
     }
 
-    /// The UI's convergence: B requires High and declines A's Standard offer; A's connect fails
-    /// (it is answered, not left hanging); B then opens at High and A accepts. Both then send
-    /// at their own levels and both arrive.
+    /// The UI's convergence: B requires High, so B's agent declines A's Standard offer; A's
+    /// connect fails (it is answered, not left hanging); B then opens at High and A's agent
+    /// accepts. Both then send at their own levels and both arrive.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_declined_low_offer_is_replaced_by_the_higher_one() -> Result<(), Box<dyn Error>> {
         setup_log();
         let mut agents = two_registered_agents().await?;
         let ((tx_a, rx_a, cid_a), (tx_b, rx_b, cid_b)) = split(&mut agents);
         let (cid_a, cid_b) = (*cid_a, *cid_b);
+        answered(
+            tx_b,
+            rx_b,
+            require_level(cid_b, cid_a, ChatSecurityLevel::High),
+        )
+        .await;
 
         tx_a.send(peer_connect(cid_a, cid_b, SecurityLevel::Standard))
             .unwrap();
@@ -216,7 +225,6 @@ mod tests {
             offered_level(rx_b, cid_a).await.value(),
             SecurityLevel::Standard.value()
         );
-        tx_b.send(answer(cid_b, cid_a, false)).unwrap();
         let refused = tokio::time::timeout(Duration::from_secs(45), connect_outcome(rx_a, cid_b))
             .await
             .expect("a declined PeerConnect was never answered");
@@ -228,7 +236,6 @@ mod tests {
             offered_level(rx_a, cid_b).await.value(),
             SecurityLevel::High.value()
         );
-        tx_a.send(answer(cid_a, cid_b, true)).unwrap();
         connect_outcome(rx_b, cid_a).await?;
 
         send_at(tx_b, rx_b, cid_b, cid_a, SecurityLevel::High, b"b at high").await?;

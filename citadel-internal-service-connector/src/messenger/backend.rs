@@ -1,7 +1,7 @@
-pub use crate::messenger::backend_channel::{BackendChannel, RequestChannel};
+pub use crate::messenger::backend_channel::BackendChannel;
 use crate::messenger::backend_map::{mutate, MapStore, State};
 use crate::messenger::stored_map;
-use crate::messenger::{sleep_internal, MessengerTx, WrappedMessage};
+use crate::messenger::{sleep_internal, WrappedMessage};
 use async_trait::async_trait;
 use citadel_internal_service_types::{
     BatchedResponseData, InternalServiceRequest, InternalServiceResponse, KEY_NOT_FOUND,
@@ -15,14 +15,12 @@ use uuid::Uuid;
 
 /// ILM's storage for one account, over the agent's LocalDB.
 ///
-/// The I/O is `channel`: the browser's [`RequestChannel`] sends LocalDB requests
-/// over its socket to the agent and waits for the replies; the agent's own
-/// channel (citadel-internal-service `kernel/ilm`) answers them in-process.
-/// Everything else here -- the keys, the map serialisation, the read and write
-/// outcomes, the gates -- is one implementation for both, so an account's state
-/// written by a browser is read back by the agent byte for byte.
+/// The I/O is `channel`: the agent's own channel (citadel-internal-service
+/// `kernel/ilm`) answers the LocalDB requests in-process. Everything else here
+/// -- the keys, the map serialisation, the read and write outcomes, the gates --
+/// does not depend on the channel.
 #[derive(Clone)]
-pub struct CitadelWorkspaceBackend<C: BackendChannel = RequestChannel> {
+pub struct CitadelWorkspaceBackend<C: BackendChannel> {
     pub cid: u64,
     channel: C,
     // Each map is one serialized blob under one key, so every mutation is a
@@ -670,67 +668,6 @@ impl<C: BackendChannel> Backend<WrappedMessage> for CitadelWorkspaceBackend<C> {
         Ok(())
     }
 }
-
-#[async_trait]
-pub trait CitadelBackendExt: Backend<WrappedMessage> + Clone + Send + Sync + 'static {
-    /// Creates a new instance of the backend
-    async fn new(
-        cid: u64,
-        handle: &MessengerTx<Self>,
-    ) -> Result<Self, BackendError<WrappedMessage>>;
-
-    /// Inspects a payload to see if it is relevant to the backend. If it is, the response
-    /// is not returned. Otherwise, the response is returned to the caller for further processing.
-    async fn inspect_received_payload(
-        &self,
-        response: InternalServiceResponse,
-    ) -> Result<Option<InternalServiceResponse>, BackendError<WrappedMessage>> {
-        Ok(Some(response))
-    }
-
-    /// The request carrying `request_id` did not leave, so nothing will answer
-    /// it: fail whoever is waiting for that answer.
-    fn abandon_request(&self, _request_id: &Uuid) {}
-
-    /// The connection to the agent has ended, so no outstanding request will be
-    /// answered: fail every one of them now rather than leave them waiting.
-    fn abandon_all_requests(&self) {}
-}
-
-#[async_trait]
-impl CitadelBackendExt for CitadelWorkspaceBackend<RequestChannel> {
-    async fn new(
-        cid: u64,
-        handle: &MessengerTx<Self>,
-    ) -> Result<Self, BackendError<WrappedMessage>> {
-        Ok(Self::with_channel(
-            cid,
-            RequestChannel::new(cid, handle.bypass_ism_outbound_tx.clone()),
-        ))
-    }
-
-    async fn inspect_received_payload(
-        &self,
-        response: InternalServiceResponse,
-    ) -> Result<Option<InternalServiceResponse>, BackendError<WrappedMessage>> {
-        citadel_logging::debug!(target: "citadel", "Inspecting received payload: {:?}", response);
-        Ok(self.channel.claim_reply(response))
-    }
-
-    fn abandon_request(&self, request_id: &Uuid) {
-        self.channel.abandon(request_id);
-    }
-
-    fn abandon_all_requests(&self) {
-        self.channel.abandon_all();
-    }
-}
-
-#[cfg(test)]
-mod a_reply_that_beats_its_waiter;
-
-#[cfg(test)]
-mod a_late_reply_is_still_the_answer;
 
 #[cfg(test)]
 mod response_classification {

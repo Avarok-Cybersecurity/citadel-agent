@@ -4,13 +4,9 @@
 //! The codec set has one bit per `Codec` wire id, so a peer advertises every
 //! codec it can decode -- a new codec needs no layout change, only a bit.
 //!
-//! It goes AFTER the bincode frame because that is the one place a legacy
-//! peer is guaranteed not to look. `bincode2::deserialize` stops at the end of
-//! the value and never checks for trailing input (bincode 1.x semantics), so a
-//! legacy build decodes the Ack or Poll exactly as before and the advertisement
-//! is invisible to it -- no new variant, no failed decode, nothing forwarded to
-//! its UI. The interop tests decode real advertised frames with a replica of
-//! the legacy enum to hold that in place.
+//! Every Ack and Poll carries one. It goes after the bincode frame:
+//! `bincode2::deserialize_from` stops at the end of the value, so what is left
+//! is exactly the trailer.
 
 use intersession_layer_messaging::PeerCapabilities;
 
@@ -26,26 +22,25 @@ pub(super) fn append(frame: &mut Vec<u8>, capabilities: PeerCapabilities) {
     frame.extend_from_slice(&capabilities.codecs().to_wire().to_le_bytes());
 }
 
-/// What the bytes after a control frame say about its sender.
-///
-/// Nothing at all is `LEGACY`: that is what a legacy build sends, and treating
-/// it so is how a peer that reloaded onto an old build stops being sent
-/// extensions. Bytes that are not an advertisement are also `LEGACY` -- a
-/// frame this build cannot read an advertisement from has not advertised
-/// anything this build can use.
-pub(super) fn read(trailer: &[u8]) -> PeerCapabilities {
+/// What the bytes after a control frame say about its sender, or why they
+/// say nothing: a missing or unrecognised trailer is refused, never read as a
+/// peer that offers less.
+pub(super) fn read(trailer: &[u8]) -> Result<PeerCapabilities, String> {
     match trailer {
         // Later versions may append; what version 1 defines is read as is.
         [m0, m1, version, flags, c0, c1, c2, c3, ..]
             if [*m0, *m1] == MAGIC && *version >= VERSION =>
         {
-            PeerCapabilities::from_wire(*flags, u32::from_le_bytes([*c0, *c1, *c2, *c3]))
+            Ok(PeerCapabilities::from_wire(
+                *flags,
+                u32::from_le_bytes([*c0, *c1, *c2, *c3]),
+            ))
         }
-        [] => PeerCapabilities::LEGACY,
-        other => {
-            log::warn!(target: "ism", "[WIRE] {} unrecognised bytes after a control frame; treating the sender as legacy", other.len());
-            PeerCapabilities::LEGACY
-        }
+        [] => Err("no capability advertisement".to_string()),
+        other => Err(format!(
+            "{} bytes after it are not a capability advertisement",
+            other.len()
+        )),
     }
 }
 
@@ -60,7 +55,7 @@ mod tests {
         let mut trailer = Vec::new();
         append(&mut trailer, advertised);
         assert_eq!(trailer.len(), 8);
-        assert_eq!(read(&trailer), advertised);
+        assert_eq!(read(&trailer), Ok(advertised));
     }
 
     #[test]
@@ -70,17 +65,18 @@ mod tests {
         append(&mut trailer, advertised);
         trailer[2] = VERSION + 1;
         trailer.extend_from_slice(&[0xaa, 0xbb]);
-        assert_eq!(read(&trailer), advertised);
+        assert_eq!(read(&trailer), Ok(advertised));
     }
 
     #[test]
-    fn a_truncated_or_foreign_trailer_means_legacy() {
+    fn a_missing_truncated_or_foreign_trailer_is_refused() {
         let mut trailer = Vec::new();
         append(
             &mut trailer,
             PeerCapabilities::new(true, CodecSet::of(&[Codec::Brotli])),
         );
-        assert_eq!(read(&trailer[..7]), PeerCapabilities::LEGACY);
-        assert_eq!(read(&[0u8; 8]), PeerCapabilities::LEGACY);
+        assert!(read(&[]).is_err());
+        assert!(read(&trailer[..7]).is_err());
+        assert!(read(&[0u8; 8]).is_err());
     }
 }

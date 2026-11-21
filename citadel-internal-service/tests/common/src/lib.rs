@@ -45,7 +45,6 @@ use citadel_sdk::prefabs::server::empty::EmptyKernel;
 use citadel_sdk::prelude::*;
 use core::panic;
 use futures::{SinkExt, StreamExt};
-use std::collections::HashMap;
 use std::error::Error;
 use std::future::Future;
 use std::net::{SocketAddr, TcpListener};
@@ -1083,8 +1082,9 @@ pub async fn test_kv_for_service(
     if let InternalServiceResponse::LocalDBGetAllKVSuccess(resp) =
         from_service.recv().await.unwrap()
     {
+        // The agent's hosted ILM keeps its own records in the same store.
         assert_eq!(resp.cid, cid);
-        assert_eq!(resp.map.len(), 0);
+        assert!(!resp.map.contains_key("tmp"), "{:?}", resp.map.keys());
         assert_eq!(peer_cid, resp.peer_cid);
     } else {
         panic!("Didn't get the LocalDBGetAllKVSuccess");
@@ -1136,12 +1136,8 @@ pub async fn test_kv_for_service(
         from_service.recv().await.unwrap()
     {
         assert_eq!(resp.cid, cid);
-        assert_eq!(resp.map.len(), 1);
         assert_eq!(peer_cid, resp.peer_cid);
-        assert_eq!(
-            resp.map,
-            HashMap::from([("tmp".to_string(), value.clone())])
-        );
+        assert_eq!(resp.map.get("tmp"), Some(&value));
     } else {
         panic!("Didn't get the LocalDBGetAllKVSuccess");
     }

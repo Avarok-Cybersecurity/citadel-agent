@@ -33,10 +33,11 @@ pub struct IhttpSendAccepted {
 pub enum IhttpSendRefusal {
     /// Not one valid frame of this version, within the frame limits.
     Malformed,
-    /// The peer's ILM has not advertised internal HTTP (an older build, or no advertisement
-    /// heard yet): it could not read the frame, so it is not sent one.
+    /// The peer's ILM has not advertised internal HTTP (no advertisement heard yet): it
+    /// could not read the frame, so it is not sent one.
     NotAdvertised,
-    /// The agent does not host this account's messaging; declare `agent_ilm` first.
+    /// The agent hosts no messaging for this account: it is not signed in with a full
+    /// session.
     NotHosted,
     /// The account's ILM refused the message.
     Queue,

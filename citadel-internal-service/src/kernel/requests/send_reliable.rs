@@ -53,7 +53,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     };
     let Some(host) = this.ilm_hosts.get(cid) else {
         return failure(format!(
-            "The agent does not host messaging for session {cid}; declare agent_ilm first"
+            "The agent hosts no messaging for session {cid}: it is not signed in with a full session"
         ));
     };
     match host

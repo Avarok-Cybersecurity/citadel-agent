@@ -3,14 +3,12 @@
 /**
  * What a connection's client can do, declared once per connection.
  *
- * A client that declares `agent_ilm` never runs an ILM of its own for a
- * session: it sends reliable messages with `SendReliable` and the agent hosts
- * the session's ILM. A client that declares nothing is treated as one that
- * predates this (citadel-workspace `docs/plans/multi-window-sessions.md`).
+ * The agent hosts every session's ILM whether or not a window declares; a
+ * declaration says only what this window takes on top of that.
  */
-export type ClientCapabilities = { agent_ilm: boolean, 
+export type ClientCapabilities = { 
 /**
  * This window hosts Citadel apps and takes `IhttpFrameNotification`s. Only such windows
- * are given one; an older client's declaration has no such field, which is `false`.
+ * are given one.
  */
-ihttp?: boolean, };
+ihttp: boolean, };

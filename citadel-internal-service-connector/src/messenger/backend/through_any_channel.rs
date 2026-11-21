@@ -178,13 +178,12 @@ async fn two_accounts_do_not_share_a_key() {
     assert_eq!(other.load_value("last_sent").await.unwrap(), None);
 }
 
-/// The owner's 0.11.0 -> 0.13.0 upgrade: the account's outbound queue was
-/// written in the old layout, and every send failed reading it. Now the send
-/// succeeds, the old bytes are kept under the quarantine key, and the queue
-/// holds only the new message.
+/// A stored queue the agent cannot read (here, bytes with no ILMQ envelope) does
+/// not fail every send: the send succeeds, the unreadable bytes are kept under
+/// the quarantine key, and the queue holds only the new message.
 #[citadel_io::tokio::test]
-async fn a_queue_in_an_older_layout_is_quarantined_and_the_send_goes_through() {
-    const OLD: &[u8] = include_bytes!("../stored_map_fixtures/outbound-agent-0.11.0-2.bin");
+async fn an_unreadable_queue_is_quarantined_and_the_send_goes_through() {
+    const OLD: &[u8] = b"not an ILMQ queue";
     let channel = MapChannel::default();
     channel
         .store

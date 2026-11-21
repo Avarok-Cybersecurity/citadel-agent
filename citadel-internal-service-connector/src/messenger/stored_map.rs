@@ -18,9 +18,8 @@
 //!   JSON fallback for it cost the browser's WASM 1.1 MB, for a case no sender
 //!   produces.)
 //!
-//! A blob without the envelope is the legacy format. It is accepted only if it
-//! decodes with nothing left over AND every message is the payload that queue
-//! holds, for this account; otherwise it is `Unreadable` and the caller
+//! A blob without the envelope was written before this format and is
+//! `Unreadable`, as is anything else that is not the current format: the caller
 //! quarantines it (keeps the bytes under another key) instead of failing every
 //! send forever. Pure: no I/O here.
 
@@ -36,21 +35,12 @@ use uuid::Uuid;
 pub(crate) const MAGIC: [u8; 4] = *b"ILMQ";
 pub(crate) const FORMAT_V1: u8 = 1;
 
-/// Which queue a blob is, which decides the one payload its legacy form may hold.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum QueueKind {
-    Outbound,
-    Inbound,
-}
-
 /// What a stored blob turned out to be.
 #[derive(Debug)]
 pub enum Decoded {
     Current(State),
-    /// The pre-envelope format, and it passed validation: rewrite it as current.
-    LegacyAccepted(State),
-    /// Neither format, or legacy that decoded into something this queue never
-    /// holds. The bytes must be kept elsewhere, never parsed into a queue.
+    /// Not the current format (no envelope, another version, or torn). The
+    /// bytes must be kept elsewhere, never parsed into a queue.
     Unreadable(String),
 }
 
@@ -172,7 +162,7 @@ pub fn encode(state: &State) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-pub fn decode(bytes: &[u8], kind: QueueKind, owner_cid: u64) -> Decoded {
+pub fn decode(bytes: &[u8]) -> Decoded {
     match bytes.strip_prefix(&MAGIC[..]) {
         Some([FORMAT_V1, body @ ..]) => match decode_current(body) {
             Ok(state) => Decoded::Current(state),
@@ -182,10 +172,9 @@ pub fn decode(bytes: &[u8], kind: QueueKind, owner_cid: u64) -> Decoded {
             "unknown format version {:?} (written by a newer agent?)",
             rest.first()
         )),
-        None => match decode_legacy(bytes, kind, owner_cid) {
-            Ok(state) => Decoded::LegacyAccepted(state),
-            Err(why) => Decoded::Unreadable(format!("legacy format: {why}")),
-        },
+        None => Decoded::Unreadable(
+            "no ILMQ envelope: written before the versioned queue format".to_string(),
+        ),
     }
 }
 
@@ -215,30 +204,6 @@ fn decode_current(body: &[u8]) -> Result<State, String> {
                     contents,
                 },
             );
-        }
-    }
-    Ok(state)
-}
-
-fn decode_legacy(bytes: &[u8], kind: QueueKind, owner_cid: u64) -> Result<State, String> {
-    let state: State = exactly(bytes)?;
-    for m in state.values().flat_map(HashMap::values) {
-        let belongs = match (kind, &m.contents) {
-            (
-                QueueKind::Outbound,
-                InternalServicePayload::Request(InternalServiceRequest::Message { cid, .. }),
-            ) => *cid == owner_cid,
-            (
-                QueueKind::Inbound,
-                InternalServicePayload::Response(InternalServiceResponse::MessageNotification(n)),
-            ) => n.cid == owner_cid,
-            _ => false,
-        };
-        if !belongs {
-            return Err(format!(
-                "message {} is not a {kind:?} message of session {owner_cid}",
-                m.message_id
-            ));
         }
     }
     Ok(state)

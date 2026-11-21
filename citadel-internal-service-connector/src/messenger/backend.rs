@@ -39,11 +39,10 @@ pub struct CitadelWorkspaceBackend<C: BackendChannel = RequestChannel> {
 pub const INBOUND_MESSAGE_PREFIX: &str = "inbound_messages";
 pub const OUTBOUND_MESSAGE_PREFIX: &str = "outbound_messages";
 
-/// The queue a map prefix names; any other prefix is a caller's bug.
-fn queue_kind(prefix: &str) -> Result<stored_map::QueueKind, BackendError<WrappedMessage>> {
+/// A map prefix must name one of the two queues; any other prefix is a caller's bug.
+fn queue_prefix(prefix: &str) -> Result<(), BackendError<WrappedMessage>> {
     match prefix {
-        OUTBOUND_MESSAGE_PREFIX => Ok(stored_map::QueueKind::Outbound),
-        INBOUND_MESSAGE_PREFIX => Ok(stored_map::QueueKind::Inbound),
+        OUTBOUND_MESSAGE_PREFIX | INBOUND_MESSAGE_PREFIX => Ok(()),
         other => Err(BackendError::StorageError(format!(
             "Not a message queue: {other}"
         ))),
@@ -135,9 +134,9 @@ impl<C: BackendChannel> CitadelWorkspaceBackend<C> {
         match self.request(request, request_id).await? {
             InternalServiceResponse::LocalDBGetKVSuccess(success_response) => {
                 citadel_logging::debug!(target: "citadel", "[GET_MAP] Got {} map successfully", prefix);
-                match stored_map::decode(&success_response.value, queue_kind(prefix)?, self.cid) {
-                    stored_map::Decoded::Current(state)
-                    | stored_map::Decoded::LegacyAccepted(state) => Ok(state),
+                queue_prefix(prefix)?;
+                match stored_map::decode(&success_response.value) {
+                    stored_map::Decoded::Current(state) => Ok(state),
                     stored_map::Decoded::Unreadable(why) => {
                         self.quarantine(prefix, success_response.value, &why).await
                     }

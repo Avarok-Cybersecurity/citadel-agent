@@ -59,10 +59,9 @@ pub enum FailureKind {
     /// about to let go of: measured live, the account's chip vanished and nothing
     /// brought it back.
     ///
-    /// A server at protocol 0.11.2 or later replaces the agent's OWN dead session on the
-    /// first reconnect (its resume token), so there this means the held session is not
-    /// provably this agent's: the token was lost with an agent restart, or another login
-    /// replaced it. Older servers still refuse every reconnect until the keep-alive.
+    /// The server replaces the agent's OWN dead session on the first reconnect (its resume
+    /// token), so this means the held session is not provably this agent's: the token was
+    /// lost with an agent restart, or another login replaced it.
     ServerHoldsSession,
 }
 

@@ -77,6 +77,25 @@ pub fn refusal_copy(verdict: &FormatVerdict, dir: &Path) -> Option<String> {
 /// Read the marker, decide, and write it when the decision says to. A directory that does not
 /// exist yet is created (owner-only on unix) and stamped.
 pub fn check_data_dir(dir: &Path) -> Result<(), std::io::Error> {
+    let verdict = read_verdict(dir)?;
+    if let Some(message) = refusal_copy(&verdict, dir) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            message,
+        ));
+    }
+    match verdict {
+        FormatVerdict::Stamp(version) => {
+            std::fs::write(dir.join(FORMAT_MARKER), version.to_string())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The verdict on `dir` as found, without writing the marker: what `check_data_dir` decides
+/// on, for a caller that acts on a refusal by kind rather than by its message. A directory that
+/// does not exist yet is created (owner-only on unix), as `check_data_dir` creates it.
+pub fn read_verdict(dir: &Path) -> Result<FormatVerdict, std::io::Error> {
     if !dir.exists() {
         create_private_dir(dir)?;
     }
@@ -103,17 +122,7 @@ pub fn check_data_dir(dir: &Path) -> Result<(), std::io::Error> {
     };
 
     let holds_data = std::fs::read_dir(dir)?.next().is_some();
-    let verdict = verdict(found, holds_data);
-    if let Some(message) = refusal_copy(&verdict, dir) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            message,
-        ));
-    }
-    match verdict {
-        FormatVerdict::Stamp(version) => std::fs::write(&marker, version.to_string()),
-        _ => Ok(()),
-    }
+    Ok(verdict(found, holds_data))
 }
 
 fn create_private_dir(dir: &Path) -> std::io::Result<()> {

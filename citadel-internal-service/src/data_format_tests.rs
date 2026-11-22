@@ -71,3 +71,20 @@ fn a_newer_refusal_says_not_to_delete_the_keys() {
     assert!(copy.contains("Do not delete"), "{copy}");
     assert!(copy.contains("INTERNAL_SERVICE_DATA_DIR"), "{copy}");
 }
+
+#[test]
+fn read_verdict_names_the_kind_and_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("accounts.db"), b"earlier agent").unwrap();
+    assert_eq!(read_verdict(dir.path()).unwrap(), FormatVerdict::Earlier);
+    assert!(!dir.path().join(FORMAT_MARKER).exists());
+
+    let fresh = tempfile::tempdir().unwrap();
+    let empty = fresh.path().join("agent");
+    assert_eq!(
+        read_verdict(&empty).unwrap(),
+        FormatVerdict::Stamp(AGENT_DATA_FORMAT)
+    );
+    assert!(empty.is_dir());
+    assert!(!empty.join(FORMAT_MARKER).exists());
+}

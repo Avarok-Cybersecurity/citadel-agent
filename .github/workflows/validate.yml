@@ -71,6 +71,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "ci-${{ matrix.os }}"
+          # A failed test run still saves what it compiled. The Windows leg
+          # spends ~22 min building the test profile from a cache that predates
+          # the lockfile change (run 44994369249); it then failed on one test and
+          # saved nothing, so the re-run paid the same 22 min again. Saving on
+          # failure makes the second run start warm.
+          cache-on-failure: true
       # `websockets` is not a default feature, and the origin-policy and
       # handshake tests are behind `#[cfg(feature = "websockets")]`. Without it
       # they are not skipped -- they are not COMPILED, so the run is green with

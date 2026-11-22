@@ -102,7 +102,6 @@ mod tests {
 
     /// B offers Standard; A's agent accepts it; only then does A's window dial at High. The
     /// pair connects, and Standard traffic crosses both ways.
-    #[ignore = "at Citadel-Protocol 1a6d4262 A refuses the exchange its own accept started, judged against its later High dial, and neither side connects; un-ignore with the SDK pin that keeps the displaced accept"]
     #[tokio::test(flavor = "multi_thread")]
     async fn a_stronger_dial_after_accepting_a_weaker_offer_still_connects(
     ) -> Result<(), Box<dyn Error>> {

@@ -2,6 +2,7 @@ use citadel_internal_service_test_common as common;
 
 #[cfg(test)]
 mod tests {
+    use crate::common::group::recv_until;
     use crate::common::*;
     use bytes::BytesMut;
     use citadel_internal_service_types::{
@@ -14,10 +15,31 @@ mod tests {
         GroupRespondRequestSuccess, InternalServiceRequest, InternalServiceResponse,
     };
     use citadel_sdk::logging::info;
-    use citadel_sdk::prelude::{MemberState, StackedRatchet, UserIdentifier};
+    use citadel_sdk::prelude::{
+        GroupDelivery, GroupEndReason, MemberState, StackedRatchet, UserIdentifier,
+    };
     use std::error::Error;
     use std::net::SocketAddr;
     use uuid::Uuid;
+
+    fn assert_delivered_to(delivery: &GroupDelivery, mut members: Vec<u64>) {
+        let GroupDelivery::Relayed {
+            delivered,
+            stored,
+            not_delivered,
+        } = delivery
+        else {
+            panic!("the message was not relayed: {delivery:?}");
+        };
+        let mut delivered = delivered.clone();
+        delivered.sort_unstable();
+        members.sort_unstable();
+        assert_eq!(delivered, members, "delivered to");
+        assert!(
+            stored.is_empty() && not_delivered.is_empty(),
+            "{delivery:?}"
+        );
+    }
 
     #[tokio::test]
     async fn test_internal_service_group_create() -> Result<(), Box<dyn Error>> {
@@ -979,17 +1001,30 @@ mod tests {
             }
 
             // Service B is notified that it was kicked
-            let _ = from_service_b.recv().await.unwrap(); // MemberStateChanged from Service C Joining
-            let service_b_inbound = from_service_b.recv().await.unwrap();
+            // Member-state changes interleave with it in no fixed number, so they are skipped.
+            let service_b_inbound = recv_until(&mut from_service_b, "the kick notification", |r| {
+                matches!(
+                    r,
+                    InternalServiceResponse::GroupDisconnectNotification(_)
+                        | InternalServiceResponse::GroupLeaveNotification(_)
+                )
+            })
+            .await;
             if let InternalServiceResponse::GroupDisconnectNotification(
                 GroupDisconnectNotification {
                     cid: _,
                     group_key: disconnected_group,
+                    reason,
                     request_id: _,
                 },
             ) = &service_b_inbound
             {
                 assert_eq!(group_key, disconnected_group);
+                assert_eq!(
+                    *reason,
+                    GroupEndReason::Removed,
+                    "a kick removes the member"
+                );
             } else if let InternalServiceResponse::GroupLeaveNotification(
                 GroupLeaveNotification {
                     cid: _,
@@ -1006,18 +1041,30 @@ mod tests {
             }
 
             // Service C is notified that it was kicked
-            let _ = from_service_c.recv().await.unwrap(); // MemberStateChanged from Service B getting kicked
-            let _ = from_service_c.recv().await.unwrap(); // Extra MemberStateChanged Not Needed here
-            let service_c_inbound = from_service_c.recv().await.unwrap();
+            // Member-state changes interleave with it in no fixed number, so they are skipped.
+            let service_c_inbound = recv_until(&mut from_service_c, "the kick notification", |r| {
+                matches!(
+                    r,
+                    InternalServiceResponse::GroupDisconnectNotification(_)
+                        | InternalServiceResponse::GroupLeaveNotification(_)
+                )
+            })
+            .await;
             if let InternalServiceResponse::GroupDisconnectNotification(
                 GroupDisconnectNotification {
                     cid: _,
                     group_key: disconnected_group,
+                    reason,
                     request_id: _,
                 },
             ) = &service_c_inbound
             {
                 assert_eq!(group_key, disconnected_group);
+                assert_eq!(
+                    *reason,
+                    GroupEndReason::Removed,
+                    "a kick removes the member"
+                );
             } else if let InternalServiceResponse::GroupLeaveNotification(
                 GroupLeaveNotification {
                     cid: _,
@@ -1200,17 +1247,13 @@ mod tests {
                 }
                 let service_a_inbound = from_service_a.recv().await.unwrap();
                 if let InternalServiceResponse::GroupMessageResponse(GroupMessageResponse {
-                    cid: _,
-                    group_key: _,
-                    success,
-                    request_id: _,
+                    delivery,
+                    ..
                 }) = &service_a_inbound
                 {
-                    if *success {
-                        info!(target: "citadel","Service A Successfully received Group Message Response");
-                    } else {
-                        panic!("Service A Group Message Response was unsuccessful");
-                    }
+                    // Both other members are online: the report names each as delivered.
+                    assert_delivered_to(delivery, vec![cid_b, cid_c]);
+                    info!(target: "citadel","Service A received the delivery report");
                 } else {
                     panic!("Service A Did Not Receive Message Response - instead received {service_a_inbound:?}");
                 }
@@ -1267,17 +1310,13 @@ mod tests {
                 }
                 let service_b_inbound = from_service_b.recv().await.unwrap();
                 if let InternalServiceResponse::GroupMessageResponse(GroupMessageResponse {
-                    cid: _,
-                    group_key: _,
-                    success,
-                    request_id: _,
+                    delivery,
+                    ..
                 }) = &service_b_inbound
                 {
-                    if *success {
-                        info!(target: "citadel","Service B Successfully received Group Message Response");
-                    } else {
-                        panic!("Service B Group Message Response was unsuccessful");
-                    }
+                    // Both other members are online: the report names each as delivered.
+                    assert_delivered_to(delivery, vec![cid_a, cid_c]);
+                    info!(target: "citadel","Service B received the delivery report");
                 } else {
                     panic!("Service B Did Not Receive Message Response - instead received {service_b_inbound:?}");
                 }

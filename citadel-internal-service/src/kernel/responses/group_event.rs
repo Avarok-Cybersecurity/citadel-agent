@@ -3,10 +3,9 @@ use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     GroupDisconnectNotification, GroupEndNotification, GroupInviteNotification,
-    GroupJoinRequestNotification, GroupLeaveNotification, GroupMemberStateChangeNotification,
-    GroupMembershipResponse, GroupMessageDroppedNotification, GroupMessageNotification,
-    GroupMessageResponse, GroupRequestJoinDeclineResponse, GroupRequestJoinPendingNotification,
-    InternalServiceResponse,
+    GroupJoinRequestNotification, GroupMemberStateChangeNotification, GroupMembershipResponse,
+    GroupMessageDroppedNotification, GroupMessageNotification, GroupRequestJoinDeclineResponse,
+    GroupRequestJoinPendingNotification, InternalServiceResponse,
 };
 use citadel_sdk::prelude::{GroupBroadcast, GroupEvent, MessageGroupKey, NetworkError, Ratchet};
 
@@ -39,7 +38,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
     let mut server_connection_map = server_connection_map.write();
     if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
+        // No channel gate: each of these answers this session's own request.
+        let answer = super::group_answers::answer(implicated_cid, &group_broadcast, None);
         let response = match group_broadcast {
+            _ if answer.is_some() => answer,
             GroupBroadcast::Invitation {
                 sender: peer_cid,
                 key: group_key,
@@ -110,26 +112,6 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 reason,
             } => Some(message_dropped(implicated_cid, key, sender, reason)),
 
-            // No channel gate either: the refusal answers this session's own send.
-            GroupBroadcast::MessageRefused { key, refusal } => Some(
-                super::group_refusal::message_refused(implicated_cid, key, refusal),
-            ),
-
-            GroupBroadcast::MessageResponse {
-                key: group_key,
-                success,
-            } => connection
-                .groups
-                .get_mut(&group_key)
-                .map(|_group_connection| {
-                    InternalServiceResponse::GroupMessageResponse(GroupMessageResponse {
-                        cid: implicated_cid,
-                        success,
-                        group_key,
-                        request_id: None,
-                    })
-                }),
-
             GroupBroadcast::MemberStateChanged {
                 key: group_key,
                 state,
@@ -142,19 +124,8 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 },
             )),
 
-            GroupBroadcast::LeaveRoomResponse {
-                key: group_key,
-                success,
-                message,
-            } => Some(InternalServiceResponse::GroupLeaveNotification(
-                GroupLeaveNotification {
-                    cid: implicated_cid,
-                    group_key,
-                    success,
-                    message,
-                    request_id: None,
-                },
-            )),
+            // Taken leaves are answered above (group_answers); a refused one is not reported.
+            GroupBroadcast::LeaveRoomResponse { .. } => None,
 
             GroupBroadcast::EndResponse {
                 key: group_key,
@@ -178,7 +149,10 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 ))
             }
 
-            GroupBroadcast::Disconnected { key: group_key } => {
+            GroupBroadcast::Disconnected {
+                key: group_key,
+                reason,
+            } => {
                 // Marked AFTER the membership question is answered: marking
                 // first would make `mark_departed` report false and suppress the
                 // notification the UI needs to clear the room.
@@ -187,6 +161,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                         GroupDisconnectNotification {
                             cid: implicated_cid,
                             group_key,
+                            reason,
                             request_id: None,
                         },
                     ),

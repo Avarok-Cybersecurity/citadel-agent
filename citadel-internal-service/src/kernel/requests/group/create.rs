@@ -72,8 +72,8 @@ pub(super) async fn create_with<T: IOInterface, R: Ratchet>(
                         conn.subscribers.clone(),
                         this.tx_to_localhost_clients.clone(),
                     );
-                    let departed = conn.groups.departure_flag(&key);
-                    spawn_group_channel_receiver(key, cid, route, departed, rx);
+                    let state = conn.groups.channel_state(&key);
+                    spawn_group_channel_receiver(key, cid, route, state, rx);
 
                     InternalServiceResponse::GroupCreateSuccess(GroupCreateSuccess {
                         cid,

@@ -4,8 +4,6 @@ use async_recursion::async_recursion;
 use citadel_internal_service_types::*;
 use citadel_sdk::logging::info;
 use citadel_sdk::logging::tracing::log;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
 
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_sdk::prelude::*;
@@ -496,7 +494,7 @@ pub(crate) fn spawn_group_channel_receiver(
     // of them left the membership check passing after the group had ended --
     // the end-to-end test in tests/group_stale_membership.rs caught exactly
     // that, with the notification delivered and the entry still live.
-    departed: Option<Arc<AtomicBool>>,
+    state: Option<crate::kernel::group_sends::ChannelState>,
     mut rx: GroupChannelRecvHalf,
 ) {
     // Handler/Receiver for Group Channel Broadcasts that aren't handled in on_node_event_received in Kernel
@@ -540,8 +538,10 @@ pub(crate) fn spawn_group_channel_receiver(
                             }
                             GroupBroadcast::EndResponse { key, success } => {
                                 if success {
-                                    if let Some(departed) = departed.as_ref() {
-                                        departed.store(true, std::sync::atomic::Ordering::SeqCst);
+                                    if let Some(state) = state.as_ref() {
+                                        state
+                                            .departed
+                                            .store(true, std::sync::atomic::Ordering::SeqCst);
                                     }
                                 }
                                 Some(InternalServiceResponse::GroupEndNotification(
@@ -553,14 +553,17 @@ pub(crate) fn spawn_group_channel_receiver(
                                     },
                                 ))
                             }
-                            GroupBroadcast::Disconnected { key } => {
-                                if let Some(departed) = departed.as_ref() {
-                                    departed.store(true, std::sync::atomic::Ordering::SeqCst);
+                            GroupBroadcast::Disconnected { key, reason } => {
+                                if let Some(state) = state.as_ref() {
+                                    state
+                                        .departed
+                                        .store(true, std::sync::atomic::Ordering::SeqCst);
                                 }
                                 Some(InternalServiceResponse::GroupDisconnectNotification(
                                     GroupDisconnectNotification {
                                         cid: implicated_cid,
                                         group_key: key,
+                                        reason,
                                         request_id: None,
                                     },
                                 ))
@@ -575,22 +578,29 @@ pub(crate) fn spawn_group_channel_receiver(
                                 sender,
                                 reason,
                             )),
-                            GroupBroadcast::MessageRefused { key, refusal } => {
-                                Some(crate::kernel::responses::group_refusal::message_refused(
+                            ref answered @ (GroupBroadcast::MessageRefused { .. }
+                            | GroupBroadcast::MessageResponse { .. }) => {
+                                // Each answers the oldest of this channel's unanswered sends.
+                                let request_id = match state.as_ref() {
+                                    Some(state) => state.sends.answered().await,
+                                    None => None,
+                                };
+                                crate::kernel::responses::group_answers::answer(
                                     implicated_cid,
-                                    key,
-                                    refusal,
-                                ))
+                                    answered,
+                                    request_id,
+                                )
                             }
-                            GroupBroadcast::MessageResponse { key, success } => {
-                                Some(InternalServiceResponse::GroupMessageResponse(
-                                    GroupMessageResponse {
-                                        cid: implicated_cid,
-                                        group_key: key,
-                                        success,
-                                        request_id: None,
-                                    },
-                                ))
+                            ref answered @ (GroupBroadcast::OwnershipTransferred { .. }
+                            | GroupBroadcast::Restored { .. }
+                            | GroupBroadcast::LeaveRoomResponse { .. }
+                            | GroupBroadcast::KickResponse { .. }
+                            | GroupBroadcast::AddResponse { .. }) => {
+                                crate::kernel::responses::group_answers::answer(
+                                    implicated_cid,
+                                    answered,
+                                    None,
+                                )
                             }
                             // GroupBroadcast::Create { .. } => {},
                             // GroupBroadcast::LeaveRoom { .. } => {},

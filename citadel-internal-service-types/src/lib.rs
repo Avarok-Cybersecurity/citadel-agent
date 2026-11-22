@@ -19,6 +19,7 @@ use ts_rs::TS;
 mod chat_level;
 mod conversation;
 mod conversation_api;
+mod group_delivery;
 mod group_drop;
 mod group_refusal;
 mod group_responses;
@@ -74,7 +75,11 @@ pub use conversation_api::{
     NotificationPreview, PeerRetention, Retention,
 };
 pub use group_drop::GroupMessageDroppedNotification;
-pub use group_refusal::{GroupMessageRefusalReason, GroupMessageRefusedNotification};
+pub use group_delivery::{
+    GroupMessageResponse, GroupOwnershipTransferredNotification, GroupRestoredNotification,
+    JoinedGroupOwner,
+};
+pub use group_refusal::GroupMessageRefusedNotification;
 pub use multi_window::{
     AgentCapabilities, AttachProof, ClientCapabilities, SendReliableAccepted, SessionAttached,
     SessionRole, SessionRoleNotification,
@@ -1213,6 +1218,8 @@ pub enum InternalServiceResponse {
     GroupMessageDroppedNotification(GroupMessageDroppedNotification),
     GroupMessageRefusedNotification(GroupMessageRefusedNotification),
     GroupMessageResponse(GroupMessageResponse),
+    GroupOwnershipTransferredNotification(GroupOwnershipTransferredNotification),
+    GroupRestoredNotification(GroupRestoredNotification),
     GroupMessageSuccess(GroupMessageSuccess),
     GroupMessageFailure(GroupMessageFailure),
     GroupInviteNotification(GroupInviteNotification),

@@ -9,6 +9,7 @@
 //! retires the old root and re-keys every indexed object (index.rs, rekey.rs, node.rs).
 
 mod account;
+mod dialing;
 pub(crate) mod hooks;
 pub(crate) mod index;
 mod node;
@@ -20,6 +21,7 @@ mod usage;
 mod vault;
 
 pub(crate) use account::{Adopt, NO_ROOT};
+pub(crate) use dialing::Dialing;
 pub(crate) use node::resume;
 pub(crate) use usage::UseToken;
 /// Why a store, pull or delete is refused while the account is re-keyed: try again after.
@@ -168,14 +170,21 @@ pub(crate) fn begin_use(vault: Option<&Vault>, cid: u64) -> Result<Option<UseTok
     vault.map(|vault| vault.accounts.begin_use(cid)).transpose()
 }
 
-/// The node's key source: the key of each recorded session, none for any other account.
+/// The node's key source: the key of each recorded session, or of a session being dialled
+/// (`dialing`), none for any other account.
 pub(crate) fn key_source<R: Ratchet>(
     sessions: Arc<RwLock<HashMap<u64, Connection<R>>>>,
+    dialing: Dialing,
 ) -> impl RevfsKeySource + 'static {
     move |cid: u64| {
-        sessions
+        let recorded = sessions
             .read()
             .get(&cid)
-            .map(|session| session.revfs_key.clone())
+            .map(|session| session.revfs_key.clone());
+        recorded.or_else(|| dialing.key(cid))
     }
 }
+
+#[cfg(test)]
+#[path = "key_source_tests.rs"]
+mod key_source_tests;

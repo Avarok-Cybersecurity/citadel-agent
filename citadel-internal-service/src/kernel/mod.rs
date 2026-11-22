@@ -44,6 +44,7 @@ mod conversations_io;
 pub(crate) mod credential_fingerprint;
 pub(crate) mod ext;
 pub(crate) mod group_channels;
+pub(crate) mod group_sends;
 pub mod identity;
 pub(crate) mod ilm;
 mod inbound_connect;
@@ -167,6 +168,9 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     /// The vault each account's RE-VFS seed is sealed under (kernel/revfs_seed), set with the
     /// node's key source; unset, every Connect is refused.
     pub(crate) revfs_vault: Arc<std::sync::OnceLock<revfs_seed::Vault>>,
+    /// The RE-VFS keys of sessions being dialled, which the node's key source answers with
+    /// until the session is recorded (kernel/revfs_seed/dialing.rs).
+    pub(crate) revfs_dialing: revfs_seed::Dialing,
     /// The identity key each account pinned for each peer (kernel/p2p_kex), set with the node's
     /// key-exchange identity; unset, no peer has a pin and every exchange is unsigned.
     pub(crate) p2p_kex_pins: Arc<std::sync::OnceLock<Arc<p2p_kex::pins::PeerKeyPins>>>,
@@ -204,6 +208,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             identity: self.identity.clone(),
             app_sessions: self.app_sessions.clone(),
             revfs_vault: self.revfs_vault.clone(),
+            revfs_dialing: self.revfs_dialing.clone(),
             p2p_kex_pins: self.p2p_kex_pins.clone(),
             io: self.io.clone(),
         }
@@ -250,6 +255,7 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             identity: None,
             app_sessions: None,
             revfs_vault: Default::default(),
+            revfs_dialing: Default::default(),
             p2p_kex_pins: Default::default(),
             io: Arc::new(RwLock::new(Some(io))),
         }
@@ -302,7 +308,10 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
         self.revfs_vault
             .set(revfs_seed::Vault::new(vault))
             .map_err(|_| "this service already has a RE-VFS vault".to_string())?;
-        Ok(revfs_seed::key_source(self.server_connection_map.clone()))
+        Ok(revfs_seed::key_source(
+            self.server_connection_map.clone(),
+            self.revfs_dialing.clone(),
+        ))
     }
 
     /// The node's P2P key-exchange identity (`NodeBuilder::with_p2p_kex_identity`): each

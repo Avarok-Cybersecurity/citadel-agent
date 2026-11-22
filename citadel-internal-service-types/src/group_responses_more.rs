@@ -3,6 +3,7 @@
 use crate::{MemberState, MessageGroupKey};
 use custom_debug::Debug;
 use serde::{Deserialize, Serialize};
+use crate::JoinedGroupOwner;
 use uuid::Uuid;
 
 #[cfg(feature = "typescript")]
@@ -50,6 +51,10 @@ pub struct GroupDisconnectNotification {
     pub cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
+    /// Why the group ended for this member: closed by its owner, this member removed, or a
+    /// command hierarchy whose owner left.
+    #[cfg_attr(feature = "typescript", ts(type = "GroupEndReason"))]
+    pub reason: citadel_types::proto::GroupEndReason,
     pub request_id: Option<Uuid>,
 }
 
@@ -114,6 +119,9 @@ pub struct GroupListJoinedSuccess {
     /// Invitations this session has not answered, kept by the agent so one sent while no tab
     /// was open is still shown.
     pub pending_invites: Vec<PendingGroupInvite>,
+    /// Who owns each listed group, as the server last reported it: its creator (`group_key.cid`)
+    /// until the owner leaves, then its successor.
+    pub owners: Vec<JoinedGroupOwner>,
 }
 
 /// An invitation to a group, still unanswered: who asked, and which group.

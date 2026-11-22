@@ -26,8 +26,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             connection.subscribers.clone(),
             this.tx_to_localhost_clients.clone(),
         );
-        let departed = connection.groups.departure_flag(&key);
-        requests::spawn_group_channel_receiver(key, cid, route.clone(), departed, rx);
+        let state = connection.groups.channel_state(&key);
+        requests::spawn_group_channel_receiver(key, cid, route.clone(), state, rx);
 
         drop(server_connection_map);
         route.send(InternalServiceResponse::GroupChannelCreateSuccess(

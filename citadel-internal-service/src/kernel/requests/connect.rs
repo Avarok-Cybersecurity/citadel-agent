@@ -309,6 +309,14 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         },
     );
 
+    // The server prompts the session to restore its groups as soon as the sign-in succeeds,
+    // before the session is recorded: the node's key source answers with this key until then.
+    let dialled_cid = remote
+        .account_manager()
+        .get_persistence_handler()
+        .get_cid_by_username(&username);
+    let _dialing = this.revfs_dialing.publish(dialled_cid, revfs_key.clone());
+
     // Proceed with new connection (no existing session or stale session was cleaned)
     match remote
         .connect(

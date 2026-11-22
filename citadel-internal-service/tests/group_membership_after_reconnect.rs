@@ -15,17 +15,10 @@
 //! `GroupChannelCreateSuccess` with no `request_id`. Nobody calls anything
 //! group-related.
 //!
-//! A message the new session receives before its key arrives is no longer
-//! dropped in silence: the SDK reports `GroupBroadcast::MessageDropped`, and the
-//! agent passes it to the UI as `GroupMessageDroppedNotification`.
-//!
-//! The dropped-message test holds the owner away while the member returns. Its rejoin then waits on
-//! an owner who is not there, so the member is keyless for as long as the owner
-//! stays away, and a third member's message reaches it unreadable by construction.
-//! It used to have the owner flood the group and hope a send fell between the
-//! member's connect and its Welcome. That window is a few milliseconds -- one
-//! KeyPackage round trip through the owner -- and on a fast machine no send landed
-//! in it two runs in ten: 27,009 readable messages, no drop, a 60s timeout.
+//! A member keeps its group state in its account store, so a returning session
+//! resumes it (`ResumeMembership`) instead of waiting for the owner to re-add it:
+//! the second test holds the owner away while the member returns, and a third
+//! member's message must still be read.
 
 use citadel_internal_service_test_common as common;
 
@@ -40,7 +33,6 @@ mod tests {
     use crate::common::{
         server_info_skip_cert_verification, sessions_on_one_service_reaching, setup_log,
     };
-    use citadel_internal_service_types::InternalServiceResponse;
     use citadel_sdk::prelude::StackedRatchet;
     use std::error::Error;
 
@@ -88,9 +80,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_message_the_new_session_cannot_read_reaches_the_ui_as_dropped(
-    ) -> Result<(), Box<dyn Error>> {
-        let tag = "groupdropped";
+    async fn a_member_back_while_its_owner_is_away_reads_the_group() -> Result<(), Box<dyn Error>> {
+        let tag = "groupresumed";
         setup_log();
         let (server, server_addr) = server_info_skip_cert_verification::<StackedRatchet>();
         drop(tokio::spawn(server));
@@ -106,8 +97,8 @@ mod tests {
         accept_invitation(&member.0, &mut member.1, member.2, group_key).await?;
         accept_invitation(&talker.0, &mut talker.1, talker.2, group_key).await?;
 
-        // Only the owner can re-add a returning member. With it away the group is held,
-        // and the member's rejoin cannot complete, so its new session has no key.
+        // Only the owner can re-add a member that kept nothing. With it away, the member must
+        // resume the group state it kept to read anything.
         sign_out(&owner.0, &mut owner.1, owner.2).await?;
         sign_out(&member.0, &mut member.1, member.2).await?;
         let (_new_tx, mut new_rx) = sign_in_again(
@@ -118,23 +109,16 @@ mod tests {
             member.2,
         )
         .await?;
-
-        send_group_message(&talker.0, talker.2, group_key, b"unreadable");
-        let dropped = recv_until(&mut new_rx, "GroupMessageDroppedNotification", |r| {
-            matches!(
-                r,
-                InternalServiceResponse::GroupMessageDroppedNotification(_)
-            )
+        let _ = recv_until(&mut new_rx, "the resumed group's channel", |r| {
+            rejoined(r, member.2, group_key)
         })
         .await;
-        let InternalServiceResponse::GroupMessageDroppedNotification(dropped) = dropped else {
-            unreachable!()
-        };
-        assert_eq!(dropped.cid, member.2, "reported to the session it was for");
-        assert_eq!(dropped.group_key, group_key);
-        assert_eq!(dropped.sender, talker.2, "names who sent it");
-        assert!(!dropped.reason.is_empty(), "says why");
-        assert_eq!(dropped.request_id, None, "it answers no request");
+
+        send_group_message(&talker.0, talker.2, group_key, b"readable");
+        let read = group_message_arrives(&mut new_rx, b"readable")
+            .await
+            .ok_or("the member resumed but could not read the group with its owner away")?;
+        assert_eq!((read.cid, read.peer_cid), (member.2, talker.2));
         Ok(())
     }
 }

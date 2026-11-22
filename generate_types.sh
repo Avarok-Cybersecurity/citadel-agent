@@ -79,7 +79,7 @@ fi
 # ts-rs generates type references (e.g., connect_mode: ConnectMode) via #[ts(type = "...")]
 # but does NOT generate the import statements for external packages.
 echo "🔧 Fixing @avarok/citadel-protocol-types imports in generated files..."
-PROTOCOL_TYPES=("ConnectMode" "UdpMode" "SessionSecuritySettings" "SecurityLevel" "TransferType" "ObjectId" "PreSharedKey" "MessageGroupKey" "UserIdentifier" "VirtualObjectMetadata" "ObjectTransferStatus" "MemberState")
+PROTOCOL_TYPES=("ConnectMode" "UdpMode" "SessionSecuritySettings" "SecurityLevel" "TransferType" "ObjectId" "PreSharedKey" "MessageGroupKey" "UserIdentifier" "VirtualObjectMetadata" "ObjectTransferStatus" "MemberState" "GroupDelivery" "GroupMessageRefusal" "GroupEndReason" "GroupStateSource")
 
 for ts_file in *.ts; do
     [ "$ts_file" = "index.ts" ] && continue
@@ -141,7 +141,7 @@ echo "📦 Creating index.ts file for convenient imports..."
   # heredoc contained something the directory does not.
   echo "// Re-export protocol types used in InternalServiceRequest fields."
   echo "// From an external package, so not derivable from this directory."
-  echo "export type { ConnectMode, UdpMode, SessionSecuritySettings, SecurityLevel, TransferType, ObjectId, PreSharedKey, MessageGroupKey, UserIdentifier } from '@avarok/citadel-protocol-types';"
+  echo "export type { ConnectMode, UdpMode, SessionSecuritySettings, SecurityLevel, TransferType, ObjectId, PreSharedKey, MessageGroupKey, UserIdentifier, GroupDelivery, NotDelivered, NotRelayed, GroupMessageRefusal, GroupEndReason, GroupStateSource } from '@avarok/citadel-protocol-types';"
 } > index.ts
 
 generated_count=$(ls *.ts | grep -v '^index\.ts$' | wc -l | tr -d ' ')

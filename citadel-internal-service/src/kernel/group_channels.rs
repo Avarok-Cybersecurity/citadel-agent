@@ -31,12 +31,15 @@
 //! `responses/group_event.rs`, which would need to call into this map to
 //! expire the entry; entries for such groups remain stale until session end.
 
+use citadel_internal_service_types::JoinedGroupOwner;
 use citadel_sdk::prelude::{GroupChannelSendHalf, MessageGroupKey, NetworkError, SecBuffer};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use super::group_sends::{ChannelState, PendingSends};
 use super::GroupConnection;
+use uuid::Uuid;
 
 /// A group channel the session believes it is still a member of. Produced by
 /// [`GroupChannels::insert`] from the `GroupConnection` the SDK handed us.
@@ -56,6 +59,7 @@ pub struct ActiveGroupChannel {
 pub struct GroupTx {
     inner: GroupChannelSendHalf,
     departed: Arc<AtomicBool>,
+    sends: Arc<PendingSends>,
 }
 
 impl GroupTx {
@@ -73,9 +77,16 @@ impl GroupTx {
         }
     }
 
-    pub(crate) async fn send_message(&self, message: SecBuffer) -> Result<(), NetworkError> {
+    /// Sends `message`, queued under `request_id` for the server's answer (kernel/group_sends.rs).
+    pub(crate) async fn send_message(
+        &self,
+        message: SecBuffer,
+        request_id: Uuid,
+    ) -> Result<(), NetworkError> {
         self.reject_if_departed("message group")?;
-        self.inner.send_message(message).await
+        self.sends
+            .send(request_id, self.inner.send_message(message))
+            .await
     }
 
     pub(crate) async fn invite(&self, peer_cid: u64) -> Result<(), NetworkError> {
@@ -135,6 +146,7 @@ impl GroupChannels {
                 tx: GroupTx {
                     inner: tx,
                     departed: Arc::new(AtomicBool::new(false)),
+                    sends: Default::default(),
                 },
             },
         );
@@ -153,18 +165,35 @@ impl GroupChannels {
         keys
     }
 
+    /// Who owns each listed group, as the server last reported it to its channel.
+    pub(crate) fn owners(&self, keys: &[MessageGroupKey]) -> Vec<JoinedGroupOwner> {
+        keys.iter()
+            .filter_map(|key| {
+                let owner = self.get(key)?.tx.inner.owner()?;
+                Some(JoinedGroupOwner {
+                    group_key: *key,
+                    owner,
+                })
+            })
+            .collect()
+    }
+
     pub(crate) fn get(&self, key: &MessageGroupKey) -> Option<&ActiveGroupChannel> {
         self.inner.get(key).filter(|entry| !entry.tx.departed())
     }
 
-    /// The departure flag for a group, so a long-lived task can set it without
+    /// The departure flag and send queue of a group, so a long-lived task can use them without
     /// holding the connection map.
     ///
     /// `spawn_group_channel_receiver` is the OTHER path a `Disconnected` /
     /// `EndResponse` broadcast takes to the client, and it has no access to
-    /// `Connection`. Handing it the flag is what makes the two paths agree.
-    pub(crate) fn departure_flag(&self, key: &MessageGroupKey) -> Option<Arc<AtomicBool>> {
-        self.inner.get(key).map(|entry| entry.tx.departed.clone())
+    /// `Connection`. Handing it the flag is what makes the two paths agree; the
+    /// queue is how it names the request each delivery report answers.
+    pub(crate) fn channel_state(&self, key: &MessageGroupKey) -> Option<ChannelState> {
+        self.inner.get(key).map(|entry| ChannelState {
+            departed: entry.tx.departed.clone(),
+            sends: entry.tx.sends.clone(),
+        })
     }
 
     /// Record that this session is no longer in the group, on the strength of
@@ -186,6 +215,12 @@ impl GroupChannels {
             }
             _ => false,
         }
+    }
+
+    /// Whether this session has left the group or been put out of it. A group it holds no channel
+    /// for is not one it left: dropping a channel keeps the membership.
+    pub(crate) fn has_left(&self, key: &MessageGroupKey) -> bool {
+        self.inner.get(key).is_some_and(|entry| entry.tx.departed())
     }
 
     pub(crate) fn get_mut(&mut self, key: &MessageGroupKey) -> Option<&mut ActiveGroupChannel> {

@@ -4,7 +4,7 @@ use crate::group::{recv_until, send_group_message, GROUP_MESSAGE_ARRIVES};
 use citadel_internal_service_types::{
     GroupMessageNotification, InternalServiceRequest, InternalServiceResponse,
 };
-use citadel_sdk::prelude::MessageGroupKey;
+use citadel_sdk::prelude::{GroupDelivery, MessageGroupKey};
 use std::error::Error;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -124,4 +124,45 @@ pub async fn send_until_received(
     })
     .await
     .ok()
+}
+
+/// Sends `{prefix}-N` until the server reports one held for `away` (`stored`), and returns that
+/// message. Each report must name the send it answers. Sends until one is held: a sign-out is answered before the server has ended the session, so the first sends
+/// can still be delivered to it live.
+pub async fn send_until_held_for(
+    tx: &UnboundedSender<InternalServiceRequest>,
+    rx: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid: u64,
+    group_key: MessageGroupKey,
+    away: u64,
+    prefix: &str,
+) -> Vec<u8> {
+    for n in 0..20u32 {
+        let text = format!("{prefix}-{n}").into_bytes();
+        let request_id = Uuid::new_v4();
+        tx.send(InternalServiceRequest::GroupMessage {
+            cid,
+            message: text.clone(),
+            group_key,
+            request_id,
+        })
+        .expect("service channel open");
+        // Reports of earlier sends may still be queued; this one names its own.
+        let report = recv_until(rx, "the delivery report of this send", |r| {
+            matches!(r, InternalServiceResponse::GroupMessageResponse(report)
+                if report.request_id == Some(request_id))
+        })
+        .await;
+        let InternalServiceResponse::GroupMessageResponse(report) = report else {
+            unreachable!()
+        };
+        match report.delivery {
+            GroupDelivery::Relayed { stored, .. } if stored == [away] => return text,
+            GroupDelivery::Relayed { delivered, .. } if delivered == [away] => {
+                tokio::time::sleep(Duration::from_millis(250)).await
+            }
+            other => panic!("{prefix}-{n} was neither held for {away} nor sent to it: {other:?}"),
+        }
+    }
+    panic!("the server never held a message for {away}: it still counts it as signed in")
 }

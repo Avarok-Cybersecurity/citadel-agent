@@ -6,10 +6,11 @@
 //! inserts the `Connection` only after several further awaits (username, server
 //! address, host, credential fingerprint), so the event can win that race.
 //!
-//! Handling it against an empty map is not a harmless miss: the channel is dropped,
-//! and dropping a `GroupChannelRecvHalf` sends `LeaveRoom` over the live session, which
-//! removes the member from the group for real. So such an event waits, bounded, for its
-//! session to be mapped instead of being handled against nothing.
+//! Handling it against an empty map is not a harmless miss: the channel would be let go
+//! and the window never told the group is back, so the member could not send to it until
+//! its next sign-in (it stays in the group: dropping a channel sends nothing). So such an
+//! event waits, bounded, for its session to be mapped instead of being handled against
+//! nothing.
 
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;

@@ -164,18 +164,6 @@ pub struct GroupMessageSuccess {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
-pub struct GroupMessageResponse {
-    #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
-    pub cid: u64,
-    #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
-    pub group_key: MessageGroupKey,
-    pub success: bool,
-    pub request_id: Option<Uuid>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
 pub struct GroupMessageFailure {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,

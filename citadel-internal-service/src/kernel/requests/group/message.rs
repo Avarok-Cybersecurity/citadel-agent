@@ -35,7 +35,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     }; // Lock dropped here - BEFORE any await
 
     let response = match group_sender_result {
-        Ok(group_sender) => match group_sender.send_message(message.into()).await {
+        Ok(group_sender) => match group_sender.send_message(message.into(), request_id).await {
             Ok(_) => InternalServiceResponse::GroupMessageSuccess(GroupMessageSuccess {
                 cid,
                 group_key,

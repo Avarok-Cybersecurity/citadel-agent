@@ -30,16 +30,18 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         .map(|connection| {
             let groups = connection.groups.keys();
             let pending_invites = connection.pending_group_invites.unanswered(&groups);
-            (groups, pending_invites)
+            let owners = connection.groups.owners(&groups);
+            (groups, pending_invites, owners)
         });
 
     let response = match listed {
-        Some((groups, pending_invites)) => {
+        Some((groups, pending_invites, owners)) => {
             InternalServiceResponse::GroupListJoinedSuccess(GroupListJoinedSuccess {
                 cid,
                 groups,
                 request_id: Some(request_id),
                 pending_invites,
+                owners,
             })
         }
         None => InternalServiceResponse::GroupListJoinedFailure(GroupListJoinedFailure {

@@ -94,8 +94,8 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                                         connection.subscribers.clone(),
                                         this.tx_to_localhost_clients.clone(),
                                     );
-                                    let departed = connection.groups.departure_flag(&key);
-                                    spawn_group_channel_receiver(key, cid, route, departed, rx);
+                                    let state = connection.groups.channel_state(&key);
+                                    spawn_group_channel_receiver(key, cid, route, state, rx);
 
                                     true
                                 } else {

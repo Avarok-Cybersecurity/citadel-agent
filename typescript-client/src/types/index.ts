@@ -101,10 +101,10 @@ export * from './GroupMembershipResponse.js';
 export * from './GroupMessageDroppedNotification.js';
 export * from './GroupMessageFailure.js';
 export * from './GroupMessageNotification.js';
-export * from './GroupMessageRefusalReason.js';
 export * from './GroupMessageRefusedNotification.js';
 export * from './GroupMessageResponse.js';
 export * from './GroupMessageSuccess.js';
+export * from './GroupOwnershipTransferredNotification.js';
 export * from './GroupRequestJoinAcceptResponse.js';
 export * from './GroupRequestJoinDeclineResponse.js';
 export * from './GroupRequestJoinFailure.js';
@@ -112,6 +112,7 @@ export * from './GroupRequestJoinPendingNotification.js';
 export * from './GroupRequestJoinSuccess.js';
 export * from './GroupRespondRequestFailure.js';
 export * from './GroupRespondRequestSuccess.js';
+export * from './GroupRestoredNotification.js';
 export * from './IceServer.js';
 export * from './IdentityDiscovery.js';
 export * from './IdentityFailure.js';
@@ -126,6 +127,7 @@ export * from './IhttpSendRefusal.js';
 export * from './InternalServicePayload.js';
 export * from './InternalServiceRequest.js';
 export * from './InternalServiceResponse.js';
+export * from './JoinedGroupOwner.js';
 export * from './ListAllPeersFailure.js';
 export * from './ListAllPeersResponse.js';
 export * from './ListRegisteredPeersFailure.js';
@@ -236,4 +238,4 @@ export * from './UpdateStatus.js';
 
 // Re-export protocol types used in InternalServiceRequest fields.
 // From an external package, so not derivable from this directory.
-export type { ConnectMode, UdpMode, SessionSecuritySettings, SecurityLevel, TransferType, ObjectId, PreSharedKey, MessageGroupKey, UserIdentifier } from '@avarok/citadel-protocol-types';
+export type { ConnectMode, UdpMode, SessionSecuritySettings, SecurityLevel, TransferType, ObjectId, PreSharedKey, MessageGroupKey, UserIdentifier, GroupDelivery, NotDelivered, NotRelayed, GroupMessageRefusal, GroupEndReason, GroupStateSource } from '@avarok/citadel-protocol-types';

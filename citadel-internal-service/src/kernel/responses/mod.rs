@@ -9,9 +9,10 @@ mod object_transfer_handle;
 mod path_outcome;
 mod peer_channel_created;
 
+pub(crate) mod group_answers;
 mod group_channel_created;
 pub(crate) mod group_event;
-pub(crate) mod group_refusal;
+mod group_heard;
 mod peer_event;
 
 pub async fn handle_node_result<T: IOInterface + Sync, R: Ratchet>(
@@ -32,7 +33,7 @@ pub async fn handle_node_result<T: IOInterface + Sync, R: Ratchet>(
                 "GroupChannelCreated",
                 group_channel_created,
                 |this, created| async move { group_channel_created::handle(&this, created).await },
-                |created| group_channel_created::park(created.channel),
+                |created| group_channel_created::release(created.channel),
             )
             .await;
         }

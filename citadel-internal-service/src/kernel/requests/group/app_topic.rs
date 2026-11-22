@@ -19,9 +19,11 @@ use uuid::Uuid;
 
 /// What a `Flat` group's application message adds to its plaintext on the way to the server,
 /// which caps the bytes it relays: citadel_treekem's `AppCiphertext` in the SDK's fixed-int
-/// bincode (epoch u64, sender u32, generation u32, the ciphertext's u64 length) and the
-/// ChaCha20-Poly1305 tag (16).
-pub const FLAT_CIPHERTEXT_OVERHEAD: u32 = 8 + 4 + 4 + 8 + 16;
+/// bincode (epoch u64, sender u32, incarnation u64, generation u32, the ciphertext's u64 length,
+/// the signature's u64 length), the ChaCha20-Poly1305 tag (16) and the sender leaf's ML-DSA-65
+/// signature (3309). The test below holds it to a real message's length.
+pub const FLAT_CIPHERTEXT_OVERHEAD: u32 = 8 + 4 + 8 + 4 + 8 + 8 + 16 + ML_DSA_65_SIGNATURE;
+const ML_DSA_65_SIGNATURE: u32 = 3309;
 
 /// The relayed bytes of a topic message whose body is `max_msg_bytes`: the manifest counts the
 /// body, the server the ciphertext of its envelope.
@@ -65,6 +67,8 @@ pub fn app_topic_group_options(
         hierarchy: GroupHierarchyMode::Flat,
         ephemeral: true,
         limits: Some(limits),
+        // Ephemeral: nothing is held for an absent member, so there is no backlog to age out.
+        retention: None,
     })
 }
 

@@ -61,9 +61,9 @@ pub(crate) fn begin<R: Ratchet>(
             conn.link = LinkState::Reconnecting;
             conn.handoff.next_generation();
             let lost_peers = lost_peers::take(&mut conn.peers);
-            // Only the send halves live here, and dropping one sends nothing. The recv
-            // half, whose drop sends `LeaveRoom`, is owned by its receiver task and ends
-            // with the dead session, so the server still lists this session's groups:
+            // Only the send halves live here, and dropping a channel sends nothing: the
+            // member stays in every group (leaving is only `leave()`, in
+            // requests/group/leave.rs), so the server still lists this session's groups:
             // it prompts the new session to rejoin those it joined and to re-found those
             // it owns, and `responses/group_channel_created.rs` adopts the channel each
             // one opens into this same (never removed) entry.

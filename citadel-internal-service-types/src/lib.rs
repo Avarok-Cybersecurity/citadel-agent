@@ -74,11 +74,11 @@ pub use conversation_api::{
     ConversationFailure, ConversationListResponse, ConversationPageResponse, ConversationUpdated,
     NotificationPreview, PeerRetention, Retention,
 };
-pub use group_drop::GroupMessageDroppedNotification;
 pub use group_delivery::{
     GroupMessageResponse, GroupOwnershipTransferredNotification, GroupRestoredNotification,
     JoinedGroupOwner,
 };
+pub use group_drop::GroupMessageDroppedNotification;
 pub use group_refusal::GroupMessageRefusedNotification;
 pub use multi_window::{
     AgentCapabilities, AttachProof, ClientCapabilities, SendReliableAccepted, SessionAttached,

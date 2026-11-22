@@ -5,8 +5,8 @@
 //! The report is the SDK's own `GroupDelivery`, carried as it is: its TypeScript comes from
 //! `@avarok/citadel-protocol-types`, so no copy of it lives here.
 
-use citadel_types::proto::{GroupDelivery, GroupStateSource};
 use citadel_types::prelude::MessageGroupKey;
+use citadel_types::proto::{GroupDelivery, GroupStateSource};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

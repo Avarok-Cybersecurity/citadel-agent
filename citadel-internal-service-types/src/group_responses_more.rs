@@ -1,9 +1,9 @@
 //! Responses and notifications for peer groups, continued.
 
+use crate::JoinedGroupOwner;
 use crate::{MemberState, MessageGroupKey};
 use custom_debug::Debug;
 use serde::{Deserialize, Serialize};
-use crate::JoinedGroupOwner;
 use uuid::Uuid;
 
 #[cfg(feature = "typescript")]

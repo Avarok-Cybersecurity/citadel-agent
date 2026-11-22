@@ -214,3 +214,24 @@ jobs:
         run: |
           cd ci
           docker compose -f docker-compose.test.yml down -v --remove-orphans
+  # Branch protection can require ONE name that is true only when every job above succeeded. Seven
+  # per-job names drifted once ("tests (ubuntu-latest)" after the matrix moved to ubuntu-24.04) and
+  # blocked a merge with every check green; a job skipped by an earlier failure also reads as
+  # passing to a per-job rule. This aggregate does neither. The parent's required-checks.json names it.
+  all-checks:
+    name: All checks
+    if: always()
+    needs: [tests, fork-safety, clippy, fmt, typescript-bindings-fresh, persisted-formats-append-only, typescript-integration]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -eu
+          bad=$(printf '%s' "$RESULTS" | jq -r 'to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"')
+          total=$(printf '%s' "$RESULTS" | jq 'length')
+          [ "$total" -gt 0 ] || { echo "::error::needs is empty; this aggregate judged nothing"; exit 1; }
+          [ -z "$bad" ] || { echo "::error::not every job succeeded: $(echo "$bad" | tr '\n' ' ')"; exit 1; }
+          echo "all $total jobs succeeded"

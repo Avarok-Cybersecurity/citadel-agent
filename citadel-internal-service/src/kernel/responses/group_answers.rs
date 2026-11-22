@@ -55,8 +55,7 @@ pub(crate) fn answer(
                 },
             ),
         ),
-        // A refused leave is the server's answer to the LeaveRoom the SDK sends when the channel
-        // of a group already left is dropped: the session is not in the group either way.
+        // A refused leave (the session is not in the group) is not reported.
         GroupBroadcast::LeaveRoomResponse {
             key,
             success: true,

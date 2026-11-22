@@ -2,10 +2,9 @@ use crate::kernel::session_route::SessionRoute;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    GroupDisconnectNotification, GroupEndNotification, GroupInviteNotification,
-    GroupJoinRequestNotification, GroupMemberStateChangeNotification, GroupMembershipResponse,
-    GroupMessageDroppedNotification, GroupMessageNotification, GroupRequestJoinDeclineResponse,
-    GroupRequestJoinPendingNotification, InternalServiceResponse,
+    GroupEndNotification, GroupInviteNotification, GroupJoinRequestNotification,
+    GroupMemberStateChangeNotification, GroupMembershipResponse, GroupMessageDroppedNotification,
+    GroupRequestJoinDeclineResponse, GroupRequestJoinPendingNotification, InternalServiceResponse,
 };
 use citadel_sdk::prelude::{GroupBroadcast, GroupEvent, MessageGroupKey, NetworkError, Ratchet};
 
@@ -91,18 +90,13 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 sender: peer_cid,
                 key: group_key,
                 message,
-            } => connection
-                .groups
-                .get_mut(&group_key)
-                .map(|_group_connection| {
-                    InternalServiceResponse::GroupMessageNotification(GroupMessageNotification {
-                        cid: implicated_cid,
-                        peer_cid,
-                        message: message.into_buffer().into(),
-                        group_key,
-                        request_id: None,
-                    })
-                }),
+            } => super::group_heard::message(
+                &connection.groups,
+                implicated_cid,
+                group_key,
+                peer_cid,
+                message.into_buffer().into(),
+            ),
 
             // No channel gate: the usual reason this session could not read the message
             // is that it holds no channel (no key) for the group yet.
@@ -152,21 +146,12 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             GroupBroadcast::Disconnected {
                 key: group_key,
                 reason,
-            } => {
-                // Marked AFTER the membership question is answered: marking
-                // first would make `mark_departed` report false and suppress the
-                // notification the UI needs to clear the room.
-                connection.groups.mark_departed(&group_key).then_some(
-                    InternalServiceResponse::GroupDisconnectNotification(
-                        GroupDisconnectNotification {
-                            cid: implicated_cid,
-                            group_key,
-                            reason,
-                            request_id: None,
-                        },
-                    ),
-                )
-            }
+            } => super::group_heard::disconnected(
+                &mut connection.groups,
+                implicated_cid,
+                group_key,
+                reason,
+            ),
 
             GroupBroadcast::AddResponse {
                 key: _group_key,

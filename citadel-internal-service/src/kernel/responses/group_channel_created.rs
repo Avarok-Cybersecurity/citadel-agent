@@ -4,7 +4,6 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{GroupChannelCreateSuccess, InternalServiceResponse};
 use citadel_sdk::logging::warn;
 use citadel_sdk::prelude::{GroupChannel, GroupChannelCreated, NetworkError, Ratchet};
-use futures::StreamExt;
 
 /// Adopts a group channel the SDK opened on its own: a joined group after a member's
 /// rejoin, or an owned one the owner re-founded after reconnecting. Both arrive the same
@@ -41,25 +40,17 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         Ok(())
     } else {
         drop(server_connection_map);
-        park(channel);
+        release(channel);
         Err(NetworkError::generic(format!(
             "No connection found for cid in connection map: {cid}"
         )))
     }
 }
 
-/// Keeps a channel no session adopted until its SDK session ends.
-///
-/// Dropping a `GroupChannelRecvHalf` sends `LeaveRoom`, which on a live session removes
-/// the member (and for an owner, its group) for real. A channel nobody can use is still
-/// membership the user did not give up, so it is held, and dropped only once the session
-/// that could send that `LeaveRoom` is gone.
-pub(crate) fn park(channel: GroupChannel) {
-    let key = channel.key();
-    let cid = channel.cid();
-    warn!(target: "citadel", "[GroupChannelCreated] no session {cid} to adopt the channel for {key:?}; holding it until the session ends");
-    let (_tx, mut rx) = channel.split();
-    drop(crate::telemetry::span::spawn_in_current_span(async move {
-        while rx.next().await.is_some() {}
-    }));
+/// Lets go of a channel no session adopted. Dropping it sends nothing: the member stays in the
+/// group (as its owner, if it was), the group's traffic reaches the kernel as `GroupEvent`s
+/// (`responses/group_heard.rs`), and the next sign-in's restore opens a new channel.
+pub(crate) fn release(channel: GroupChannel) {
+    warn!(target: "citadel", "[GroupChannelCreated] no session {} to adopt the channel for {:?}; the membership is kept", channel.cid(), channel.key());
+    drop(channel);
 }

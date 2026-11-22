@@ -217,6 +217,12 @@ impl GroupChannels {
         }
     }
 
+    /// Whether this session has left the group or been put out of it. A group it holds no channel
+    /// for is not one it left: dropping a channel keeps the membership.
+    pub(crate) fn has_left(&self, key: &MessageGroupKey) -> bool {
+        self.inner.get(key).is_some_and(|entry| entry.tx.departed())
+    }
+
     pub(crate) fn get_mut(&mut self, key: &MessageGroupKey) -> Option<&mut ActiveGroupChannel> {
         if self.inner.get(key).is_some_and(|entry| entry.tx.departed()) {
             // A departed entry is dead weight; reclaim it instead of merely

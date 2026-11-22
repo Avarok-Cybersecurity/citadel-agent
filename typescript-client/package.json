@@ -29,7 +29,7 @@
     "./snippets/*"
   ],
   "dependencies": {
-    "@avarok/citadel-protocol-types": "^0.15.0",
+    "@avarok/citadel-protocol-types": "^0.15.1",
     "ws": "^8.0.0",
     "uuid": "^9.0.0"
   },

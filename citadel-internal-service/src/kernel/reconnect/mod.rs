@@ -22,6 +22,7 @@ pub(crate) mod instance;
 mod link;
 mod lost_peers;
 pub(crate) mod policy;
+mod rendered;
 
 /// The log target of a session's link to its server: the drop, each attempt, the
 /// outcome. Under `citadel`, so a `citadel=` filter still covers it, and its own so a
@@ -33,6 +34,8 @@ pub const LOG_TARGET: &str = "citadel::reconnect";
 mod admission_refusal_tests;
 #[cfg(test)]
 mod policy_tests;
+#[cfg(test)]
+mod refused_sign_in_tests;
 mod report;
 pub(crate) mod sign_in;
 pub(crate) mod signed_out;

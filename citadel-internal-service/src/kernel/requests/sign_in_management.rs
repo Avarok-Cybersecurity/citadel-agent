@@ -10,9 +10,11 @@
 //! a key challenge (the step-up's own key, or the touch of the key being added). The server
 //! judges both; the agent only refuses what a recovery session may not ask (requests/mod.rs).
 
+use crate::kernel::reconnect::Reauth;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::revfs_seed;
 use crate::kernel::sign_in::key_relay::Asker;
+use crate::kernel::sign_in::reauth_change::{self, Change};
 use crate::kernel::sign_in::{factors, management_failure_reason};
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -78,6 +80,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
     let kind = op_name(&op);
     let adds_a_key = matches!(op, SignInManagementOp::AddSecurityKey { .. });
+    let change = Change::of(&op);
     // The phrase is bound to the account's server, derived here as at registration.
     let domain = match op {
         SignInManagementOp::RegenerateRecoveryPhrase => {
@@ -100,6 +103,9 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         Ok(outcome) => {
             info!(target: "citadel", "[SignIn] {kind} for session {cid} succeeded");
             let outcome = SignInManagementOutcome::from(outcome);
+            if let Some(change) = change {
+                keep_what_now_signs_in(this, cid, change).await;
+            }
             if let SignInManagementOutcome::RecoveryPhrase(words) = &outcome {
                 new_root(this, cid, words).await;
             }
@@ -116,6 +122,33 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             let reason = management_failure_reason(adds_a_key, err.code);
             failure(err.into_string(), reason)
         }
+    }
+}
+
+/// The server accepted a change to how the account signs in: the session keeps what opens it
+/// from now on (sign_in/reauth_change.rs), and its fingerprint follows, so a window can reach
+/// it on the password only while the password alone still signs the account in.
+async fn keep_what_now_signs_in<T: IOInterface + Sync, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    cid: u64,
+    change: Change,
+) {
+    let kept = {
+        let mut map = this.server_connection_map.write();
+        let Some(conn) = map.get_mut(&cid) else {
+            return;
+        };
+        conn.reconnect.reauth = reauth_change::after(conn.reconnect.reauth.clone(), change);
+        (conn.username.clone(), conn.reconnect.reauth.clone())
+    };
+    let fingerprint = match kept {
+        (username, Reauth::Password(password)) => {
+            crate::kernel::credential_fingerprint::derive(this.remote(), &username, password).await
+        }
+        (_, Reauth::NeedsUser(_)) => None,
+    };
+    if let Some(conn) = this.server_connection_map.write().get_mut(&cid) {
+        conn.credential_fingerprint = fingerprint;
     }
 }
 

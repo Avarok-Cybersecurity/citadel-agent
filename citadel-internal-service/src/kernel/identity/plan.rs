@@ -87,11 +87,22 @@ pub(crate) fn from_well_known(
     })
 }
 
-/// For a server without HTTPS: the typed address is dialled and its canonical form is the
-/// domain; only the operator's fingerprint is pinned until a challenge proves its key.
+/// How a registration finds its server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Discovery {
+    /// From its signed `/.well-known/citadel`.
+    WellKnown,
+    /// A server without HTTPS, pinned to `server_fp` and dialled at `dial`: for a
+    /// `RegisterIdentity`, the address typed; for an app session, its configured pin's.
+    Pinned { server_fp: String, dial: String },
+}
+
+/// For a server without HTTPS: `dial` is dialled and `dialled`, the canonical domain, is what
+/// the username and the challenge name; only the operator's fingerprint is pinned until a
+/// challenge proves its key.
 pub(crate) fn pinned(
     handle: &str,
-    server_addr: &str,
+    dial: &str,
     dialled: CanonicalDomain,
     typed_fp: &str,
 ) -> Result<Plan, String> {
@@ -101,7 +112,7 @@ pub(crate) fn pinned(
         handle: handle.to_string(),
         username,
         domain: dialled,
-        dial: server_addr.trim().to_string(),
+        dial: dial.trim().to_string(),
         server_fp,
         server_pk: None,
         issued_at_s: None,

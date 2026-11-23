@@ -10,6 +10,7 @@
 
 pub(crate) mod core;
 pub(crate) mod events;
+pub(crate) mod pins;
 pub(crate) mod rules;
 
 use crate::kernel::apps::net::authority::{KernelGrant, SessionLimits};
@@ -21,16 +22,7 @@ use parking_lot::Mutex;
 use rules::{Held, OpenDecision, Refusal};
 use std::collections::HashMap;
 
-/// How the agent finds an app's server (`citadel-session-abi.md` §4). Every server is
-/// discovered by its `/.well-known/citadel` and dialled at the `citadel.wss` it names, except
-/// those in `pinned_servers`: a server without HTTPS, dialled at its canonical name as typed and
-/// pinned to the operator's fingerprint until its challenge proves the key, as `RegisterIdentity`'s
-/// `Pinned` discovery does. Explicit: the shipped agent passes an empty map.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AppSessionConfig {
-    /// Canonical domain → server fingerprint.
-    pub pinned_servers: HashMap<String, String>,
-}
+pub use pins::{AppSessionConfig, PinEntry, PinError, PinnedServer};
 
 /// Who a session is for: one per (install, acting user, server) on this member's session.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -35,6 +35,33 @@ pub(crate) fn classify(input: &str) -> Result<ServerAddress, String> {
     Ok(ServerAddress::HostPort(trimmed.to_string()))
 }
 
+/// The one form a configured dial address is written in: a `ws://`/`wss://` URL as
+/// `WebSocketEndpoint` renders it, or a lowercase `host:port` with its port. Accepted only when
+/// `classify` and `server_host::from_typed` accept it, as a `Register` checks it before dialling,
+/// and only when written in that form already.
+pub(crate) fn dial_form(input: &str) -> Result<String, String> {
+    let address = classify(input)?;
+    crate::kernel::server_host::from_typed(&address)?;
+    let form = match &address {
+        ServerAddress::WebSocket(endpoint) => endpoint.to_string(),
+        ServerAddress::HostPort(host_port) => {
+            let has_port = host_port
+                .rsplit_once(':')
+                .is_some_and(|(_, port)| port.parse::<u16>().is_ok());
+            if !has_port {
+                return Err(format!(
+                    "{input:?} names no port: a server dialled over TCP needs one"
+                ));
+            }
+            host_port.to_ascii_lowercase()
+        }
+    };
+    if form != input {
+        return Err(format!("{input:?} is not in its canonical form {form:?}"));
+    }
+    Ok(form)
+}
+
 /// One DNS label (letters, digits, inner hyphens) directly under the tenant suffix, no port.
 fn is_tenant_host(lower: &str) -> bool {
     let Some(label) = lower.strip_suffix(TENANT_HOST_SUFFIX) else {

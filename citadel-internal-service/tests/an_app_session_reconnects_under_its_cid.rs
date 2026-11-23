@@ -1,6 +1,8 @@
 //! An app's `citadel.session` end to end (`citadel-session-abi.md` §4, plan §4 H2): one agent
 //! holding an identity, a real in-process workspace server the member signs in to, and a real
 //! app server behind a front that can cut the link, driven through the UI's request protocol.
+//! The app server is named by a domain with no port and pinned to the front's loopback address:
+//! the account and its challenge are the domain's, every socket goes to the pin's address.
 //!
 //! Controls, each applied, seen red and reverted:
 //! - recompute the CID on reconnect: build `rules::app_handle` with the session number in it
@@ -8,6 +10,10 @@
 //!   session's `server_cid` differs and `an_app_session_reconnects_under_its_cid` goes red.
 //! - grant all servers (make `decide_open`'s `granted` always true) → the ungranted open
 //!   reaches the agent's session machinery and the same test goes red at "ungranted".
+//! - dial the canonical domain (`dial: domain.to_string()` in `AppSessionConfig::discovery`)
+//!   → the open is refused as unavailable and the same test goes red at "opened".
+//! - register at the name instead of the pin (`&server_addr` for `dial` in
+//!   `requests/identity/register.rs`'s `plan::pinned` call) → red at "opened: unavailable".
 
 #[allow(dead_code)]
 #[path = "app_session_support/mod.rs"]
@@ -30,6 +36,8 @@ use std::error::Error;
 use uuid::Uuid;
 
 const INSTALL: &str = "0f3a9c2e-1d2e-4f00-9a00-000000000001";
+/// No port, and not resolvable: reachable only through its pin.
+const APP_DOMAIN: &str = "app.synchronized.invalid";
 
 fn open_request(request_id: Uuid, cid: u64, acting: &str, server: &str) -> InternalServiceRequest {
     InternalServiceRequest::AppSessionOpen {
@@ -116,7 +124,8 @@ async fn echoed(
 #[tokio::test(flavor = "multi_thread")]
 async fn an_app_session_reconnects_under_its_cid() -> Result<(), Box<dyn Error>> {
     common::setup_log();
-    let (app, cut) = spawn_behind_front([31; 32]).await?;
+    let (app, cut) = spawn_behind_front([31; 32], APP_DOMAIN).await?;
+    assert_ne!(app.dial, app.domain);
     let member_server = spawn_direct([32; 32], vec![app.domain.clone()]).await?;
     let store = support::temp_store();
     let agent = spawn_agent(&app, &store).await?;
@@ -158,7 +167,8 @@ async fn an_app_session_reconnects_under_its_cid() -> Result<(), Box<dyn Error>>
         "acting as another user"
     );
 
-    let opened = open(&mut sink, &mut stream, cid, &acting, &app.domain).await??;
+    let opened = open(&mut sink, &mut stream, cid, &acting, &app.domain).await?;
+    let opened = opened.map_err(|reason| format!("opened: {reason}"))?;
     assert_eq!(opened.state, SessionStatus::Connected);
     let (session, server_cid) = (opened.session, opened.server_cid);
     assert_ne!(server_cid, 0);

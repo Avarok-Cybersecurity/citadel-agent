@@ -19,7 +19,7 @@ mod unclaimed_head_tests;
 
 pub use net::authority::{AuthoritySignal, HostNetAuthority, KernelGrant, SessionLimits};
 pub use net::AppNetConfig;
-pub use session::AppSessionConfig;
+pub use session::{AppSessionConfig, PinEntry, PinError, PinnedServer};
 
 use std::sync::Arc;
 

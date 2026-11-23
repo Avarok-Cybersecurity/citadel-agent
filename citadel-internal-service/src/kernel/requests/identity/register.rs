@@ -5,7 +5,7 @@
 
 use super::host;
 use crate::kernel::identity::pin::{self, Pin};
-use crate::kernel::identity::plan::{self, Plan, PlanError};
+use crate::kernel::identity::plan::{self, Discovery, Plan, PlanError};
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::session_route::deliver;
 use crate::kernel::CitadelWorkspaceService;
@@ -13,10 +13,10 @@ use citadel_identity::WellKnownCitadel;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     FailureReason, IdentityDiscovery, InternalServiceRequest, InternalServiceResponse,
-    RegisterFailure,
+    RegisterFailure, SessionSecuritySettings,
 };
 use citadel_sdk::logging::warn;
-use citadel_sdk::prelude::Ratchet;
+use citadel_sdk::prelude::{PreSharedKey, Ratchet};
 use uuid::Uuid;
 
 /// `server_addr`'s verified `/.well-known/citadel` and the node it names.
@@ -52,6 +52,19 @@ fn refused(
     Some(HandledRequestResult { response, uuid })
 }
 
+/// A `RegisterIdentity`, with where a pinned server is dialled. `server_addr` names the server:
+/// its canonical form is the username's domain and the challenge's.
+pub(crate) struct Registration {
+    pub(crate) request_id: Uuid,
+    pub(crate) server_addr: String,
+    pub(crate) handle: String,
+    pub(crate) full_name: String,
+    pub(crate) discovery: Discovery,
+    pub(crate) session_security_settings: SessionSecuritySettings,
+    pub(crate) server_password: Option<PreSharedKey>,
+    pub(crate) admission_token: Option<String>,
+}
+
 pub(crate) async fn handle<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
@@ -70,6 +83,42 @@ pub(crate) async fn handle<T: IOInterface + Sync, R: Ratchet>(
     else {
         unreachable!("dispatched by requests/mod.rs")
     };
+    // A member's own pinned server is dialled at the address typed.
+    let discovery = match discovery {
+        IdentityDiscovery::WellKnown => Discovery::WellKnown,
+        IdentityDiscovery::Pinned { server_fp } => Discovery::Pinned {
+            server_fp,
+            dial: server_addr.clone(),
+        },
+    };
+    let registration = Registration {
+        request_id,
+        server_addr,
+        handle,
+        full_name,
+        discovery,
+        session_security_settings,
+        server_password,
+        admission_token,
+    };
+    register(this, uuid, registration).await
+}
+
+pub(crate) async fn register<T: IOInterface + Sync, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    uuid: Uuid,
+    registration: Registration,
+) -> Option<HandledRequestResult> {
+    let Registration {
+        request_id,
+        server_addr,
+        handle,
+        full_name,
+        discovery,
+        session_security_settings,
+        server_password,
+        admission_token,
+    } = registration;
     let refuse = |reason, message| refused(uuid, request_id, reason, message, None);
     let host = match host(this) {
         Ok(host) => host,
@@ -84,12 +133,12 @@ pub(crate) async fn handle<T: IOInterface + Sync, R: Ratchet>(
         Err(err) => return refuse(None, format!("{server_addr:?} is not a server name: {err}")),
     };
     let planned: Result<Plan, PlanError> = match &discovery {
-        IdentityDiscovery::WellKnown => match host.well_known.fetch(&dialled).await {
+        Discovery::WellKnown => match host.well_known.fetch(&dialled).await {
             Ok(document) => plan::from_well_known(&handle, &dialled, &document),
             Err(err) => Err(PlanError::Invalid(err)),
         },
-        IdentityDiscovery::Pinned { server_fp } => {
-            plan::pinned(&handle, &server_addr, dialled, server_fp).map_err(PlanError::Invalid)
+        Discovery::Pinned { server_fp, dial } => {
+            plan::pinned(&handle, dial, dialled, server_fp).map_err(PlanError::Invalid)
         }
     };
     let plan = match planned {

@@ -10,14 +10,15 @@ use crate::kernel::apps::session::core::{AppAccount, SessionTransport};
 use crate::kernel::apps::session::events;
 use crate::kernel::apps::session::rules::{app_handle, Refusal};
 use crate::kernel::identity::pin;
+use crate::kernel::requests::identity::register::Registration;
 use crate::kernel::requests::{disconnect, identity, message};
 use crate::kernel::session_route::SessionRoute;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_identity::{canonical_domain, make_username};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    FailureReason, IdentityDiscovery, InternalServiceRequest, InternalServiceResponse,
-    SecurityLevel, SessionSecuritySettings,
+    FailureReason, InternalServiceRequest, InternalServiceResponse, SecurityLevel,
+    SessionSecuritySettings,
 };
 use citadel_sdk::logging::info;
 use citadel_sdk::prelude::Ratchet;
@@ -59,6 +60,8 @@ impl<T: IOInterface + Sync, R: Ratchet> ServiceTransport<'_, T, R> {
     }
 
     /// Register the account the first time, else sign in by its CID: never a second account.
+    /// Registered and signed in under the canonical domain; dialled where the configuration
+    /// says, and signed in to again only while it still says so.
     async fn sign_in(
         &self,
         route: Uuid,
@@ -66,6 +69,11 @@ impl<T: IOInterface + Sync, R: Ratchet> ServiceTransport<'_, T, R> {
         handle: String,
     ) -> Result<InternalServiceResponse, Refusal> {
         let settings = self.member_settings(account.owner.member_cid)?;
+        let config = self
+            .this
+            .app_sessions
+            .as_ref()
+            .ok_or(Refusal::NotConfigured)?;
         let domain = canonical_domain(&account.server).map_err(|_| Refusal::Invalid)?;
         let username = make_username(&handle, &domain).map_err(|_| Refusal::Invalid)?;
         let remote = self.this.remote();
@@ -73,36 +81,33 @@ impl<T: IOInterface + Sync, R: Ratchet> ServiceTransport<'_, T, R> {
             .await
             .map_err(|err| unavailable("reading the agent's accounts", err))?;
         let request_id = Uuid::new_v4();
-        let answered = if held.is_some() {
+        let answered = if let Some(held) = held {
             let cid = remote
                 .account_manager()
                 .get_persistence_handler()
                 .get_cid_by_username(&username);
+            let record = pin::load(remote, cid)
+                .await
+                .map_err(|err| unavailable("reading the account's pin", err))?;
+            if let Some(record) = record {
+                config
+                    .sign_in_again(domain.as_str(), &held.as_requested(), &record)
+                    .map_err(|why| unavailable(&username, why))?;
+            }
             identity::connect::connect_identity(self.this, route, request_id, cid, settings, None)
                 .await
         } else {
-            let config = self
-                .this
-                .app_sessions
-                .as_ref()
-                .ok_or(Refusal::NotConfigured)?;
-            let discovery = match config.pinned_servers.get(domain.as_str()) {
-                Some(fp) => IdentityDiscovery::Pinned {
-                    server_fp: fp.clone(),
-                },
-                None => IdentityDiscovery::WellKnown,
-            };
-            let register = InternalServiceRequest::RegisterIdentity {
+            let registration = Registration {
                 request_id,
-                server_addr: account.server.clone(),
+                server_addr: domain.to_string(),
                 full_name: handle.clone(),
                 handle,
-                discovery,
+                discovery: config.discovery(domain.as_str()),
                 session_security_settings: settings,
                 server_password: None,
                 admission_token: None,
             };
-            identity::register::handle(self.this, route, register).await
+            identity::register::register(self.this, route, registration).await
         };
         answered
             .map(|answered| answered.response)

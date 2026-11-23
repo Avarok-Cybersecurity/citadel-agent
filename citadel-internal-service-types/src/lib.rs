@@ -38,6 +38,7 @@ mod apps_kv;
 mod apps_net;
 mod apps_settings;
 mod browser_console;
+mod failure_reason;
 mod multi_window;
 mod notices;
 mod pulled_read;
@@ -74,6 +75,7 @@ pub use conversation_api::{
     ConversationFailure, ConversationListResponse, ConversationPageResponse, ConversationUpdated,
     NotificationPreview, PeerRetention, Retention,
 };
+pub use failure_reason::FailureReason;
 pub use group_delivery::{
     GroupMessageResponse, GroupOwnershipTransferredNotification, GroupRestoredNotification,
     JoinedGroupOwner,
@@ -93,9 +95,9 @@ pub use server_link::{
     ServerConnectionLost, ServerReconnectFailed, ServerReconnected, SignedOutSession,
 };
 pub use sign_in::{
-    FailureReason, RecoverAccountFailure, RecoverAccountSuccess, RecoveryCodes,
-    SecurityKeyAnswerFailure, SecurityKeyAnswerSuccess, SecurityKeyChallengeNotification,
-    SecurityKeyPurpose, SignInManagementFailure, SignInManagementSuccess, StepUp,
+    RecoverAccountFailure, RecoverAccountSuccess, RecoveryCodes, SecurityKeyAnswerFailure,
+    SecurityKeyAnswerSuccess, SecurityKeyChallengeNotification, SecurityKeyPurpose,
+    SignInManagementFailure, SignInManagementSuccess, StepUp,
 };
 pub use sign_in_ceremony::SecurityKeyCeremony;
 pub use sign_in_wire::{

@@ -150,6 +150,11 @@ fn reason_codes_cross_the_wire_in_snake_case() {
     assert_eq!(json, "\"admission_required\"");
     let json = serde_json::to_string(&FailureReason::AdmissionFailed).unwrap();
     assert_eq!(json, "\"admission_failed\"");
+    // The two a reconnect's give-up carries (kernel/reconnect/policy.rs); the page reads these.
+    let json = serde_json::to_string(&FailureReason::SignInRefused).unwrap();
+    assert_eq!(json, "\"sign_in_refused\"");
+    let json = serde_json::to_string(&FailureReason::ServerUnreachable).unwrap();
+    assert_eq!(json, "\"server_unreachable\"");
 }
 
 #[test]

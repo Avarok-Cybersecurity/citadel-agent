@@ -47,6 +47,26 @@ impl Change {
     }
 }
 
+/// Whether the conversation has someone at the other end. An account's conversation with
+/// itself (the scratchpad, `peer == cid`) does not: it is stored like any other and never sent.
+pub(crate) fn has_peer(cid: u64, peer: u64) -> bool {
+    cid != peer
+}
+
+/// Every P2P command the conversation store sends goes through here: to the peer, or, in the
+/// scratchpad, nowhere -- the account has no channel to itself, and its notes stay on this agent.
+pub(crate) async fn to_peer(
+    io: &dyn ConversationIo,
+    cid: u64,
+    peer: u64,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
+    if !has_peer(cid, peer) {
+        return Ok(());
+    }
+    io.send_p2p(cid, peer, bytes).await
+}
+
 pub(crate) fn store<'a>(io: &'a dyn ConversationIo, cid: u64) -> Store<'a> {
     Store {
         kv: io.kv(),

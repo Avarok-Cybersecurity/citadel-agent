@@ -6,7 +6,7 @@
 //! means "handled, retire it", `false` means "not yet, deliver it again".
 
 use super::command::{self, AckKind, Envelope, Inbound};
-use super::engine::{preferences, store, Change, Engine};
+use super::engine::{preferences, store, to_peer, Change, Engine};
 use super::envelope::{raw_envelope, received};
 use super::io::ConversationIo;
 use super::store_mutations::{Revised, Revision};
@@ -45,7 +45,7 @@ impl Engine {
             Some(Inbound::CheckState) => {
                 let envelope = raw_envelope(io, cid, peer).await;
                 let bytes = command::messaging_layer(command::check_state_response(), &envelope);
-                if let Err(e) = io.send_p2p(cid, peer, bytes).await {
+                if let Err(e) = to_peer(io, cid, peer, bytes).await {
                     warn!(target: "citadel", "[CONVERSATIONS] {cid}: could not answer {peer}'s CheckState: {e}");
                 }
                 true
@@ -122,7 +122,7 @@ impl Engine {
             }
             Ok(added) => {
                 let ack = command::ack(AckKind::Delivered, &message.id, io.now_ms());
-                if let Err(e) = io.send_p2p(cid, peer, ack).await {
+                if let Err(e) = to_peer(io, cid, peer, ack).await {
                     warn!(target: "citadel", "[CONVERSATIONS] {cid}: delivery receipt to {peer} not sent: {e}");
                 }
                 if let Some(metadata) = added {

@@ -6,7 +6,7 @@
 //! stored by the one writer, so two windows acting at once cannot lose a write.
 
 use super::command::{self, Envelope};
-use super::engine::{store, Change, Engine};
+use super::engine::{store, to_peer, Change, Engine};
 use super::envelope::{raw_envelope, received};
 use super::io::ConversationIo;
 use super::store_mutations::{Revised, Revision};
@@ -130,7 +130,7 @@ impl Engine {
             command::message_layer(&message.content, message.timestamp),
             envelope,
         );
-        let (status, error) = match io.send_p2p(cid, peer, bytes).await {
+        let (status, error) = match to_peer(io, cid, peer, bytes).await {
             Ok(()) => (MessageStatus::Sent, None),
             Err(e) => (MessageStatus::Failed, Some(e)),
         };
@@ -186,7 +186,7 @@ impl Engine {
         self.announce(io, cid, peer, Change::message(kind, message.clone()))
             .await;
         let envelope = raw_envelope(io, cid, peer).await;
-        io.send_p2p(cid, peer, command::messaging_layer(layer, &envelope))
+        to_peer(io, cid, peer, command::messaging_layer(layer, &envelope))
             .await
             .map_err(|e| format!("Saved here, but not sent: {e}"))?;
         Ok(Some(message))

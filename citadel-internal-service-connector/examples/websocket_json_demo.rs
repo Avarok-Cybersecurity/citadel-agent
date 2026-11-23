@@ -9,6 +9,7 @@ fn main() {
 
     // Example request that a frontend would send
     let request = InternalServicePayload::Request(InternalServiceRequest::Connect {
+        resume_lifetime_s: None,
         request_id: Uuid::new_v4(),
         username: "frontend_user".to_string(),
         server_address: "bench.work.avarok.net".to_string(),
@@ -31,6 +32,8 @@ fn main() {
     // Example response that the server would send back
     let response = InternalServicePayload::Response(InternalServiceResponse::ConnectSuccess(
         citadel_internal_service_types::ConnectSuccess {
+            resume_valid_until_utc: None,
+            resume_max_lifetime_s: None,
             cid: 12345,
             request_id: Some(Uuid::new_v4()),
             identity: None,

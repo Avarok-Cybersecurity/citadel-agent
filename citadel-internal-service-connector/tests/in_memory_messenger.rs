@@ -45,6 +45,7 @@ mod tests {
         // Test sending a connect request
         let request_id = Uuid::new_v4();
         let connect_request = InternalServiceRequest::Connect {
+            resume_lifetime_s: None,
             username: "test_user".to_string(),
             server_address: "bench.work.avarok.net".to_string(),
             password: Some(vec![].into()),
@@ -94,6 +95,7 @@ mod tests {
         // Test connect request
         let request_id = Uuid::new_v4();
         let connect_req = InternalServiceRequest::Connect {
+            resume_lifetime_s: None,
             username: "test".to_string(),
             server_address: "bench.work.avarok.net".to_string(),
             password: Some(vec![].into()),
@@ -128,6 +130,8 @@ mod tests {
                 // Send response back
                 use citadel_internal_service_types::ConnectSuccess;
                 let response = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
+                    resume_valid_until_utc: None,
+                    resume_max_lifetime_s: None,
                     cid: 1234,
                     request_id: Some(request_id),
                     identity: None,

@@ -28,6 +28,7 @@ async fn challenged(
     let request_id = Uuid::new_v4();
     window
         .send(InternalServiceRequest::Connect {
+            resume_lifetime_s: None,
             request_id,
             username: username.to_string(),
             server_address: server.to_string(),

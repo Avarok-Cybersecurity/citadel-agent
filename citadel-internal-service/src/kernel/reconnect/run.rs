@@ -6,7 +6,7 @@ use super::link::put_link;
 use super::policy::{self, FailureKind, GiveUp, Next};
 use super::report::{fail, logged};
 use super::sign_in;
-use super::{Credentials, Handoff, Reauth, LOG_TARGET};
+use super::{Credentials, Handoff, LOG_TARGET};
 use crate::kernel::{CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_sdk::logging::{info, warn};
@@ -48,18 +48,16 @@ pub(super) async fn run<T: IOInterface + Sync, R: Ratchet>(
             info!(target: LOG_TARGET, "[Reconnect] {cid} is no longer this run's to reconnect (ended, signed in to, or handed to a newer run); stopping");
             return;
         };
-        let password = match credentials.reauth.clone() {
-            Reauth::Password(password) => password,
-            Reauth::NeedsUser(reason) => {
-                return fail(this, cid, generation, reason.to_string(), None)
-            }
+        let auth = match attempt::sign_in_again(username, &credentials.reauth) {
+            Ok(auth) => auth,
+            Err(reason) => return fail(this, cid, generation, reason.to_string(), None),
         };
         let policy = this
             .reconnect_policy
             .for_keep_alive(credentials.keep_alive_timeout);
         let connect_request_id = credentials.connect_request_id;
         let settings = credentials.session_security_settings;
-        let failure = match attempt::once(this, &policy, username, password, credentials).await {
+        let failure = match attempt::once(this, &policy, auth, credentials).await {
             Ok(connected) if connected.cid == cid => {
                 return install(
                     this,

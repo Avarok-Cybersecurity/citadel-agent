@@ -53,6 +53,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         session_security_settings,
         server_password,
         admission_token,
+        resume_lifetime_s,
     } = request
     else {
         unreachable!("Should never happen if programmed properly")
@@ -222,6 +223,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 citadel_sdk::logging::warn!(target: "citadel", "[Register] {} registered, but its window left before the recovery phrase reached it", res.cid);
             }
             let connect_command = InternalServiceRequest::Connect {
+                resume_lifetime_s,
                 username,
                 // The host just recorded for the account: the Connect signs in exactly it.
                 server_address: server_host,

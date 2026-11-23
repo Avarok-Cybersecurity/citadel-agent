@@ -91,6 +91,7 @@ pub async fn sign_in_after_restart(
         common::send(
             sink,
             InternalServiceRequest::Connect {
+                resume_lifetime_s: None,
                 request_id: Uuid::new_v4(),
                 username: name.to_string(),
                 server_address: typed.to_string(),
@@ -175,6 +176,7 @@ pub async fn register_with(
     common::send(
         sink,
         InternalServiceRequest::Register {
+            resume_lifetime_s: None,
             request_id: Uuid::new_v4(),
             server_addr: server_addr.to_string(),
             full_name: "Server Host".to_string(),

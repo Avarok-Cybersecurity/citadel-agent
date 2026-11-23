@@ -78,8 +78,10 @@ impl<T: IOInterface + Sync, R: Ratchet> ServiceTransport<'_, T, R> {
                 .account_manager()
                 .get_persistence_handler()
                 .get_cid_by_username(&username);
-            identity::connect::connect_identity(self.this, route, request_id, cid, settings, None)
-                .await
+            identity::connect::connect_identity(
+                self.this, route, request_id, cid, settings, None, None,
+            )
+            .await
         } else {
             let config = self
                 .this
@@ -93,6 +95,7 @@ impl<T: IOInterface + Sync, R: Ratchet> ServiceTransport<'_, T, R> {
                 None => IdentityDiscovery::WellKnown,
             };
             let register = InternalServiceRequest::RegisterIdentity {
+                resume_lifetime_s: None,
                 request_id,
                 server_addr: account.server.clone(),
                 full_name: handle.clone(),

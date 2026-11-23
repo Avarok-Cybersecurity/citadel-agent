@@ -54,6 +54,14 @@ pub enum FailureReason {
     SignInRefused,
     /// A reconnect gave up after its whole window without the server once answering.
     ServerUnreachable,
+    /// A reconnect's resume credential is past its expiry (SDK code 354): the time the user
+    /// chose for this device to stay signed in has run out. Only signing in again brings the
+    /// session back.
+    ResumeCredentialExpired,
+    /// A reconnect's resume credential was issued before the account's password, sign-in
+    /// policy or security keys last changed (SDK code 355). Only signing in again brings the
+    /// session back.
+    ResumeCredentialRevoked,
     /// A reason this build does not know: a newer agent's. Decoded rather than refused, so
     /// the failure it rides on still reaches the page (as "update the page"); an unknown
     /// variant otherwise failed the whole response, and the page waited out a timeout.

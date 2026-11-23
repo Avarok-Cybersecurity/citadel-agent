@@ -46,6 +46,7 @@ mod tests {
         password: &[u8],
     ) -> InternalServiceRequest {
         InternalServiceRequest::Connect {
+            resume_lifetime_s: None,
             username: username.to_string(),
             server_address: server.to_string(),
             password: Some(password.to_vec().into()),

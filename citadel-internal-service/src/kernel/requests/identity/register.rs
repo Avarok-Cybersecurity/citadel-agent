@@ -66,6 +66,7 @@ pub(crate) async fn handle<T: IOInterface + Sync, R: Ratchet>(
         session_security_settings,
         server_password,
         admission_token,
+        resume_lifetime_s,
     } = command
     else {
         unreachable!("dispatched by requests/mod.rs")
@@ -132,6 +133,7 @@ pub(crate) async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
     let password = identity.derive_password(&plan.domain, &plan.username);
     let register = InternalServiceRequest::Register {
+        resume_lifetime_s: None,
         request_id,
         server_addr: plan.dial.clone(),
         full_name,
@@ -181,6 +183,7 @@ pub(crate) async fn handle<T: IOInterface + Sync, R: Ratchet>(
         cid,
         session_security_settings,
         server_password,
+        resume_lifetime_s,
     )
     .await
 }

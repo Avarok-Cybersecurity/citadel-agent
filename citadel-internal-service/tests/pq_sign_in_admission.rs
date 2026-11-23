@@ -98,6 +98,7 @@ async fn connect_after_register_asks_for_a_fresh_sign_in_token() -> Result<(), B
     let request_id = Uuid::new_v4();
     window
         .send(InternalServiceRequest::Register {
+            resume_lifetime_s: None,
             request_id,
             server_addr: server.to_string(),
             full_name: user.clone(),

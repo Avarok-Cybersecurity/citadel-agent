@@ -48,6 +48,7 @@ async fn a_name_held_for_another_server_is_refused_and_that_account_survives(
     common::send(
         &mut sink,
         InternalServiceRequest::Register {
+            resume_lifetime_s: None,
             request_id,
             server_addr: server_b.clone(),
             full_name: "Server Host".to_string(),
@@ -95,6 +96,7 @@ async fn a_name_held_for_another_server_is_refused_and_that_account_survives(
     common::send(
         &mut sink,
         InternalServiceRequest::Connect {
+            resume_lifetime_s: None,
             request_id,
             username: name.clone(),
             server_address: server_a.clone(),

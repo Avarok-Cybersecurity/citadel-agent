@@ -180,6 +180,7 @@ pub async fn register_and_connect_to_server<
 
         info!(target = "citadel", "Sending Register Request");
         let register_command = InternalServiceRequest::Register {
+            resume_lifetime_s: None,
             request_id: Uuid::new_v4(),
             server_addr: item.server_addr.to_string(),
             full_name,
@@ -204,6 +205,7 @@ pub async fn register_and_connect_to_server<
             );
             // now, connect to the server
             let command = InternalServiceRequest::Connect {
+                resume_lifetime_s: None,
                 username,
                 server_address: item.server_addr.to_string(),
                 password: Some(password),

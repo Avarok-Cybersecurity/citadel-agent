@@ -10,6 +10,8 @@ pub(crate) mod key_relay;
 mod key_wire;
 pub(crate) mod phrase;
 pub(crate) mod reauth_change;
+#[cfg(test)]
+mod reauth_change_resume_tests;
 pub(crate) mod recovery;
 
 use crate::kernel::reconnect::Reauth;
@@ -19,7 +21,7 @@ use citadel_internal_service_types::{
 };
 use citadel_sdk::prelude::{
     challenge_of, AdmissionProvider, CitadelClientServerConnection, NetworkError,
-    PeerChannelRecvHalf, PeerChannelSendHalf, Ratchet, SecBuffer, SessionScope,
+    PeerChannelRecvHalf, PeerChannelSendHalf, Ratchet, ResumeCredential, SecBuffer, SessionScope,
 };
 use std::sync::Arc;
 
@@ -61,14 +63,38 @@ pub(crate) fn open<R: Ratchet>(
     Ok((sink, stream, Arc::new(connected)))
 }
 
-/// How the session can be opened again without its user. Only a password-only sign-in can be
-/// repeated unprompted: a key needs a touch, and the recovery phrase is typed by the user.
-pub(crate) fn reauth(scope: SessionScope, key_asked: bool, password: Option<SecBuffer>) -> Reauth {
-    match (scope, key_asked, password) {
+/// What a sign-in that succeeded leaves its session.
+pub(crate) struct Kept {
+    /// How the session is opened again without its user.
+    pub reauth: Reauth,
+    /// The password, when it alone proved the sign-in: what the session's fingerprint is made
+    /// from (credential_fingerprint.rs). Not kept beyond that beside a resume credential.
+    pub proved_alone: Option<SecBuffer>,
+}
+
+/// How the session can be opened again without its user. A resume credential the server
+/// granted does it for any full sign-in, and replaces the password: the agent then keeps no
+/// password at all. Without one, only a password-only sign-in can be repeated unprompted: a
+/// key needs a touch, and the recovery phrase is typed by the user.
+pub(crate) fn kept(
+    scope: SessionScope,
+    key_asked: bool,
+    password: Option<SecBuffer>,
+    granted: Option<ResumeCredential>,
+) -> Kept {
+    let proved_alone = match (scope, key_asked) {
+        (SessionScope::Full, false) => password,
+        _ => None,
+    };
+    let reauth = match (scope, granted, &proved_alone) {
         (SessionScope::Recovery, _, _) => Reauth::NeedsUser(RECOVERY_REAUTH),
-        (SessionScope::Full, true, _) => Reauth::NeedsUser(KEY_REAUTH),
-        (SessionScope::Full, false, Some(password)) => Reauth::Password(password),
-        (SessionScope::Full, false, None) => Reauth::NeedsUser(KEY_REAUTH),
+        (SessionScope::Full, Some(credential), _) => Reauth::Resume(credential),
+        (SessionScope::Full, None, Some(password)) => Reauth::Password(password.clone()),
+        (SessionScope::Full, None, None) => Reauth::NeedsUser(KEY_REAUTH),
+    };
+    Kept {
+        reauth,
+        proved_alone,
     }
 }
 
@@ -123,8 +149,9 @@ mod tests {
     }
 
     #[test]
-    fn only_a_password_only_sign_in_reconnects_by_itself() {
+    fn without_a_credential_only_a_password_only_sign_in_reconnects_by_itself() {
         let pw = || Some(SecBuffer::from("pw"));
+        let reauth = |scope, key_asked, password| kept(scope, key_asked, password, None).reauth;
         assert!(is_password(&reauth(SessionScope::Full, false, pw())));
         assert!(
             !is_password(&reauth(SessionScope::Full, true, pw())),
@@ -138,6 +165,36 @@ mod tests {
             !is_password(&reauth(SessionScope::Full, false, None)),
             "no password at all"
         );
+    }
+
+    /// Control: prefer the password to the credential, and the agent keeps the password.
+    #[tokio::test]
+    async fn a_granted_credential_replaces_the_password_for_any_full_sign_in() {
+        let pw = || Some(SecBuffer::from("pw"));
+        let credential = crate::kernel::resume::test_support::credential(3_600).await;
+        let granted = || Some(credential.clone());
+        for (key_asked, password) in [(false, pw()), (true, pw()), (true, None)] {
+            let kept = kept(SessionScope::Full, key_asked, password, granted());
+            assert!(
+                matches!(kept.reauth, Reauth::Resume(_)),
+                "key asked: {key_asked}"
+            );
+        }
+        let alone = kept(SessionScope::Full, false, pw(), granted());
+        assert!(
+            alone.proved_alone.is_some(),
+            "the fingerprint still has its password"
+        );
+        let with_key = kept(SessionScope::Full, true, pw(), granted());
+        assert!(
+            with_key.proved_alone.is_none(),
+            "the password did not sign in alone"
+        );
+        let recovery = kept(SessionScope::Recovery, false, pw(), granted());
+        assert!(matches!(
+            recovery.reauth,
+            Reauth::NeedsUser(RECOVERY_REAUTH)
+        ));
     }
 
     #[test]

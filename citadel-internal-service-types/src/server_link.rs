@@ -14,7 +14,7 @@
 //! absence: the next `GetSessions` listed no session and no reason. `SignedOutSession` is
 //! that give-up kept, reported in every `GetSessions` until the account signs in again.
 
-use crate::FailureReason;
+use crate::{FailureReason, SessionDot};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -74,4 +74,9 @@ pub struct SignedOutSession {
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub reason_code: Option<FailureReason>,
+    /// The dot to draw beside the account's row, when the give-up marks it
+    /// (`SessionRowStatus::of_signed_out`); absent for every other give-up.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub dot: Option<SessionDot>,
 }

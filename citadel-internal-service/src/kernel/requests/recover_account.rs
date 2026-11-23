@@ -185,6 +185,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     }
 
     let connect = InternalServiceRequest::Connect {
+        resume_lifetime_s: None,
         request_id,
         username,
         server_address: server_host,

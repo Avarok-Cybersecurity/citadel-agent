@@ -139,28 +139,32 @@ impl From<sdk::SignInPolicy> for SignInPolicy {
     }
 }
 
-impl From<sdk::FactorKind> for FactorKind {
-    fn from(kind: sdk::FactorKind) -> Self {
+impl FactorKind {
+    /// The kind of a factor an account has enrolled. A device's resume key is none: a server
+    /// keeps no record of one, so nothing it lists is of that kind.
+    fn enrolled(kind: sdk::FactorKind) -> Option<Self> {
         match kind {
-            sdk::FactorKind::Password => Self::Password,
-            sdk::FactorKind::SecurityKey => Self::SecurityKey,
+            sdk::FactorKind::Password => Some(Self::Password),
+            sdk::FactorKind::SecurityKey => Some(Self::SecurityKey),
             sdk::FactorKind::RetiredRecoveryCode(retired) => match retired {},
-            sdk::FactorKind::RecoveryPhrase => Self::RecoveryPhrase,
+            sdk::FactorKind::RecoveryPhrase => Some(Self::RecoveryPhrase),
+            sdk::FactorKind::ResumeKey => None,
         }
     }
 }
 
-impl From<sdk::SignInCredential> for SignInCredential {
-    fn from(c: sdk::SignInCredential) -> Self {
-        Self {
+impl SignInCredential {
+    /// A credential the server listed; `None` for one of a kind no account enrols.
+    fn listed(c: sdk::SignInCredential) -> Option<Self> {
+        Some(Self {
             id: c.id,
-            kind: c.kind.into(),
+            kind: FactorKind::enrolled(c.kind)?,
             label: c.label,
             credential_id: c.credential_id,
             created_ms: c.created_ms,
             last_used_ms: c.last_used_ms,
             consumed: c.consumed,
-        }
+        })
     }
 }
 
@@ -200,7 +204,10 @@ impl From<sdk::SignInManagementOutcome> for SignInManagementOutcome {
                 credentials,
             } => Self::Credentials {
                 policy: policy.into(),
-                credentials: credentials.into_iter().map(Into::into).collect(),
+                credentials: credentials
+                    .into_iter()
+                    .filter_map(SignInCredential::listed)
+                    .collect(),
             },
             sdk::SignInManagementOutcome::Added { id } => Self::Added { id },
             sdk::SignInManagementOutcome::Renamed => Self::Renamed,

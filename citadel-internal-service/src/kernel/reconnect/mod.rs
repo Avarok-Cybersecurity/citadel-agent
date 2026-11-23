@@ -37,6 +37,8 @@ mod policy_tests;
 #[cfg(test)]
 mod refused_sign_in_tests;
 mod report;
+#[cfg(test)]
+mod resume_refusal_tests;
 mod run;
 pub(crate) mod sign_in;
 pub(crate) mod signed_out;
@@ -46,7 +48,7 @@ pub(crate) mod takeover;
 pub(crate) mod task;
 
 use citadel_sdk::prelude::{
-    ConnectMode, PreSharedKey, SecBuffer, SessionSecuritySettings, UdpMode,
+    ConnectMode, PreSharedKey, ResumeCredential, SecBuffer, SessionSecuritySettings, UdpMode,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -110,8 +112,11 @@ impl Handoff {
 /// How a session can be signed in to again without its user (kernel/sign_in/mod.rs decides).
 #[derive(Clone)]
 pub enum Reauth {
-    /// The password alone opened it.
+    /// The password alone opened it, and the server issued no resume credential.
     Password(SecBuffer),
+    /// A full sign-in was granted a resume credential (kernel/resume): it signs the session
+    /// in again, with no password kept, until it expires or the account's sign-in changes.
+    Resume(ResumeCredential),
     /// It needed the user, a security-key touch or the recovery phrase, which a reconnect cannot
     /// ask for unprompted: the reconnect gives up with this reason, and the user signs in.
     NeedsUser(&'static str),

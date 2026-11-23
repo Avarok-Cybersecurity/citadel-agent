@@ -29,6 +29,7 @@ pub(crate) async fn handle<T: IOInterface + Sync, R: Ratchet>(
         cid,
         session_security_settings,
         server_password,
+        resume_lifetime_s,
     } = command
     else {
         unreachable!("dispatched by requests/mod.rs")
@@ -40,6 +41,7 @@ pub(crate) async fn handle<T: IOInterface + Sync, R: Ratchet>(
         cid,
         session_security_settings,
         server_password,
+        resume_lifetime_s,
     )
     .await
 }
@@ -115,6 +117,7 @@ pub(crate) async fn connect_identity<T: IOInterface + Sync, R: Ratchet>(
     cid: u64,
     session_security_settings: SessionSecuritySettings,
     server_password: Option<PreSharedKey>,
+    resume_lifetime_s: Option<u32>,
 ) -> Option<HandledRequestResult> {
     let fail = |reason: Option<FailureReason>, message: String| {
         let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
@@ -140,6 +143,7 @@ pub(crate) async fn connect_identity<T: IOInterface + Sync, R: Ratchet>(
     let password = identity.derive_password(&pin.domain, &username);
     // As a Register's own connect-after-register (requests/register.rs).
     let connect = InternalServiceRequest::Connect {
+        resume_lifetime_s,
         request_id,
         username,
         server_address,

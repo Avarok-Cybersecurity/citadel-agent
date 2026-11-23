@@ -9,7 +9,6 @@ use super::policy::{self, DropAction, FailureKind, GiveUp, Next};
 use super::report::{fail, logged, notify};
 use super::sign_in;
 use super::{Credentials, Handoff, LinkState, Reauth, LOG_TARGET};
-use crate::kernel::sign_in::failure_reason;
 use crate::kernel::supervisor::{LinkStatus, Signal};
 use crate::kernel::{group_channels, CitadelWorkspaceService, Connection};
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -199,7 +198,7 @@ async fn run<T: IOInterface + Sync, R: Ratchet>(
                 delay = next;
             }
             Next::GiveUp(GiveUp::Refused) => {
-                let reason_code = policy::refusal(code, &message).and_then(failure_reason);
+                let reason_code = policy::refusal(code, &message).and_then(policy::refusal_reason);
                 return fail(this, cid, generation, message, reason_code);
             }
             Next::GiveUp(GiveUp::OutOfTime) => {
@@ -212,7 +211,8 @@ async fn run<T: IOInterface + Sync, R: Ratchet>(
                         format!("no answer from the server in {budget:?}: {message}")
                     }
                 };
-                return fail(this, cid, generation, reason, None);
+                let reason_code = policy::out_of_time_reason(kind);
+                return fail(this, cid, generation, reason, reason_code);
             }
         }
     }

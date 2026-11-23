@@ -1,7 +1,9 @@
 //! When to try again, when to stop, and which failures end it at once. Pure: no clock,
 //! no SDK, so every decision is tested directly (see policy_tests.rs).
 
+use super::rendered::{renders, states};
 use crate::kernel::reconnect::LinkState;
+use citadel_internal_service_types::FailureReason;
 use citadel_io::ErrorCode;
 use citadel_proto::constants::{KEEP_ALIVE_INTERVAL_MS, KEEP_ALIVE_TIMEOUT_NS};
 use std::time::Duration;
@@ -79,6 +81,25 @@ pub enum Next {
 pub enum GiveUp {
     Refused,
     OutOfTime,
+}
+
+/// What the UI is told about a reconnect the server refused, so it can act on it. A refused
+/// sign-in is named only here: on a Connect the same code is a mistyped password, which the
+/// sign-in form already words itself.
+pub fn refusal_reason(refused: ErrorCode) -> Option<FailureReason> {
+    match refused {
+        ErrorCode::PqSignInFailed => Some(FailureReason::SignInRefused),
+        other => crate::kernel::sign_in::failure_reason(other),
+    }
+}
+
+/// What the UI is told a reconnect that ran out of time was waiting on. A server that never
+/// once answered is unreachable; one that answered "still connected" throughout is not.
+pub fn out_of_time_reason(last: FailureKind) -> Option<FailureReason> {
+    match last {
+        FailureKind::Transient => Some(FailureReason::ServerUnreachable),
+        FailureKind::Refused | FailureKind::ServerHoldsSession => None,
+    }
 }
 
 /// What an SDK report that the server dropped a session means for it.
@@ -169,7 +190,12 @@ impl ReconnectPolicy {
 /// The admission refusals are the server's Turnstile check: a reconnect cannot show the
 /// widget, so retrying asked the same question every attempt for ten minutes. The user has
 /// to sign in again (the failure says so, see `refusal`).
-const REFUSALS: [ErrorCode; 8] = [
+///
+/// `PqSignInFailed` is the server's one answer to a post-quantum sign-in that did not prove
+/// the account ("Authentication failed"): the password this session kept is no longer the
+/// account's, or the account now asks for a factor a reconnect cannot give. It was retried
+/// for the whole ten minutes, 24 attempts, each refused the same way.
+const REFUSALS: [ErrorCode; 9] = [
     ErrorCode::AccountClientNonExists,
     ErrorCode::AccountServerNonExists,
     ErrorCode::AccountInvalidUsername,
@@ -178,6 +204,7 @@ const REFUSALS: [ErrorCode; 8] = [
     ErrorCode::PreconnectRefused,
     ErrorCode::PqSignInAdmissionRequired,
     ErrorCode::PqSignInAdmissionFailed,
+    ErrorCode::PqSignInFailed,
 ];
 
 /// Whether a failed connect is worth repeating.
@@ -212,53 +239,4 @@ pub fn refusal(code: ErrorCode, message: &str) -> Option<ErrorCode> {
         .iter()
         .copied()
         .find(|refusal| renders(refusal.raw_string(), message))
-}
-
-/// Whether `message` is the registry form `form` rendered, at its start or right after
-/// a `": "` (the server prefixes some errors with its own reason, e.g. "CID not
-/// registered to this node: CID 7 is not registered to this node").
-///
-/// Every literal part of the form must appear, in order, with something in each
-/// placeholder, and a form ending in literal text must end the message. A form that is
-/// merely mentioned mid-sentence ("timed out after Invalid password") is not a match.
-fn renders(form: &str, message: &str) -> bool {
-    let parts: Vec<&str> = form.split("{}").collect();
-    let (first, placeholders) = match parts.split_first() {
-        Some((first, rest)) if !first.is_empty() => (*first, rest),
-        _ => return false,
-    };
-    clauses(message).any(|clause| {
-        let Some(mut rest) = clause.strip_prefix(first) else {
-            return false;
-        };
-        // Each later part follows a placeholder, which must hold something.
-        for (index, part) in placeholders.iter().enumerate() {
-            if index == placeholders.len() - 1 {
-                return if part.is_empty() {
-                    !rest.is_empty()
-                } else {
-                    rest.len() > part.len() && rest.ends_with(part)
-                };
-            }
-            match rest.get(1..).and_then(|tail| tail.find(part)) {
-                Some(at) => rest = &rest[1 + at + part.len()..],
-                None => return false,
-            }
-        }
-        true
-    })
-}
-
-/// Whether `message` leads with `lead`, at its start or right after a `": "`.
-fn states(message: &str, lead: &str) -> bool {
-    clauses(message).any(|clause| clause.starts_with(lead))
-}
-
-/// `message` from its start and from after each `": "`, where a server's own reason
-/// may prefix the error it forwards.
-fn clauses(message: &str) -> impl Iterator<Item = &str> {
-    let after_separator = message.match_indices(": ").map(|(at, sep)| at + sep.len());
-    std::iter::once(0)
-        .chain(after_separator)
-        .map(move |start| &message[start..])
 }

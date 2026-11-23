@@ -83,6 +83,12 @@ pub enum FailureReason {
     /// The server sealed this account's files in a format this agent does not read (SDK code
     /// 495).
     RevfsSealUnrecognised,
+    /// A reconnect's sign-in was refused ("Authentication failed"): what the session kept no
+    /// longer signs the account in (its password changed elsewhere, or it now asks for a
+    /// security key). Only signing in again brings the session back.
+    SignInRefused,
+    /// A reconnect gave up after its whole window without the server once answering.
+    ServerUnreachable,
     /// A reason this build does not know: a newer agent's. Decoded rather than refused, so
     /// the failure it rides on still reaches the page (as "update the page"); an unknown
     /// variant otherwise failed the whole response, and the page waited out a timeout.

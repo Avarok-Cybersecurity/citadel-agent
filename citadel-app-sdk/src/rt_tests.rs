@@ -49,6 +49,7 @@ pub(crate) fn ctx(locale: &str) -> Vec<u8> {
         acting_username: "u".into(),
         node_id: "n".into(),
         close_grace_ms: 250,
+        sdk_abi_minor: 1,
     })
 }
 

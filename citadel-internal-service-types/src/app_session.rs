@@ -14,21 +14,14 @@ use uuid::Uuid;
 #[cfg(feature = "typescript")]
 use ts_rs::TS;
 
-/// The most one `AppSessionSend` may carry, whatever the install's own limit says.
-pub const APP_SESSION_MAX_BODY_BYTES: usize = 1_048_576;
-/// The most servers one install may hold sessions to for one member.
-pub const APP_SESSION_MAX_SERVERS: usize = 2;
+use citadel_app_sdk_types::calls::session;
+/// Where an app session stands: the guest ABI's type, which this wire carries unchanged.
+pub use citadel_app_sdk_types::calls::SessionStatus;
 
-/// Where an app session stands.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "typescript", derive(TS))]
-#[cfg_attr(feature = "typescript", ts(export))]
-#[serde(rename_all = "snake_case")]
-pub enum SessionStatus {
-    Connecting,
-    Connected,
-    Closed { reason: String },
-}
+/// The most one `AppSessionSend` may carry, whatever the install's own limit says.
+pub const APP_SESSION_MAX_BODY_BYTES: usize = session::SESSION_MAX_MSG_BYTES_CEILING as usize;
+/// The most servers one install may hold sessions to for one member.
+pub const APP_SESSION_MAX_SERVERS: usize = session::MAX_SESSION_SERVERS;
 
 /// The answer to `AppSessionOpen` and `AppSessionClose`, and every later change of the
 /// session's link (`request_id: None`).

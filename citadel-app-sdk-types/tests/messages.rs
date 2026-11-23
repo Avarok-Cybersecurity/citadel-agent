@@ -26,6 +26,7 @@ fn context() -> AppContext {
         acting_username: "alice".into(),
         node_id: "n2".into(),
         close_grace_ms: 500,
+        sdk_abi_minor: 1,
     }
 }
 
@@ -70,4 +71,37 @@ fn events_round_trip_with_snake_case_tags() {
         reason: SuspendReason::Hidden,
     });
     assert_eq!(hidden, b"\xa1\x67suspend\xa1\x66reason\x66hidden");
+}
+
+#[test]
+fn node_page_is_an_empty_struct_variant() {
+    let page = encode(&Surface::NodePage {});
+    assert_eq!(page, b"\xa1\x69node_page\xa0", "{{\"node_page\": {{}}}}");
+    assert_eq!(decode::<Surface>(&page).unwrap(), Surface::NodePage {});
+    assert!(
+        decode::<Surface>(b"\x69node_page").is_err(),
+        "not a unit variant"
+    );
+}
+
+/// A host from before ABI minors sends no `sdk_abi_minor`: that is minor 0, and its context
+/// still decodes.
+#[test]
+fn a_context_without_the_minor_is_minor_0_and_one_with_it_says_so() {
+    let ctx = context();
+    let mut value: ciborium::Value = decode(&encode(&ctx)).unwrap();
+    let ciborium::Value::Map(fields) = &mut value else {
+        panic!("a context is a map")
+    };
+    let before = fields.len();
+    fields.retain(|(k, _)| k.as_text() != Some("sdk_abi_minor"));
+    assert_eq!(fields.len(), before - 1);
+    let old: AppContext = decode(&encode(&value)).unwrap();
+    assert_eq!(old.sdk_abi_minor, 0);
+    assert!(!old.has_canvas_extension());
+    assert_eq!(
+        decode::<AppContext>(&encode(&ctx)).unwrap().sdk_abi_minor,
+        1
+    );
+    assert!(ctx.has_canvas_extension());
 }

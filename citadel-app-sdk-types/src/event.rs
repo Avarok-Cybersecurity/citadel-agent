@@ -1,6 +1,6 @@
 //! What the host delivers through `app_event`, one CBOR [`AppEvent`] per call.
 
-use crate::calls::{Caller, IhttpFrame, StorageBackend, TopicEvent};
+use crate::calls::{Caller, IhttpFrame, SessionEvent, StorageBackend, TopicEvent};
 use crate::lifecycle::SuspendReason;
 use alloc::string::String;
 
@@ -84,5 +84,9 @@ abi_types! {
         Ihttp { from: Caller, frame: IhttpFrame },
         /// Something happened on topic `name`, which the app opened.
         Topic { name: String, event: TopicEvent },
+        /// Something happened on `session`, which the app opened (`citadel.session`).
+        Session { session: u32, event: SessionEvent },
+        /// The user activated the canvas `Region` `id` (keyboard or pointer). ABI minor 1.
+        Activate { id: String },
     }
 }

@@ -219,3 +219,21 @@ fn each_transport_and_serving_plane_names_the_capability_it_needs() {
     .is_empty());
     assert_eq!(Via::Group.serve_capability(), None);
 }
+
+/// The host builds `open_file` in TypeScript (host/app-event.ts), so its bytes are pinned here:
+/// a 1-entry map `open_file` holding `name`, `mime` and `bytes`, the last one CBOR byte string.
+#[test]
+fn an_opened_file_reaches_the_app_as_its_name_mime_and_one_byte_string() {
+    use citadel_app_sdk_types::AppEvent;
+    let event = AppEvent::OpenFile {
+        name: "a.md".into(),
+        mime: "".into(),
+        bytes: Bytes(vec![35, 10]),
+    };
+    let wire = encode(&event);
+    assert_eq!(
+        wire,
+        b"\xa1\x69open_file\xa3\x64name\x64a.md\x64mime\x60\x65bytes\x42\x23\x0a"
+    );
+    assert_eq!(decode::<AppEvent>(&wire).unwrap(), event);
+}

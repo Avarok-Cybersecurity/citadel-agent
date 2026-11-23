@@ -2,6 +2,7 @@
 
 use crate::calls::{Caller, IhttpFrame, StorageBackend, TopicEvent};
 use crate::lifecycle::SuspendReason;
+use crate::Bytes;
 use alloc::string::String;
 
 abi_types! {
@@ -84,5 +85,9 @@ abi_types! {
         Ihttp { from: Caller, frame: IhttpFrame },
         /// Something happened on topic `name`, which the app opened.
         Topic { name: String, event: TopicEvent },
+        /// A file the member chose to open in this app, which its manifest's `opens` lists: its
+        /// name, its MIME type (empty when none was recorded) and its bytes, read on this device
+        /// and at most `opens.max_bytes`. Delivered to an instance on `opens.surface`.
+        OpenFile { name: String, mime: String, bytes: Bytes },
     }
 }

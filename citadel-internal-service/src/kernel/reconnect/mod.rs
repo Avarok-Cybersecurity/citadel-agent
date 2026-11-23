@@ -37,6 +37,7 @@ mod policy_tests;
 #[cfg(test)]
 mod refused_sign_in_tests;
 mod report;
+mod run;
 pub(crate) mod sign_in;
 pub(crate) mod signed_out;
 #[cfg(test)]

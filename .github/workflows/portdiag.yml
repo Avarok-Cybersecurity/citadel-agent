@@ -1,0 +1,30 @@
+name: portdiag (throwaway, WIN-PORTS-1123)
+on:
+  push:
+    branches: [diag/win-ports-1123]
+jobs:
+  diag:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Port configuration (windows)
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        run: |
+          netsh int ipv4 show dynamicport tcp
+          netsh int ipv4 show dynamicport udp
+          netsh int ipv4 show excludedportrange tcp
+          netsh int ipv4 show excludedportrange udp
+          Get-NetTCPConnection -State Listen | Sort-Object LocalPort | Format-Table LocalAddress,LocalPort,OwningProcess
+      - name: Port configuration (linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: cat /proc/sys/net/ipv4/ip_local_port_range
+      - name: Build
+        run: rustc -O diag/portdiag.rs -o portdiag.exe
+      - name: Run
+        run: ./portdiag.exe

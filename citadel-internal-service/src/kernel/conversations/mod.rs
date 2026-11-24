@@ -38,3 +38,6 @@ mod engine_tests;
 #[cfg(test)]
 #[path = "engine_tests_notices.rs"]
 mod engine_tests_notices;
+#[cfg(test)]
+#[path = "engine_tests_scratchpad.rs"]
+mod engine_tests_scratchpad;

@@ -142,3 +142,32 @@ async fn agent_hosted_ilms_learn_that_each_other_carries_internal_http() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
+
+/// The scratchpad has no peer: a message addressed to the account's own CID is refused by ILM
+/// (`send_raw_message`, "Cannot send message to self") and its slot reclaimed, so nothing is kept
+/// to be retried at that CID through the server. The conversation engine never asks (`to_peer`);
+/// this pins the layer beneath it.
+#[tokio::test]
+async fn a_message_to_your_own_account_is_refused_and_never_queued() {
+    let (alice, _bob) = pair();
+    let a = host(&alice).await;
+    let refused = a
+        .send(
+            ALICE,
+            Uuid::new_v4(),
+            b"a note to self".to_vec(),
+            SecurityLevel::Standard,
+            None,
+        )
+        .await;
+    assert!(
+        refused.is_err(),
+        "a message to the account itself was accepted"
+    );
+    let pending =
+        CitadelWorkspaceBackend::with_channel(ALICE, channel::AgentChannel::new(alice.io.clone()))
+            .get_pending_outbound()
+            .await
+            .expect("the account's store is readable");
+    assert!(pending.is_empty(), "a message to itself was queued");
+}

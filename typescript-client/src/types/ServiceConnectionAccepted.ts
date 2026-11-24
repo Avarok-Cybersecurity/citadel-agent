@@ -29,6 +29,13 @@ browser_console: boolean,
  */
 apps: boolean, 
 /**
+ * This agent keeps an account's conversation with itself (the scratchpad, `peer_cid ==
+ * cid`) and never sends any of it: no P2P command, and ILM refuses the account's own CID.
+ * An agent without this would queue a note to the account's own CID, so a window offers
+ * the scratchpad only when it is true.
+ */
+notes_to_self: boolean, 
+/**
  * This agent's `TYPES_HASH`. A page compares it with its WASM client's and,
  * when they differ, says the two are out of step before anything fails to
  * decode.

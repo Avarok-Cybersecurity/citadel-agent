@@ -64,3 +64,11 @@ fn a_request_this_agent_does_not_know_does_not_parse() {
         r#"{"Request":{"SomeLaterRequest":{"request_id":"00000000-0000-0000-0000-000000000000"}}}"#;
     assert!(serde_json::from_str::<InternalServicePayload>(json).is_err());
 }
+
+/// A window reads the field by its JSON name (capabilities.ts `notes_to_self`) and offers the
+/// scratchpad only when it is true; every agent with this field keeps notes unsent.
+#[test]
+fn the_greeting_says_notes_to_self_stay_on_the_agent() {
+    let json = serde_json::to_value(greeting(false)).unwrap();
+    assert_eq!(json["notes_to_self"], serde_json::Value::Bool(true));
+}

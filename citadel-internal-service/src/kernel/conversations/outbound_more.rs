@@ -1,7 +1,7 @@
 //! Reacting and marking read, on a window's behalf.
 
 use super::command::{self, AckKind};
-use super::engine::{preferences, store, Change, Engine};
+use super::engine::{preferences, store, to_peer, Change, Engine};
 use super::envelope::raw_envelope;
 use super::io::ConversationIo;
 use super::outbound::Outcome;
@@ -36,7 +36,8 @@ impl Engine {
         )
         .await;
         let envelope = raw_envelope(io, cid, peer).await;
-        io.send_p2p(
+        to_peer(
+            io,
             cid,
             peer,
             command::messaging_layer(command::reaction_layer(id, &emoji, active, at), &envelope),
@@ -61,7 +62,7 @@ impl Engine {
             .await;
             if send_receipts {
                 let receipt = command::ack(AckKind::Read, &message.id, io.now_ms());
-                if let Err(e) = io.send_p2p(cid, peer, receipt).await {
+                if let Err(e) = to_peer(io, cid, peer, receipt).await {
                     citadel_sdk::logging::warn!(target: "citadel", "[CONVERSATIONS] {cid}: read receipt for {} not sent: {e}", message.id);
                 }
             }

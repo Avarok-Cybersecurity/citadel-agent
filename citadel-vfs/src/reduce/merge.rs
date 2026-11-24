@@ -130,13 +130,14 @@ impl MergeFold {
         self.cuts.clear();
         loop {
             self.tree = Tree::for_volume(self.volume.clone());
+            // R2's dropped ops first, so that later ops append in stamp order however they came.
+            self.dropped.sort_by_key(|o| (o.header.op_id, o.op_hash));
+            for op in &self.dropped {
+                self.tree.record_dropped(op);
+            }
             let ops: Vec<Op> = self.ops.values().cloned().collect();
             for op in &ops {
                 self.fold_one(op);
-            }
-            self.dropped.sort_by_key(|o| (o.header.op_id, o.op_hash));
-            for op in &self.dropped {
-                self.tree.record_skip(op, SkipReason::Duplicate);
             }
             let cuts = self.cuts_of_applied();
             if cuts == self.cuts {

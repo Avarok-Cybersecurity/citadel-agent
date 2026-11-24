@@ -88,6 +88,15 @@ impl Tree {
         }
     }
 
+    /// R2: an op dropped for a smaller `op_hash` under its `op_id`; the kept op holds the id.
+    pub(super) fn record_dropped(&mut self, op: &Op) {
+        self.skipped.push(Skipped {
+            op_id: op.header.op_id,
+            op_hash: op.op_hash,
+            reason: SkipReason::Duplicate,
+        });
+    }
+
     /// Redacted ops whose target no applied `Purge` removed: each is `Invalid`
     /// (`vfs-ops.md` §5), and a reader holding one is `Unverified(BadRedaction)`.
     pub fn bad_redactions(&self) -> Vec<[u8; 16]> {

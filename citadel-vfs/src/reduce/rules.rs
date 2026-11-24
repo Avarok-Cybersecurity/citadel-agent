@@ -83,7 +83,10 @@ impl Tree {
         if new && self.entries.len() >= limits.max_entries as usize {
             return Some(LimitHit::Entries);
         }
-        if new && self.children(parent).count() >= limits.max_entries_per_dir as usize {
+        if new
+            && self.children.get(parent).map_or(0, |c| c.len())
+                >= limits.max_entries_per_dir as usize
+        {
             return Some(LimitHit::EntriesPerDir);
         }
         None

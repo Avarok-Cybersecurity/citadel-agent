@@ -12,6 +12,7 @@ members = [
     "citadel-app-id",
     "citadel-app-signature",
     "citadel-identity",
+    "citadel-vfs",
     "citadel-app-net-policy",
     "citadel-ihttp-types",
     "citadel-app-sdk-types",

@@ -24,6 +24,8 @@ pub enum NoticeKind {
     GroupInvite,
     FileOffer,
     IncomingCall,
+    /// The account's resume credential has run out: a click opens its sign-in.
+    SignInNeeded,
 }
 
 /// Where a click on a notice opens. The client builds the URL from its own
@@ -36,7 +38,7 @@ pub struct NoticeTarget {
     pub account: String,
     /// The workspace server as the user typed it; absent from older sessions.
     pub server_host: Option<String>,
-    /// `conversation:<peer>`, `call:<peer>` or `requests`.
+    /// `conversation:<peer>`, `call:<peer>`, `requests`, or `sign-in` for the account's sign-in.
     pub open: String,
 }
 

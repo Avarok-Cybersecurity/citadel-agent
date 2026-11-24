@@ -60,6 +60,7 @@ pub(crate) mod received_files;
 pub(crate) mod received_reads;
 pub(crate) mod reconnect;
 pub(crate) mod recovery_domain;
+pub(crate) mod resume;
 pub mod supervisor;
 
 use reconnect::policy::ReconnectPolicy;

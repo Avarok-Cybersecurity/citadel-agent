@@ -9,7 +9,7 @@
 //! One entry per CID, so the store is bounded by the accounts this agent has signed in.
 //! In memory only, like the sessions themselves.
 
-use citadel_internal_service_types::{FailureReason, SignedOutSession};
+use citadel_internal_service_types::{FailureReason, SessionRowStatus, SignedOutSession};
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -31,6 +31,7 @@ impl SignedOut {
             username,
             reason,
             reason_code,
+            dot: SessionRowStatus::of_signed_out(reason_code).map(SessionRowStatus::dot),
         };
         self.0.write().insert(cid, entry);
     }

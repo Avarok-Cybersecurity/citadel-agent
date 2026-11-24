@@ -23,6 +23,7 @@ extern "C" {
     fn documents(op: i32, ptr: i32, len: i32) -> i32;
     fn log(op: i32, ptr: i32, len: i32) -> i32;
     fn topic(op: i32, ptr: i32, len: i32) -> i32;
+    fn session(op: i32, ptr: i32, len: i32) -> i32;
     fn reply_len(handle: i32) -> i32;
     fn reply_read(handle: i32, ptr: i32, cap: i32) -> i32;
 }
@@ -56,6 +57,7 @@ impl RawAbi for Wasm {
                 Group::Documents => documents(op, p, l),
                 Group::Log => log(op, p, l),
                 Group::Topic => topic(op, p, l),
+                Group::Session => session(op, p, l),
             }
         }
     }

@@ -591,6 +591,8 @@ mod tests {
                         }) => InternalServicePayload::Response(
                             InternalServiceResponse::ConnectSuccess(
                                 citadel_internal_service_types::ConnectSuccess {
+                                    resume_valid_until_utc: None,
+                                    resume_max_lifetime_s: None,
                                     cid: 12345,
                                     request_id: Some(request_id),
                                     identity: None,
@@ -602,6 +604,8 @@ mod tests {
                             InternalServicePayload::Response(
                                 InternalServiceResponse::ConnectSuccess(
                                     citadel_internal_service_types::ConnectSuccess {
+                                        resume_valid_until_utc: None,
+                                        resume_max_lifetime_s: None,
                                         cid: 12345,
                                         request_id: None,
                                         identity: None,
@@ -628,6 +632,7 @@ mod tests {
         // Send a test message
         let request_id = Uuid::new_v4();
         let request = InternalServicePayload::Request(InternalServiceRequest::Connect {
+            resume_lifetime_s: None,
             request_id,
             username: "test_user".to_string(),
             server_address: "bench.work.avarok.net".to_string(),
@@ -681,6 +686,8 @@ mod tests {
                     let response =
                         InternalServicePayload::Response(InternalServiceResponse::ConnectSuccess(
                             citadel_internal_service_types::ConnectSuccess {
+                                resume_valid_until_utc: None,
+                                resume_max_lifetime_s: None,
                                 cid: 99999,
                                 request_id: None,
                                 identity: None,
@@ -702,6 +709,7 @@ mod tests {
 
         // Create a proper request payload and serialize it to JSON
         let request_payload = InternalServicePayload::Request(InternalServiceRequest::Connect {
+            resume_lifetime_s: None,
             request_id: Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap(),
             username: "frontend_user".to_string(),
             server_address: "bench.work.avarok.net".to_string(),
@@ -771,6 +779,8 @@ mod tests {
                     let response =
                         InternalServicePayload::Response(InternalServiceResponse::ConnectSuccess(
                             citadel_internal_service_types::ConnectSuccess {
+                                resume_valid_until_utc: None,
+                                resume_max_lifetime_s: None,
                                 cid: message_count,
                                 request_id: None,
                                 identity: None,
@@ -798,6 +808,7 @@ mod tests {
 
         for i in 1..=3 {
             let request = InternalServicePayload::Request(InternalServiceRequest::Connect {
+                resume_lifetime_s: None,
                 request_id: Uuid::new_v4(),
                 username: format!("test_user_{}", i),
                 server_address: "bench.work.avarok.net".to_string(),
@@ -861,6 +872,7 @@ mod tests {
         let mut client = WebSocketClient::connect(bound_addr).await.unwrap();
 
         let request = InternalServicePayload::Request(InternalServiceRequest::Connect {
+            resume_lifetime_s: None,
             request_id: Uuid::new_v4(),
             username: "test_user".to_string(),
             server_address: "bench.work.avarok.net".to_string(),

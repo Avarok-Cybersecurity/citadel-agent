@@ -38,9 +38,11 @@ mod apps_kv;
 mod apps_net;
 mod apps_settings;
 mod browser_console;
+mod failure_reason;
 mod multi_window;
 mod notices;
 mod pulled_read;
+mod resume;
 mod server_link;
 mod sign_in;
 mod sign_in_ceremony;
@@ -74,6 +76,7 @@ pub use conversation_api::{
     ConversationFailure, ConversationListResponse, ConversationPageResponse, ConversationUpdated,
     NotificationPreview, PeerRetention, Retention,
 };
+pub use failure_reason::FailureReason;
 pub use group_delivery::{
     GroupMessageResponse, GroupOwnershipTransferredNotification, GroupRestoredNotification,
     JoinedGroupOwner,
@@ -89,13 +92,14 @@ pub use notices::{
     NoticesHeardNotification,
 };
 pub use pulled_read::{ReadPulledFileChunkFailure, ReadPulledFileChunkSuccess};
+pub use resume::{ResumeCredentialExpired, SessionDot, SessionRowStatus};
 pub use server_link::{
     ServerConnectionLost, ServerReconnectFailed, ServerReconnected, SignedOutSession,
 };
 pub use sign_in::{
-    FailureReason, RecoverAccountFailure, RecoverAccountSuccess, RecoveryCodes,
-    SecurityKeyAnswerFailure, SecurityKeyAnswerSuccess, SecurityKeyChallengeNotification,
-    SecurityKeyPurpose, SignInManagementFailure, SignInManagementSuccess, StepUp,
+    RecoverAccountFailure, RecoverAccountSuccess, RecoveryCodes, SecurityKeyAnswerFailure,
+    SecurityKeyAnswerSuccess, SecurityKeyChallengeNotification, SecurityKeyPurpose,
+    SignInManagementFailure, SignInManagementSuccess, StepUp,
 };
 pub use sign_in_ceremony::SecurityKeyCeremony;
 pub use sign_in_wire::{
@@ -251,6 +255,17 @@ pub struct ConnectSuccess {
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub identity: Option<AccountIdentity>,
+    /// Until when this device stays signed in across dropped links without the account's
+    /// factors (Unix milliseconds, UTC): the resume credential this sign-in was granted.
+    /// Absent when none was asked for or the server issues none.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(type = "bigint | null", optional))]
+    pub resume_valid_until_utc: Option<u64>,
+    /// The longest the server lets a device stay signed in that way, in seconds; absent when
+    /// it issues no resume credentials.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub resume_max_lifetime_s: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -356,6 +371,11 @@ pub struct ServiceConnectionAccepted {
     /// This agent answers the Citadel apps requests (`AppFetch`, `AppKv`, `IhttpSend` and
     /// their companions).
     pub apps: bool,
+    /// This agent keeps an account's conversation with itself (the scratchpad, `peer_cid ==
+    /// cid`) and never sends any of it: no P2P command, and ILM refuses the account's own CID.
+    /// An agent without this would queue a note to the account's own CID, so a window offers
+    /// the scratchpad only when it is true.
+    pub notes_to_self: bool,
     /// This agent's `TYPES_HASH`. A page compares it with its WASM client's and,
     /// when they differ, says the two are out of step before anything fails to
     /// decode.
@@ -380,6 +400,7 @@ impl ServiceConnectionAccepted {
             native_picker,
             browser_console,
             apps: true,
+            notes_to_self: true,
             types_hash: TYPES_HASH.to_string(),
         })
     }
@@ -1264,6 +1285,7 @@ pub enum InternalServiceResponse {
     ServerConnectionLost(ServerConnectionLost),
     ServerReconnected(ServerReconnected),
     ServerReconnectFailed(ServerReconnectFailed),
+    ResumeCredentialExpired(ResumeCredentialExpired),
     SessionAttached(SessionAttached),
     SessionRoleNotification(SessionRoleNotification),
     AgentCapabilities(AgentCapabilities),
@@ -1350,6 +1372,12 @@ pub enum InternalServiceRequest {
         #[debug(with = secret_debug_fmt)]
         #[cfg_attr(feature = "typescript", ts(optional = nullable))]
         admission_token: Option<String>,
+        /// How long, in seconds, this device should stay signed in across dropped links
+        /// without the account's factors (a resume credential). The server grants no more
+        /// than its own maximum. Absent asks for none: the agent has no lifetime of its own.
+        #[serde(default)]
+        #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+        resume_lifetime_s: Option<u32>,
         #[cfg_attr(feature = "typescript", ts(type = "ConnectMode"))]
         connect_mode: ConnectMode,
         #[cfg_attr(feature = "typescript", ts(type = "UdpMode"))]
@@ -1410,6 +1438,10 @@ pub enum InternalServiceRequest {
         #[debug(with = secret_debug_fmt)]
         #[cfg_attr(feature = "typescript", ts(optional = nullable))]
         admission_token: Option<String>,
+        /// As `Connect::resume_lifetime_s`, for the sign-in this request ends in.
+        #[serde(default)]
+        #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+        resume_lifetime_s: Option<u32>,
     },
     /// Whether this agent holds an identity, and whether it is unlocked.
     IdentityStatus {
@@ -1496,6 +1528,10 @@ pub enum InternalServiceRequest {
         #[debug(with = secret_debug_fmt)]
         #[cfg_attr(feature = "typescript", ts(optional = nullable))]
         admission_token: Option<String>,
+        /// As `Connect::resume_lifetime_s`, for the sign-in this request ends in.
+        #[serde(default)]
+        #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+        resume_lifetime_s: Option<u32>,
     },
     /// Sign account `cid` in by its pinned username and domain (never recomputed) with the
     /// derived password, then challenge the server; a mismatch disconnects it.
@@ -1507,6 +1543,10 @@ pub enum InternalServiceRequest {
         session_security_settings: SessionSecuritySettings,
         #[cfg_attr(feature = "typescript", ts(type = "PreSharedKey | null"))]
         server_password: Option<PreSharedKey>,
+        /// As `Connect::resume_lifetime_s`, for the sign-in this request ends in.
+        #[serde(default)]
+        #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+        resume_lifetime_s: Option<u32>,
     },
     Message {
         request_id: Uuid,
@@ -2402,6 +2442,19 @@ pub struct SessionInformation {
     #[serde(default)]
     #[cfg_attr(feature = "typescript", ts(optional = nullable))]
     pub identity: Option<AccountIdentity>,
+    /// Where the session stands, and the dot to draw beside its row (`SessionRowStatus::dot`).
+    /// Always sent; a reader of an older agent's answer finds neither.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub status: Option<SessionRowStatus>,
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(optional = nullable))]
+    pub dot: Option<SessionDot>,
+    /// Until when the session's resume credential lasts (Unix milliseconds, UTC); absent
+    /// when it holds none.
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(type = "bigint | null", optional))]
+    pub resume_valid_until_utc: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -2669,6 +2722,8 @@ mod tests {
             cid: 0,
             request_id: None,
             identity: None,
+            resume_valid_until_utc: None,
+            resume_max_lifetime_s: None,
         });
         let error_response = InternalServiceResponse::ConnectFailure(ConnectFailure {
             cid: 0,
@@ -2687,6 +2742,8 @@ mod tests {
             cid: 0,
             request_id: None,
             identity: None,
+            resume_valid_until_utc: None,
+            resume_max_lifetime_s: None,
         });
         let notification_response =
             InternalServiceResponse::PeerRegisterNotification(PeerRegisterNotification {
@@ -2709,6 +2766,7 @@ mod tests {
             password: Some(SecBuffer::from(vec![])),
             security_key: false,
             recovery_phrase: None,
+            resume_lifetime_s: None,
             connect_mode: ConnectMode::Standard { force_login: false },
             udp_mode: UdpMode::Enabled,
             keep_alive_timeout: None,
@@ -2726,6 +2784,8 @@ mod tests {
             cid,
             request_id: None,
             identity: None,
+            resume_valid_until_utc: None,
+            resume_max_lifetime_s: None,
         });
 
         assert_eq!(request.cid(), cid);

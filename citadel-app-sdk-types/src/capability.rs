@@ -72,6 +72,7 @@ capabilities! {
     Documents = "documents" => Documents,
     GroupTopicSubscribe = "group.topic.subscribe" => Topic,
     GroupTopicPublish = "group.topic.publish" => Topic,
+    CitadelSession = "citadel.session" => Session,
 }
 
 impl Capability {

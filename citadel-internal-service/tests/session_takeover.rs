@@ -290,6 +290,7 @@ mod tests {
         // The load-bearing assertion. If the protocol session survived, this
         // Connect is refused with SessionManagerSessionAlreadyExists.
         other.0.send(InternalServiceRequest::Connect {
+            resume_lifetime_s: None,
             username: format!("{tag}.0"),
             server_address: server_addr.to_string(),
             password: Some(b"secret_0".to_vec().into()),

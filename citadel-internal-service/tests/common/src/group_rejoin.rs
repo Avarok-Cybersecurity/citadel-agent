@@ -54,6 +54,7 @@ pub async fn sign_in_again(
     let (new_tx, mut new_rx) = crate::open_localhost_connection(service_addr).await?;
     let connect_id = Uuid::new_v4();
     new_tx.send(InternalServiceRequest::Connect {
+        resume_lifetime_s: None,
         username: username.to_string(),
         server_address: server.to_string(),
         password: Some(password.to_vec().into()),

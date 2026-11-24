@@ -3,4 +3,4 @@
 /**
  * What a notice is about.
  */
-export type NoticeKind = "Message" | "PeerRequest" | "GroupInvite" | "FileOffer" | "IncomingCall";
+export type NoticeKind = "Message" | "PeerRequest" | "GroupInvite" | "FileOffer" | "IncomingCall" | "SignInNeeded";

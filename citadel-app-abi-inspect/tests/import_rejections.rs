@@ -167,3 +167,31 @@ fn intrinsic_groups_need_no_declaration_and_others_do() {
         }]
     );
 }
+
+#[test]
+fn the_session_import_needs_citadel_session_and_the_reserved_identity_name_is_unknown() {
+    let mut p = Parts::valid();
+    p.imports +=
+        r#"(import "citadel_app_abi_1" "session" (func (param i32 i32 i32) (result i32)))"#;
+    let wasm = p.wasm();
+    assert_eq!(
+        check(&wasm, &policy(&[Capability::Canvas])).reasons(),
+        [Rejection::UndeclaredGroup {
+            group: Group::Session
+        }]
+    );
+    let opened = check(
+        &wasm,
+        &policy(&[Capability::Canvas, Capability::CitadelSession]),
+    );
+    assert!(opened.is_accepted(), "{opened:?}");
+    let mut reserved = Parts::valid();
+    reserved.imports +=
+        r#"(import "citadel_app_abi_1" "identity" (func (param i32 i32 i32) (result i32)))"#;
+    assert_rejected_with(
+        &reserved,
+        &Rejection::UnknownImport {
+            name: "identity".into(),
+        },
+    );
+}

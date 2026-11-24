@@ -46,6 +46,8 @@ mod refused;
 #[cfg(feature = "ts")]
 mod ts_constants;
 #[cfg(feature = "ts")]
+mod ts_limits;
+#[cfg(feature = "ts")]
 pub use ts_constants::render as render_ts_constants;
 
 pub use bytes::Bytes;

@@ -10,6 +10,9 @@ mod storage;
 pub mod topic;
 mod ui;
 
+pub mod canvas_check;
+pub mod session;
+
 pub use canvas::*;
 pub use files::*;
 pub use ihttp::*;
@@ -19,6 +22,11 @@ pub use nodes::*;
 pub use storage::*;
 pub use topic::{TopicClose, TopicEvent, TopicOpen, TopicOpened, TopicPublish};
 pub use ui::*;
+
+pub use canvas_check::{CanvasDrawError, LIMIT_CANVAS_DRAW};
+pub use session::{
+    SessionClose, SessionEvent, SessionOpen, SessionSend, SessionState, SessionStatus,
+};
 
 use alloc::string::String;
 

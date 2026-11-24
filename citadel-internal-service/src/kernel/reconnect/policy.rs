@@ -89,6 +89,8 @@ pub enum GiveUp {
 pub fn refusal_reason(refused: ErrorCode) -> Option<FailureReason> {
     match refused {
         ErrorCode::PqSignInFailed => Some(FailureReason::SignInRefused),
+        ErrorCode::ResumeCredentialExpired => Some(FailureReason::ResumeCredentialExpired),
+        ErrorCode::ResumeCredentialRevoked => Some(FailureReason::ResumeCredentialRevoked),
         other => crate::kernel::sign_in::failure_reason(other),
     }
 }
@@ -195,7 +197,7 @@ impl ReconnectPolicy {
 /// the account ("Authentication failed"): the password this session kept is no longer the
 /// account's, or the account now asks for a factor a reconnect cannot give. It was retried
 /// for the whole ten minutes, 24 attempts, each refused the same way.
-const REFUSALS: [ErrorCode; 9] = [
+const REFUSALS: [ErrorCode; 12] = [
     ErrorCode::AccountClientNonExists,
     ErrorCode::AccountServerNonExists,
     ErrorCode::AccountInvalidUsername,
@@ -205,6 +207,12 @@ const REFUSALS: [ErrorCode; 9] = [
     ErrorCode::PqSignInAdmissionRequired,
     ErrorCode::PqSignInAdmissionFailed,
     ErrorCode::PqSignInFailed,
+    // The session's resume credential ran out, or predates a change to the account's
+    // sign-in: every further attempt would be refused the same way.
+    ErrorCode::ResumeCredentialExpired,
+    ErrorCode::ResumeCredentialRevoked,
+    // One side must be updated; no number of attempts changes that.
+    ErrorCode::ProtocolVersionUnsupported,
 ];
 
 /// Whether a failed connect is worth repeating.

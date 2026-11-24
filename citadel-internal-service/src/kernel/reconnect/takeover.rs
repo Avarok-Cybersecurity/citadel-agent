@@ -52,6 +52,8 @@ pub(crate) async fn take_over<T: IOInterface + Sync, R: Ratchet>(
         cid,
         request_id: Some(request_id),
         identity: None,
+        resume_valid_until_utc: None,
+        resume_max_lifetime_s: None,
     });
 
     // The caller proved the password (its fingerprint matched), so the sign-in is a password

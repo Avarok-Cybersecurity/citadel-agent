@@ -1,6 +1,5 @@
 //! `SignInManagement`: list, add, rename or remove an account's sign-in factors, set its policy,
-//! set its password, or replace its recovery phrase, through the SDK's `manage_sign_in` and
-//! `set_password`.
+//! set its password, or replace its recovery phrase, through the SDK's `change_sign_in`.
 //!
 //! A new phrase is also a new RE-VFS root: its seed becomes the account's root before the window
 //! is told, the session stores under its key from then on, and every object stored under the
@@ -14,7 +13,7 @@ use crate::kernel::reconnect::Reauth;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::revfs_seed;
 use crate::kernel::sign_in::key_relay::Asker;
-use crate::kernel::sign_in::reauth_change::{self, Change};
+use crate::kernel::sign_in::reauth_change::{self, Change, Fingerprint};
 use crate::kernel::sign_in::{factors, management_failure_reason};
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
@@ -23,7 +22,9 @@ use citadel_internal_service_types::{
     SignInManagementFailure, SignInManagementOp, SignInManagementOutcome, SignInManagementSuccess,
 };
 use citadel_sdk::logging::{info, warn};
-use citadel_sdk::prelude::{Ratchet, SignInManagementExt, SignInManagementOutcome as SdkOutcome};
+use citadel_sdk::prelude::{
+    Ratchet, ResumeCredential, SignInManagementExt, SignInManagementOp as SdkOp,
+};
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
@@ -75,8 +76,13 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             security_key: step_up.security_key,
             recovery_phrase: None,
             admission: None,
+            resume_lifetime_s: None,
         },
     );
+    // The resume credential this session holds goes with the change, so the server hands it
+    // back bound to the account as the change leaves it (kernel/resume).
+    let mut factors = factors;
+    factors.resume = resume_held(this, cid);
 
     let kind = op_name(&op);
     let adds_a_key = matches!(op, SignInManagementOp::AddSecurityKey { .. });
@@ -91,21 +97,19 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         }
         _ => String::new(),
     };
-    let outcome = match op {
-        SignInManagementOp::SetPassword { new_password } => handle
-            .set_password(new_password, factors)
-            .await
-            .map(|()| SdkOutcome::PasswordSet),
-        op => handle.manage_sign_in(op.to_sdk(&domain), factors).await,
+    let (sdk_op, new_password) = match op {
+        SignInManagementOp::SetPassword { new_password } => {
+            (SdkOp::SetPassword, Some(new_password))
+        }
+        op => (op.to_sdk(&domain), None),
     };
+    let changed = handle.change_sign_in(sdk_op, new_password, factors).await;
     drop(underway);
-    match outcome {
-        Ok(outcome) => {
+    match changed {
+        Ok(changed) => {
             info!(target: "citadel", "[SignIn] {kind} for session {cid} succeeded");
-            let outcome = SignInManagementOutcome::from(outcome);
-            if let Some(change) = change {
-                keep_what_now_signs_in(this, cid, change).await;
-            }
+            let outcome = SignInManagementOutcome::from(changed.outcome);
+            keep_what_now_signs_in(this, cid, change, changed.resume).await;
             if let SignInManagementOutcome::RecoveryPhrase(words) = &outcome {
                 new_root(this, cid, words).await;
             }
@@ -125,27 +129,44 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     }
 }
 
-/// The server accepted a change to how the account signs in: the session keeps what opens it
-/// from now on (sign_in/reauth_change.rs), and its fingerprint follows, so a window can reach
-/// it on the password only while the password alone still signs the account in.
+/// The resume credential `cid`'s session signs in again with, if it holds one.
+fn resume_held<T: IOInterface + Sync, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
+    cid: u64,
+) -> Option<ResumeCredential> {
+    let map = this.server_connection_map.read();
+    match &map.get(&cid)?.reconnect.reauth {
+        Reauth::Resume(credential) => Some(credential.clone()),
+        Reauth::Password(_) | Reauth::NeedsUser(_) => None,
+    }
+}
+
+/// The server accepted a change: the session keeps what opens it from now on
+/// (sign_in/reauth_change.rs), and its fingerprint follows, so a window can reach it on the
+/// password only while the password alone still signs the account in. `reissued` is the
+/// session's resume credential as the server re-bound it to the changed account.
 async fn keep_what_now_signs_in<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     cid: u64,
-    change: Change,
+    change: Option<Change>,
+    reissued: Option<ResumeCredential>,
 ) {
-    let kept = {
+    let (username, fingerprint) = {
         let mut map = this.server_connection_map.write();
         let Some(conn) = map.get_mut(&cid) else {
             return;
         };
-        conn.reconnect.reauth = reauth_change::after(conn.reconnect.reauth.clone(), change);
-        (conn.username.clone(), conn.reconnect.reauth.clone())
+        let fingerprint = reauth_change::fingerprint_after(&conn.reconnect.reauth, change.as_ref());
+        let current = conn.reconnect.reauth.clone();
+        conn.reconnect.reauth = reauth_change::kept_after(current, change, reissued);
+        (conn.username.clone(), fingerprint)
     };
-    let fingerprint = match kept {
-        (username, Reauth::Password(password)) => {
+    let fingerprint = match fingerprint {
+        Fingerprint::Unchanged => return,
+        Fingerprint::None => None,
+        Fingerprint::Of(password) => {
             crate::kernel::credential_fingerprint::derive(this.remote(), &username, password).await
         }
-        (_, Reauth::NeedsUser(_)) => None,
     };
     if let Some(conn) = this.server_connection_map.write().get_mut(&cid) {
         conn.credential_fingerprint = fingerprint;

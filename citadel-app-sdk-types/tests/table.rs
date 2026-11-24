@@ -6,7 +6,7 @@ use citadel_app_sdk_types::{Capability, Group, OPS};
 use std::collections::BTreeSet;
 
 /// Design 2.2 + R4.1, exactly. A rename or an addition must be made here deliberately.
-const DESIGN_CAPABILITIES: [&str; 33] = [
+const DESIGN_CAPABILITIES: [&str; 34] = [
     "canvas",
     "ui",
     "events",
@@ -40,27 +40,29 @@ const DESIGN_CAPABILITIES: [&str; 33] = [
     "documents",
     "group.topic.subscribe",
     "group.topic.publish",
+    "citadel.session",
 ];
 
-/// The ABI's import list, in index order.
-const DESIGN_GROUPS: [&str; 17] = [
-    "canvas",
-    "ui",
-    "events",
-    "navigate",
-    "nodes",
-    "md",
-    "files",
-    "chat",
-    "members",
-    "storage",
-    "net",
-    "ihttp",
-    "clipboard",
-    "notify",
-    "documents",
-    "log",
-    "topic",
+/// The ABI's import list, in index order, with its index. 17 is reserved for `identity`.
+const DESIGN_GROUPS: [(&str, i32); 18] = [
+    ("canvas", 0),
+    ("ui", 1),
+    ("events", 2),
+    ("navigate", 3),
+    ("nodes", 4),
+    ("md", 5),
+    ("files", 6),
+    ("chat", 7),
+    ("members", 8),
+    ("storage", 9),
+    ("net", 10),
+    ("ihttp", 11),
+    ("clipboard", 12),
+    ("notify", 13),
+    ("documents", 14),
+    ("log", 15),
+    ("topic", 16),
+    ("session", 18),
 ];
 
 #[test]
@@ -81,11 +83,14 @@ fn the_capabilities_are_the_design_list_by_name() {
 }
 
 #[test]
-fn the_groups_are_the_abi_imports_with_contiguous_indexes() {
-    let names: Vec<&str> = Group::ALL.iter().map(|g| g.import_name()).collect();
-    assert_eq!(names, DESIGN_GROUPS);
-    for (i, g) in Group::ALL.iter().enumerate() {
-        assert_eq!(g.index(), i as i32);
+fn the_groups_are_the_abi_imports_with_their_stable_indexes() {
+    let groups: Vec<(&str, i32)> = Group::ALL
+        .iter()
+        .map(|g| (g.import_name(), g.index()))
+        .collect();
+    assert_eq!(groups, DESIGN_GROUPS);
+    assert_eq!(Group::from_index(17), None, "reserved");
+    for g in Group::ALL {
         assert_eq!(Group::from_index(g.index()), Some(*g));
         assert_eq!(Group::from_import_name(g.import_name()), Some(*g));
         let wire: String =

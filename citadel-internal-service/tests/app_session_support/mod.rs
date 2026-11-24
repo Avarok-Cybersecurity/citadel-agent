@@ -1,7 +1,8 @@
 //! Helpers for `an_app_session_reconnects_under_its_cid.rs`: in-process Citadel servers that
 //! answer the identity challenge, the workspace server's grant question and (the app's server)
 //! echo every other frame; a front that can cut every link; and an agent with an identity and
-//! app egress, which reaches the app server as a pinned one.
+//! app egress, which reaches the app server as a pinned one: named by a domain with no port,
+//! dialled at the front's loopback address.
 //!
 //! The grant question and answer are JSON this test defines (`{"q":[install,tag]}`,
 //! `{"grant":{…}}`): the shipped codec is the workspace protocol's, in the parent repository.
@@ -11,9 +12,7 @@ use citadel_internal_service::kernel::identity::{
     IdentityConfig, MemoryIdentityStore, MonotonicClock, SignLimits,
 };
 use citadel_internal_service::kernel::CitadelWorkspaceService;
-use citadel_internal_service::{
-    AppNetConfig, AppSessionConfig, AuthoritySignal, HostNetAuthority, KernelGrant, SessionLimits,
-};
+use citadel_internal_service::{AppNetConfig, AppSessionConfig, PinEntry};
 use citadel_internal_service_test_common as common;
 use citadel_internal_service_test_common::node_settings::TestNode;
 use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
@@ -27,12 +26,17 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 
+mod authority;
+use authority::JsonAuthority;
+
 pub const APP_ID: &str = "work.synchronized.app";
 pub const ECHO: &[u8] = b"echo:";
 
-/// One in-process server: the name it signs under and every CID it accepted, in order.
+/// One in-process server: the name it signs under, where it is dialled, and every CID it
+/// accepted, in order.
 pub struct Node {
     pub domain: String,
+    pub dial: String,
     pub seed: [u8; 32],
     pub accepted: Arc<Mutex<Vec<u64>>>,
 }
@@ -79,15 +83,15 @@ fn answer(
     [ECHO, frame].concat()
 }
 
-/// A server on `listener`, signing as `localhost:<named_port>`, granting `grants` to every
+/// A server on `listener`, signing as `domain` and dialled at `dial`, granting `grants` to every
 /// install that asks.
 pub fn spawn_node(
     listener: std::net::TcpListener,
-    named_port: u16,
+    domain: String,
+    dial: String,
     seed: [u8; 32],
     grants: Vec<String>,
 ) -> Result<Node, Box<dyn Error>> {
-    let domain = format!("localhost:{named_port}");
     let canonical = canonical_domain(&domain)?;
     let accepted = Arc::new(Mutex::new(Vec::new()));
     let seen = accepted.clone();
@@ -124,27 +128,30 @@ pub fn spawn_node(
     });
     Ok(Node {
         domain,
+        dial,
         seed,
         accepted,
     })
 }
 
-/// A server reached directly at its own port.
+/// A server reached directly at its own port, and named by it: `localhost:<port>`.
 pub async fn spawn_direct(seed: [u8; 32], grants: Vec<String>) -> Result<Node, Box<dyn Error>> {
     let listener = std::net::TcpListener::bind(first_localhost().await?)?;
-    let port = listener.local_addr()?.port();
-    spawn_node(listener, port, seed, grants)
+    let named = format!("localhost:{}", listener.local_addr()?.port());
+    spawn_node(listener, named.clone(), named, seed, grants)
 }
 
-/// A server reached only through a front whose `cut` resets every live link at once.
+/// A server named `domain`, reached only through a front at `localhost:<port>` whose `cut`
+/// resets every live link at once.
 pub async fn spawn_behind_front(
     seed: [u8; 32],
+    domain: &str,
 ) -> Result<(Node, watch::Sender<u64>), Box<dyn Error>> {
     let front = tokio::net::TcpListener::bind(first_localhost().await?).await?;
-    let port = front.local_addr()?.port();
+    let dial = format!("localhost:{}", front.local_addr()?.port());
     let listener = std::net::TcpListener::bind(first_localhost().await?)?;
     let upstream = listener.local_addr()?;
-    let node = spawn_node(listener, port, seed, Vec::new())?;
+    let node = spawn_node(listener, domain.to_string(), dial, seed, Vec::new())?;
     let (cut, _) = watch::channel(0u64);
     let cuts = cut.clone();
     tokio::spawn(async move {
@@ -165,45 +172,9 @@ pub async fn spawn_behind_front(
     Ok((node, cut))
 }
 
-struct JsonAuthority;
-
-impl HostNetAuthority for JsonAuthority {
-    fn grant_query(&self, install_id: &str, tag: u64) -> Result<Vec<u8>, String> {
-        serde_json::to_vec(&json!({"q": [install_id, tag]})).map_err(|e| e.to_string())
-    }
-
-    fn classify(&self, frame: &[u8]) -> AuthoritySignal {
-        let Ok(value) = serde_json::from_slice::<Value>(frame) else {
-            return AuthoritySignal::Unrelated;
-        };
-        let grant = &value["grant"];
-        let (Some(install_id), Some(tag)) = (grant["install_id"].as_str(), grant["tag"].as_u64())
-        else {
-            return AuthoritySignal::Unrelated;
-        };
-        let servers = grant["servers"].as_array().into_iter().flatten();
-        AuthoritySignal::Grant {
-            install_id: install_id.to_string(),
-            tag,
-            grant: Some(KernelGrant {
-                app_id: APP_ID.to_string(),
-                hosts: Vec::new(),
-                private: false,
-                servers: servers
-                    .filter_map(|s| s.as_str().map(String::from))
-                    .collect(),
-                session: Some(SessionLimits {
-                    max_msg_bytes: 4096,
-                    max_msgs_per_s: 8,
-                }),
-            }),
-        }
-    }
-}
-
 /// An agent holding an identity, asking the workspace server about installs, with `app` a
-/// pinned server (in-process servers speak TCP, not the `wss://` a well-known document names);
-/// its accounts under `store`.
+/// pinned server dialled at `app.dial` (in-process servers speak TCP, not the `wss://` a
+/// well-known document names); its accounts under `store`.
 pub async fn spawn_agent(
     app: &Node,
     store: &std::path::Path,
@@ -231,9 +202,11 @@ pub async fn spawn_agent(
         },
         Arc::new(JsonAuthority),
     )
-    .with_app_sessions(AppSessionConfig {
-        pinned_servers: [(app.domain.clone(), app.fp())].into(),
-    });
+    .with_app_sessions(AppSessionConfig::new([PinEntry {
+        domain: app.domain.clone(),
+        fingerprint: app.fp(),
+        dial: app.dial.clone(),
+    }])?);
     let mut builder = NodeBuilder::<StackedRatchet>::default();
     let node = common::test_stun_servers()
         .apply(&mut builder)

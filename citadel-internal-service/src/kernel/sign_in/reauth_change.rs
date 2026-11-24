@@ -10,7 +10,7 @@
 use super::KEY_REAUTH;
 use crate::kernel::reconnect::Reauth;
 use citadel_internal_service_types::{SignInManagementOp, SignInPolicy};
-use citadel_sdk::prelude::SecBuffer;
+use citadel_sdk::prelude::{ResumeCredential, SecBuffer};
 
 /// The part of a management change that decides how the account signs in from now on.
 pub(crate) enum Change {
@@ -47,6 +47,10 @@ impl Change {
 pub(crate) fn after(current: Reauth, change: Change) -> Reauth {
     match (current, change) {
         (Reauth::NeedsUser(reason), _) => Reauth::NeedsUser(reason),
+        // The server re-binds a credential the change was made with (requests/
+        // sign_in_management.rs puts the new one here); one it did not re-bind is refused by
+        // name at the next reconnect, which says more than giving it up here would.
+        (Reauth::Resume(credential), _) => Reauth::Resume(credential),
         (Reauth::Password(password), Change::Policy(SignInPolicy::Password)) => {
             Reauth::Password(password)
         }
@@ -58,6 +62,44 @@ pub(crate) fn after(current: Reauth, change: Change) -> Reauth {
     }
 }
 
+/// What a session keeps once the server has accepted a change it made. A credential the
+/// server re-bound takes the place of the one the session held; nothing else is given one.
+pub(crate) fn kept_after(
+    current: Reauth,
+    change: Option<Change>,
+    reissued: Option<ResumeCredential>,
+) -> Reauth {
+    match (current, reissued, change) {
+        (Reauth::Resume(_), Some(credential), _) => Reauth::Resume(credential),
+        (current, _, Some(change)) => after(current, change),
+        (current, _, None) => current,
+    }
+}
+
+/// What a change does to the fingerprint a window proves the password against.
+pub(crate) enum Fingerprint {
+    Unchanged,
+    /// The password no longer signs the account in by itself.
+    None,
+    /// The password that now does.
+    Of(SecBuffer),
+}
+
+/// The fingerprint of a session that signed in again with `before`, once `change` is made. A
+/// session that keeps its password is fingerprinted from the one it keeps; one that keeps a
+/// resume credential has no password, so its fingerprint follows the change itself.
+pub(crate) fn fingerprint_after(before: &Reauth, change: Option<&Change>) -> Fingerprint {
+    let asks_for_a_key = |policy: &SignInPolicy| {
+        matches!(policy, SignInPolicy::PasswordAndKey | SignInPolicy::KeyOnly)
+    };
+    match (before, change) {
+        (_, None) | (Reauth::NeedsUser(_), _) => Fingerprint::Unchanged,
+        (_, Some(Change::Password(new_password))) => Fingerprint::Of(new_password.clone()),
+        (_, Some(Change::Policy(policy))) if asks_for_a_key(policy) => Fingerprint::None,
+        (_, Some(Change::Policy(_))) => Fingerprint::Unchanged,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,13 +108,13 @@ mod tests {
     fn kept(reauth: &Reauth) -> Option<&[u8]> {
         match reauth {
             Reauth::Password(password) => Some(password.as_ref()),
-            Reauth::NeedsUser(_) => None,
+            Reauth::Resume(_) | Reauth::NeedsUser(_) => None,
         }
     }
 
     fn needs(reauth: &Reauth) -> Option<&'static str> {
         match reauth {
-            Reauth::Password(_) => None,
+            Reauth::Password(_) | Reauth::Resume(_) => None,
             Reauth::NeedsUser(reason) => Some(reason),
         }
     }

@@ -1,25 +1,43 @@
-//! One reconnect attempt: the SDK connect, with the session's password, bounded by the
-//! policy's attempt timeout. Moved out of task.rs unchanged but for the password, which the
-//! run takes from the session's `Reauth` before it gets here.
+//! One reconnect attempt: the SDK connect, with what the session kept to sign in again,
+//! bounded by the policy's attempt timeout.
 
 use super::policy::ReconnectPolicy;
-use super::Credentials;
+use super::{Credentials, Reauth};
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_sdk::prelude::{
     AuthenticationRequest, CitadelClientServerConnection, NetworkError, ProtocolRemoteExt, Ratchet,
-    SecBuffer,
+    SignInFactors,
 };
+
+/// The sign-in a reconnect makes for `username` with what its session kept, or the reason it
+/// cannot make one without the user. A resume credential signs in by itself; the SDK refuses
+/// an expired one by name before it dials.
+pub(super) fn sign_in_again(
+    username: String,
+    reauth: &Reauth,
+) -> Result<AuthenticationRequest, &'static str> {
+    match reauth {
+        Reauth::Password(password) => Ok(AuthenticationRequest::credentialed(
+            username,
+            password.clone(),
+        )),
+        Reauth::Resume(credential) => Ok(AuthenticationRequest::sign_in(
+            username,
+            SignInFactors::resume(credential.clone()),
+        )),
+        Reauth::NeedsUser(reason) => Err(reason),
+    }
+}
 
 pub(super) async fn once<T: IOInterface + Sync, R: Ratchet>(
     this: &CitadelWorkspaceService<T, R>,
     policy: &ReconnectPolicy,
-    username: String,
-    password: SecBuffer,
+    auth: AuthenticationRequest,
     credentials: Credentials,
 ) -> Result<CitadelClientServerConnection<R>, NetworkError> {
     let connect = this.remote().connect(
-        AuthenticationRequest::credentialed(username, password),
+        auth,
         crate::kernel::requests::connect_mode::server_connect_mode(
             credentials.connect_mode,
             crate::kernel::requests::connect_mode::LoginOrigin::AutomaticReconnect,

@@ -1,6 +1,7 @@
 //! THE op table: every import group with its number, and every op with its number, argument
 //! struct, reply type and the capabilities that admit it. Group numbers are stable indexes (the
-//! TypeScript host reads them from `bindings/AbiConstants.ts`); op 0 is never assigned.
+//! TypeScript host reads them from `bindings/AbiConstants.ts`), not positions: a retired or
+//! reserved number leaves a gap. Op 0 is never assigned.
 
 use crate::calls::*;
 use crate::codec::{decode, encode, DecodeError};
@@ -134,5 +135,11 @@ groups! {
         TopicOpen = 1 -> TopicOpened, [GroupTopicSubscribe, GroupTopicPublish];
         TopicPublish = 2 -> (), GroupTopicPublish;
         TopicClose = 3 -> (), [GroupTopicSubscribe, GroupTopicPublish];
+    }
+    // 17 is reserved for `identity` (CW-4): no group takes it.
+    Session = 18, "session", SessionOps {
+        SessionOpen = 1 -> SessionState, CitadelSession;
+        SessionSend = 2 -> (), CitadelSession;
+        SessionClose = 3 -> (), CitadelSession;
     }
 }

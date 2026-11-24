@@ -1,0 +1,126 @@
+{
+ "source": "the same pair as 1002 holds it",
+ "me": 1002,
+ "peer": 1001,
+ "tree": {
+  "name": "",
+  "type": "directory",
+  "path": "/",
+  "children": [
+   {
+    "name": "Projects",
+    "type": "directory",
+    "path": "/Projects",
+    "children": [
+     {
+      "name": "plan.md",
+      "type": "file",
+      "path": "/Projects/plan.md",
+      "fileState": "Hosted",
+      "createdAt": 110,
+      "updatedAt": 111,
+      "fileMetadata": {
+       "fileId": "f-remote",
+       "fileName": "plan.md",
+       "fileSize": 12,
+       "fileType": "text/markdown",
+       "virtualDirectory": "/1001/f-remote",
+       "uploadedByCid": 1001
+      }
+     },
+     {
+      "name": "theirs.bin",
+      "type": "file",
+      "path": "/Projects/theirs.bin",
+      "fileState": "Remote",
+      "createdAt": 120,
+      "updatedAt": 121,
+      "fileMetadata": {
+       "fileId": "f-hosted",
+       "fileName": "theirs.bin",
+       "fileSize": 34,
+       "fileType": "application/octet-stream",
+       "virtualDirectory": "/1002/f-hosted",
+       "uploadedByCid": 1002
+      }
+     }
+    ],
+    "createdAt": 100,
+    "updatedAt": 101
+   },
+   {
+    "name": "Received Files",
+    "type": "directory",
+    "path": "/Received Files",
+    "children": [
+     {
+      "name": "report.pdf",
+      "type": "file",
+      "path": "/Received Files/report.pdf",
+      "fileState": "Received",
+      "createdAt": 60,
+      "updatedAt": 61,
+      "fileMetadata": {
+       "fileId": "t-sent",
+       "fileName": "report.pdf",
+       "fileSize": 50,
+       "fileType": "application/pdf",
+       "virtualDirectory": "",
+       "uploadedByCid": 1001
+      }
+     }
+    ],
+    "createdAt": 10,
+    "updatedAt": 11
+   },
+   {
+    "name": "Sent Files",
+    "type": "directory",
+    "path": "/Sent Files",
+    "children": [
+     {
+      "name": "photo.jpg",
+      "type": "file",
+      "path": "/Sent Files/photo.jpg",
+      "fileState": "Sent",
+      "createdAt": 70,
+      "updatedAt": 71,
+      "fileMetadata": {
+       "fileId": "t-1",
+       "fileName": "photo.jpg",
+       "fileSize": 77,
+       "fileType": "image/jpeg",
+       "virtualDirectory": "",
+       "uploadedByCid": 1002
+      }
+     }
+    ],
+    "createdAt": 10,
+    "updatedAt": 11
+   }
+  ],
+  "createdAt": 1,
+  "updatedAt": 2
+ },
+ "received": {
+  "t-sent": {
+   "sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+   "len": 50
+  }
+ },
+ "expect": {
+  "ops": [
+   "revfs-dir:/Projects in root \"Projects\" none owner 1002 mode 770 at 100",
+   "revfs-file:f-remote in revfs-dir:/Projects \"plan.md\" revfs(owner 1001,host 1002,/1001/f-remote,12,text/markdown) owner 1001 mode 660 at 110",
+   "revfs-file:f-hosted in revfs-dir:/Projects \"theirs.bin\" revfs(owner 1002,host 1001,/1002/f-hosted,34,application/octet-stream) owner 1002 mode 660 at 120",
+   "seed:Transfers in root \"Transfers\" none owner 1002 mode 770 at 60",
+   "transfer:t-sent in seed:Transfers \"report.pdf\" standard(cdcdcdcd…,50,application/pdf) owner 1002 mode 660 at 60"
+  ],
+  "skipped": [
+   [
+    "/Sent Files/photo.jpg",
+    "SentRecord"
+   ]
+  ]
+ }
+}

@@ -1,0 +1,225 @@
+{
+ "source": "per-peer RE-VFS tree, key 1001_1002, as the page stored it (fields of revfs-types.ts)",
+ "me": 1001,
+ "peer": 1002,
+ "tree": {
+  "name": "",
+  "type": "directory",
+  "path": "/",
+  "children": [
+   {
+    "name": "Projects",
+    "type": "directory",
+    "path": "/Projects",
+    "children": [
+     {
+      "name": "plan.md",
+      "type": "file",
+      "path": "/Projects/plan.md",
+      "fileState": "Remote",
+      "createdAt": 110,
+      "updatedAt": 111,
+      "fileMetadata": {
+       "fileId": "f-remote",
+       "fileName": "plan.md",
+       "fileSize": 12,
+       "fileType": "text/markdown",
+       "virtualDirectory": "/1001/f-remote",
+       "uploadedByCid": 1001
+      }
+     },
+     {
+      "name": "theirs.bin",
+      "type": "file",
+      "path": "/Projects/theirs.bin",
+      "fileState": "Hosted",
+      "createdAt": 120,
+      "updatedAt": 121,
+      "fileMetadata": {
+       "fileId": "f-hosted",
+       "fileName": "theirs.bin",
+       "fileSize": 34,
+       "fileType": "application/octet-stream",
+       "virtualDirectory": "/1002/f-hosted",
+       "uploadedByCid": 1002
+      }
+     },
+     {
+      "name": "wrong.txt",
+      "type": "file",
+      "path": "/Projects/wrong.txt",
+      "fileState": "Hosted",
+      "createdAt": 130,
+      "updatedAt": 131,
+      "fileMetadata": {
+       "fileId": "f-wrong",
+       "fileName": "wrong.txt",
+       "fileSize": 1,
+       "fileType": "text/plain",
+       "virtualDirectory": "/1001/f-wrong",
+       "uploadedByCid": 1001
+      }
+     },
+     {
+      "name": "nometa.txt",
+      "type": "file",
+      "path": "/Projects/nometa.txt",
+      "fileState": "Remote",
+      "createdAt": 140,
+      "updatedAt": 141
+     },
+     {
+      "name": "Résumés",
+      "type": "directory",
+      "path": "/Projects/Résumés",
+      "children": [],
+      "createdAt": 150,
+      "updatedAt": 151
+     }
+    ],
+    "createdAt": 100,
+    "updatedAt": 101
+   },
+   {
+    "name": "a/b",
+    "type": "directory",
+    "path": "/a\\/b",
+    "children": [
+     {
+      "name": "inside.txt",
+      "type": "file",
+      "path": "/a\\/b/inside.txt",
+      "fileState": "Remote",
+      "createdAt": 95,
+      "updatedAt": 96,
+      "fileMetadata": {
+       "fileId": "f-inside",
+       "fileName": "inside.txt",
+       "fileSize": 3,
+       "fileType": "text/plain",
+       "virtualDirectory": "/1001/f-inside",
+       "uploadedByCid": 1001
+      }
+     }
+    ],
+    "createdAt": 95,
+    "updatedAt": 96
+   },
+   {
+    "name": "Archive",
+    "type": "directory",
+    "path": "/Archive",
+    "children": [],
+    "createdAt": 90,
+    "updatedAt": 91
+   },
+   {
+    "name": "Sent Files",
+    "type": "directory",
+    "path": "/Sent Files",
+    "children": [
+     {
+      "name": "report.pdf",
+      "type": "file",
+      "path": "/Sent Files/report.pdf",
+      "fileState": "Sent",
+      "createdAt": 60,
+      "updatedAt": 61,
+      "fileMetadata": {
+       "fileId": "t-sent",
+       "fileName": "report.pdf",
+       "fileSize": 50,
+       "fileType": "application/pdf",
+       "virtualDirectory": "",
+       "uploadedByCid": 1001
+      }
+     }
+    ],
+    "createdAt": 10,
+    "updatedAt": 11
+   },
+   {
+    "name": "Received Files",
+    "type": "directory",
+    "path": "/Received Files",
+    "children": [
+     {
+      "name": "photo.jpg",
+      "type": "file",
+      "path": "/Received Files/photo.jpg",
+      "fileState": "Received",
+      "createdAt": 70,
+      "updatedAt": 71,
+      "fileMetadata": {
+       "fileId": "t-1",
+       "fileName": "photo.jpg",
+       "fileSize": 77,
+       "fileType": "image/jpeg",
+       "virtualDirectory": "",
+       "uploadedByCid": 1002
+      }
+     },
+     {
+      "name": "old.zip",
+      "type": "file",
+      "path": "/Received Files/old.zip",
+      "fileState": "Received",
+      "createdAt": 80,
+      "updatedAt": 81,
+      "fileMetadata": {
+       "fileId": "t-2",
+       "fileName": "old.zip",
+       "fileSize": 88,
+       "fileType": "application/zip",
+       "virtualDirectory": "",
+       "uploadedByCid": 1002
+      }
+     }
+    ],
+    "createdAt": 10,
+    "updatedAt": 11
+   }
+  ],
+  "createdAt": 1,
+  "updatedAt": 2
+ },
+ "received": {
+  "t-1": {
+   "sha256": "abababababababababababababababababababababababababababababababab",
+   "len": 77
+  }
+ },
+ "expect": {
+  "ops": [
+   "revfs-dir:/Archive in root \"Archive\" none owner 1001 mode 770 at 90",
+   "revfs-dir:/Projects in root \"Projects\" none owner 1001 mode 770 at 100",
+   "revfs-dir:/Projects/Résumés in revfs-dir:/Projects \"Résumés\" none owner 1001 mode 770 at 150",
+   "revfs-file:f-remote in revfs-dir:/Projects \"plan.md\" revfs(owner 1001,host 1002,/1001/f-remote,12,text/markdown) owner 1001 mode 660 at 110",
+   "revfs-file:f-hosted in revfs-dir:/Projects \"theirs.bin\" revfs(owner 1002,host 1001,/1002/f-hosted,34,application/octet-stream) owner 1002 mode 660 at 120",
+   "seed:Transfers in root \"Transfers\" none owner 1001 mode 770 at 70",
+   "transfer:t-1 in seed:Transfers \"photo.jpg\" standard(abababab…,77,image/jpeg) owner 1001 mode 660 at 70"
+  ],
+  "skipped": [
+   [
+    "/Projects/wrong.txt",
+    "Inconsistent"
+   ],
+   [
+    "/Projects/nometa.txt",
+    "NoMetadata"
+   ],
+   [
+    "/a\\/b",
+    "BadName"
+   ],
+   [
+    "/Sent Files/report.pdf",
+    "SentRecord"
+   ],
+   [
+    "/Received Files/old.zip",
+    "BytesGone"
+   ]
+  ]
+ }
+}

@@ -1,0 +1,65 @@
+{
+ "source": "node n1: chat_documents_store and AttachmentIndex as the kernel holds them",
+ "node_id": "n1",
+ "documents": [
+  [
+   "d1",
+   {
+    "content": "Q4 plan",
+    "sender_cid": 1001
+   }
+  ],
+  [
+   "d2",
+   null
+  ]
+ ],
+ "files": [
+  [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "size_bytes": 2048,
+    "uploaders": {
+     "bob": 1002,
+     "alice": 1001
+    },
+    "messages": [
+     9,
+     7
+    ],
+    "uploaded_at_ms": 300
+   },
+   {
+    "name": "pic.png",
+    "mime": "image/png"
+   }
+  ],
+  [
+   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   {
+    "size_bytes": 5,
+    "uploaders": {
+     "carol": 1003
+    },
+    "messages": [],
+    "uploaded_at_ms": 310
+   },
+   null
+  ]
+ ],
+ "expect": {
+  "ops": [
+   "seed:Documents in root \"Documents\" none owner server mode 770 at 0",
+   "chat-doc:d1 in seed:Documents \"Q4 plan\" doc(d1) owner 1001 mode 660 at 0",
+   "chat-doc:d2 in seed:Documents \"d2\" doc(d2) owner server mode 660 at 0",
+   "seed:Chat files in root \"Chat files\" none owner server mode 770 at 300",
+   "chat-file:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa in seed:Chat files \"pic.png\" standard(aaaaaaaa\u2026,2048,image/png) owner 1001 mode 660 at 300"
+  ],
+  "skipped": [
+   [
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "UnsharedUpload"
+   ]
+  ]
+ }
+}

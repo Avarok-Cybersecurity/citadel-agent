@@ -17,6 +17,8 @@ citadel-internal-service-types = { workspace = true }
 citadel-internal-service-connector = { workspace = true }
 # The canonical domain a RE-VFS key is bound to (src/pq_files.rs), as the agent derives it.
 citadel-identity = { workspace = true }
+# The agent's own port (src/ports.rs never hands it out).
+citadel-app-net-policy = { workspace = true }
 futures = { workspace = true }
 # Each test's own browser-transfer root (`test_transfers`).
 tempfile = "3"

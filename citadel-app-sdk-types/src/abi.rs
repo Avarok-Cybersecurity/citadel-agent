@@ -23,6 +23,12 @@
 pub const NAMESPACE: &str = "citadel_app_abi_1";
 /// The ABI identifier a manifest's `sdk.abi` names.
 pub const ABI_ID: &str = "citadel-app-abi-1";
+/// The minor that added the CW-5 canvas commands and `AppEvent::Activate`. A guest paints them
+/// only when `AppContext::sdk_abi_minor` is at least this; an older host refuses the frame.
+pub const ABI_MINOR_CANVAS_EXT: u32 = 1;
+/// The ABI minor this crate defines: additive changes within `ABI_ID`. A host sends it as
+/// `AppContext::sdk_abi_minor`.
+pub const ABI_MINOR: u32 = ABI_MINOR_CANVAS_EXT;
 /// The memory import's field name. The module must import it, never define it.
 pub const MEMORY: &str = "memory";
 /// `(handle: i32) -> i32`: the reply's length, or an [`AbiError`].

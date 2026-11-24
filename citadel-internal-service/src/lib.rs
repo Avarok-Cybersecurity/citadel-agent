@@ -16,7 +16,8 @@ pub use kernel::supervisor::{Backoff, SupervisorPolicy, AGENT_SUPERVISOR};
 // can call it before the runtime spins up, without exposing the full
 // internal `requests::file` module.
 pub use kernel::apps::{
-    AppNetConfig, AppSessionConfig, AuthoritySignal, HostNetAuthority, KernelGrant, SessionLimits,
+    AppNetConfig, AppSessionConfig, AuthoritySignal, HostNetAuthority, KernelGrant, PinEntry,
+    PinError, PinnedServer, SessionLimits,
 };
 pub use kernel::requests::file::upload::sweep_stale_browser_transfers;
 pub use kernel::BrowserTransferRoot;

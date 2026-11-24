@@ -1,6 +1,6 @@
 //! What the host delivers through `app_event`, one CBOR [`AppEvent`] per call.
 
-use crate::calls::{Caller, IhttpFrame, StorageBackend, TopicEvent};
+use crate::calls::{Caller, IhttpFrame, SessionEvent, StorageBackend, TopicEvent};
 use crate::lifecycle::SuspendReason;
 use crate::Bytes;
 use alloc::string::String;
@@ -89,5 +89,9 @@ abi_types! {
         /// name, its MIME type (empty when none was recorded) and its bytes, read on this device
         /// and at most `opens.max_bytes`. Delivered to an instance on `opens.surface`.
         OpenFile { name: String, mime: String, bytes: Bytes },
+        /// Something happened on `session`, which the app opened (`citadel.session`).
+        Session { session: u32, event: SessionEvent },
+        /// The user activated the canvas `Region` `id` (keyboard or pointer). ABI minor 1.
+        Activate { id: String },
     }
 }

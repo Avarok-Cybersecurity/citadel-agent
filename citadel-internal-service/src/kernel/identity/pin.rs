@@ -47,6 +47,12 @@ impl Pin {
         self.server_pk.is_some()
     }
 
+    /// Registered from a fetched `/.well-known/citadel`, which dates it; a `Pinned` registration
+    /// has no document and never records a date.
+    pub(crate) fn discovered(&self) -> bool {
+        self.issued_at_s.is_some()
+    }
+
     pub(crate) fn wire(&self) -> AccountIdentity {
         AccountIdentity {
             handle: self.handle.clone(),

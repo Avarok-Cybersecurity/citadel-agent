@@ -805,6 +805,7 @@ version = "0.1.0"
 dependencies = [
  "ciborium",
  "serde",
+ "serde_json",
  "ts-rs",
 ]
 
@@ -963,6 +964,7 @@ name = "citadel-internal-service-types"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "citadel-app-sdk-types",
  "citadel-internal-service-macros",
  "citadel_types",
  "custom_debug",

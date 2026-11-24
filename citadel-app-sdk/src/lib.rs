@@ -34,6 +34,7 @@ mod pending;
 mod route;
 #[doc(hidden)]
 pub mod rt;
+pub mod session;
 pub mod topic;
 
 #[cfg(target_arch = "wasm32")]

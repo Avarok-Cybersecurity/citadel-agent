@@ -134,6 +134,7 @@ async fn an_app_session_reconnects_under_its_cid() -> Result<(), Box<dyn Error>>
 
     let request_id = Uuid::new_v4();
     let register = InternalServiceRequest::RegisterIdentity {
+        resume_lifetime_s: None,
         request_id,
         server_addr: member_server.domain.clone(),
         handle: "alice".to_string(),

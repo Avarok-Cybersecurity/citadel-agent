@@ -37,6 +37,7 @@ async fn sign_in(
     common::send(
         sink,
         InternalServiceRequest::Connect {
+            resume_lifetime_s: None,
             request_id,
             username: name.to_string(),
             server_address: server.to_string(),

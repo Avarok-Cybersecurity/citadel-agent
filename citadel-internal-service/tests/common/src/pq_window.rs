@@ -38,6 +38,8 @@ pub struct Offer {
     pub recovery_phrase: Option<String>,
     /// A Turnstile token, for a server that checks fresh sign-ins.
     pub admission: Option<String>,
+    /// How long, in seconds, to ask to stay signed in across dropped links.
+    pub resume_lifetime_s: Option<u32>,
 }
 
 /// The request's final answer, and what was asked of the window on the way.
@@ -155,6 +157,7 @@ impl Window {
     ) -> Result<Result<Registered, (String, Option<FailureReason>)>, Box<dyn Error>> {
         let request_id = Uuid::new_v4();
         self.send(InternalServiceRequest::Register {
+            resume_lifetime_s: None,
             request_id,
             server_addr: server.to_string(),
             full_name: username.to_string(),
@@ -187,6 +190,7 @@ impl Window {
     ) -> Result<Outcome, Box<dyn Error>> {
         let request_id = Uuid::new_v4();
         self.send(InternalServiceRequest::Connect {
+            resume_lifetime_s: offer.resume_lifetime_s,
             request_id,
             username: username.to_string(),
             server_address: server.to_string(),

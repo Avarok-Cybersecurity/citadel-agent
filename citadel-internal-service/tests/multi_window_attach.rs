@@ -100,6 +100,7 @@ mod tests {
         let mut legacy = open_window(accounts.addr).await?;
 
         legacy.0.send(InternalServiceRequest::Connect {
+            resume_lifetime_s: None,
             request_id: Uuid::new_v4(),
             username: "mw.legacy.0".to_string(),
             server_address: accounts.server_addr.to_string(),

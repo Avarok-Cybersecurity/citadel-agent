@@ -134,6 +134,7 @@ async fn an_issuer_only_server_is_refused_no_citadel_endpoint() {
 
     create(&svc).await;
     let request = InternalServiceRequest::RegisterIdentity {
+        resume_lifetime_s: None,
         request_id: Uuid::new_v4(),
         server_addr: "work.avarok.net".into(),
         handle: "alice".into(),

@@ -1,4 +1,5 @@
 use crate::kernel::requests::HandledRequestResult;
+use crate::kernel::resume::status::standing;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
@@ -76,7 +77,11 @@ fn build_response_from_internal_state<T: IOInterface, R: Ratchet>(
         // idle system -- 17% of the whole internal-service log.
         debug!(target: "citadel", "GetSessions: Session {} for user {} attached to connections {:?}", cid, connection.username, conn_id);
 
+        let standing = standing(connection.link, &connection.reconnect.reauth);
         let mut session = SessionInformation {
+            status: Some(standing.status),
+            dot: Some(standing.status.dot()),
+            resume_valid_until_utc: standing.resume_valid_until_utc,
             cid: *cid,
             username: connection.username.clone(),
             server_address: connection.server_address.clone(),

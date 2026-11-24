@@ -77,6 +77,8 @@ async fn handle_request(
 
             InternalServicePayload::Response(InternalServiceResponse::ConnectSuccess(
                 citadel_internal_service_types::ConnectSuccess {
+                    resume_valid_until_utc: None,
+                    resume_max_lifetime_s: None,
                     cid: 12345 + message_count, // Unique CID for each connection
                     request_id: Some(request_id),
                     identity: None,

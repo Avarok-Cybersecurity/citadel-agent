@@ -32,6 +32,7 @@ async fn refused_registration(
     let request_id = Uuid::new_v4();
     window
         .send(InternalServiceRequest::Register {
+            resume_lifetime_s: None,
             request_id,
             server_addr: server.to_string(),
             full_name: user.to_string(),

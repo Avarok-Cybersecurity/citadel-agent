@@ -63,6 +63,8 @@ pub(crate) struct Registration {
     pub(crate) session_security_settings: SessionSecuritySettings,
     pub(crate) server_password: Option<PreSharedKey>,
     pub(crate) admission_token: Option<String>,
+    /// How long the session may come back without its user; `None` for an app's own session.
+    pub(crate) resume_lifetime_s: Option<u32>,
 }
 
 pub(crate) async fn handle<T: IOInterface + Sync, R: Ratchet>(
@@ -79,6 +81,7 @@ pub(crate) async fn handle<T: IOInterface + Sync, R: Ratchet>(
         session_security_settings,
         server_password,
         admission_token,
+        resume_lifetime_s,
     } = command
     else {
         unreachable!("dispatched by requests/mod.rs")
@@ -100,6 +103,7 @@ pub(crate) async fn handle<T: IOInterface + Sync, R: Ratchet>(
         session_security_settings,
         server_password,
         admission_token,
+        resume_lifetime_s,
     };
     register(this, uuid, registration).await
 }
@@ -118,6 +122,7 @@ pub(crate) async fn register<T: IOInterface + Sync, R: Ratchet>(
         session_security_settings,
         server_password,
         admission_token,
+        resume_lifetime_s,
     } = registration;
     let refuse = |reason, message| refused(uuid, request_id, reason, message, None);
     let host = match host(this) {
@@ -181,6 +186,7 @@ pub(crate) async fn register<T: IOInterface + Sync, R: Ratchet>(
 
     let password = identity.derive_password(&plan.domain, &plan.username);
     let register = InternalServiceRequest::Register {
+        resume_lifetime_s: None,
         request_id,
         server_addr: plan.dial.clone(),
         full_name,
@@ -230,6 +236,7 @@ pub(crate) async fn register<T: IOInterface + Sync, R: Ratchet>(
         cid,
         session_security_settings,
         server_password,
+        resume_lifetime_s,
     )
     .await
 }

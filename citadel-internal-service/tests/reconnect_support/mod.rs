@@ -181,6 +181,7 @@ pub async fn connect_observing(
     common::send(
         sink,
         InternalServiceRequest::Connect {
+            resume_lifetime_s: None,
             request_id,
             username: username.to_string(),
             server_address: server.to_string(),

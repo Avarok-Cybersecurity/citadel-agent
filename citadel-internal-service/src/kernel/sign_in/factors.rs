@@ -2,10 +2,10 @@
 //! challenges they raise for as long as the request runs.
 
 use super::key_relay::{Asker, KeyChallenges, KeyRelay};
-use crate::kernel::reconnect::Reauth;
+use super::Kept;
 use crate::kernel::session_route::Clients;
 use citadel_sdk::prelude::{
-    RecoveryPhrase, SecBuffer, SecurityKeyPrf, SessionScope, SignInFactors,
+    RecoveryPhrase, ResumeCredential, SecBuffer, SecurityKeyPrf, SessionScope, SignInFactors,
 };
 use std::sync::Arc;
 
@@ -25,6 +25,9 @@ pub(crate) struct Offer {
     pub recovery_phrase: Option<RecoveryPhrase>,
     /// A fresh sign-in's admission (Turnstile) token. Never logged.
     pub admission: Option<String>,
+    /// How long, in seconds, a sign-in asks to stay signed in across dropped links
+    /// (kernel/resume). `None` asks for nothing, as every step-up does.
+    pub resume_lifetime_s: Option<u32>,
 }
 
 /// The factors for the SDK, offering the key channel only when the window can answer it.
@@ -39,6 +42,7 @@ pub(crate) fn begin(
         security_key,
         recovery_phrase,
         admission,
+        resume_lifetime_s,
     } = offer;
     let (security_key, relay) = match security_key {
         true => {
@@ -55,14 +59,20 @@ pub(crate) fn begin(
     let scope = offered.scope();
     let mut factors = offered.into_factors();
     factors.admission = admission;
+    factors.resume_lifetime_s = resume_lifetime_s.map(u64::from);
     (factors, Underway { scope, relay })
 }
 
 impl Underway {
-    /// The sign-in succeeded: how the session can be opened again (kernel/sign_in/mod.rs).
-    pub(crate) fn finish(self, password: Option<SecBuffer>) -> Reauth {
+    /// The sign-in succeeded: what it leaves the session (kernel/sign_in/mod.rs). `granted`
+    /// is the resume credential the server gave it, if any.
+    pub(crate) fn finish(
+        self,
+        password: Option<SecBuffer>,
+        granted: Option<ResumeCredential>,
+    ) -> Kept {
         let key_asked = self.relay.as_ref().is_some_and(KeyRelay::asked);
-        super::reauth(self.scope, key_asked, password)
+        super::kept(self.scope, key_asked, password, granted)
     }
 }
 

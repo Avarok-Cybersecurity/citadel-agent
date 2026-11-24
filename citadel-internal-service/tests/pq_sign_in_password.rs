@@ -106,6 +106,7 @@ async fn registering_and_connecting_at_once_still_delivers_the_phrase() -> Resul
     let request_id = Uuid::new_v4();
     window
         .send(InternalServiceRequest::Register {
+            resume_lifetime_s: None,
             request_id,
             server_addr: server.to_string(),
             full_name: user.clone(),

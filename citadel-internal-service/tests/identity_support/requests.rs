@@ -44,6 +44,7 @@ pub fn register_identity(
     handle: &str,
 ) -> InternalServiceRequest {
     InternalServiceRequest::RegisterIdentity {
+        resume_lifetime_s: None,
         request_id,
         server_addr: server.addr.clone(),
         handle: handle.to_string(),
@@ -59,6 +60,7 @@ pub fn register_identity(
 
 pub fn connect_identity(request_id: Uuid, cid: u64) -> InternalServiceRequest {
     InternalServiceRequest::ConnectIdentity {
+        resume_lifetime_s: None,
         request_id,
         cid,
         session_security_settings: citadel_sdk::prelude::default_session_security_settings(),

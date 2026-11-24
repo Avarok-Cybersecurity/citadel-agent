@@ -3,4 +3,4 @@
 /**
  * A failure the UI can act on, beside the message it shows.
  */
-export type FailureReason = "admission_required" | "admission_failed" | "account_on_another_server" | "no_such_account" | "username_held_for_another_server" | "username_held" | "identity_locked" | "not_an_identity_account" | "server_identity_mismatch" | "server_cannot_enrol_security_keys" | "server_discovery_failed" | "no_citadel_endpoint" | "protocol_version_unsupported" | "revfs_seal_unrecognised" | "sign_in_refused" | "server_unreachable" | "unknown";
+export type FailureReason = "admission_required" | "admission_failed" | "account_on_another_server" | "no_such_account" | "username_held_for_another_server" | "username_held" | "identity_locked" | "not_an_identity_account" | "server_identity_mismatch" | "server_cannot_enrol_security_keys" | "server_discovery_failed" | "no_citadel_endpoint" | "protocol_version_unsupported" | "revfs_seal_unrecognised" | "sign_in_refused" | "server_unreachable" | "resume_credential_expired" | "resume_credential_revoked" | "unknown";

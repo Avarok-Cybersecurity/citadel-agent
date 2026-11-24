@@ -6,4 +6,15 @@ export type ConnectSuccess = { cid: bigint, request_id: string | null,
  * The identity an account registered with (`ConnectIdentity`); absent for a typed
  * password's account and from an older agent.
  */
-identity?: AccountIdentity | null, };
+identity?: AccountIdentity | null, 
+/**
+ * Until when this device stays signed in across dropped links without the account's
+ * factors (Unix milliseconds, UTC): the resume credential this sign-in was granted.
+ * Absent when none was asked for or the server issues none.
+ */
+resume_valid_until_utc?: bigint | null, 
+/**
+ * The longest the server lets a device stay signed in that way, in seconds; absent when
+ * it issues no resume credentials.
+ */
+resume_max_lifetime_s?: number | null, };

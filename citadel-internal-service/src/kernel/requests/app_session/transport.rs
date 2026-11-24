@@ -94,8 +94,10 @@ impl<T: IOInterface + Sync, R: Ratchet> ServiceTransport<'_, T, R> {
                     .sign_in_again(domain.as_str(), &held.as_requested(), &record)
                     .map_err(|why| unavailable(&username, why))?;
             }
-            identity::connect::connect_identity(self.this, route, request_id, cid, settings, None)
-                .await
+            identity::connect::connect_identity(
+                self.this, route, request_id, cid, settings, None, None,
+            )
+            .await
         } else {
             let registration = Registration {
                 request_id,
@@ -106,6 +108,7 @@ impl<T: IOInterface + Sync, R: Ratchet> ServiceTransport<'_, T, R> {
                 session_security_settings: settings,
                 server_password: None,
                 admission_token: None,
+                resume_lifetime_s: None,
             };
             identity::register::register(self.this, route, registration).await
         };

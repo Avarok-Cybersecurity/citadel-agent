@@ -199,6 +199,7 @@ mod tests {
         // Send Register WITHOUT PSK when it is required
         info!(target: "citadel", "C2S Attempting to register without PSK");
         let register_command = InternalServiceRequest::Register {
+            resume_lifetime_s: None,
             request_id: Uuid::new_v4(),
             server_addr: server_bind_address.to_string(),
             full_name: "Full Name".into(),
@@ -221,6 +222,7 @@ mod tests {
         // Send Register with INCORRECT PSK
         info!(target: "citadel", "C2S Attempting to register with Incorrect PSK");
         let register_command = InternalServiceRequest::Register {
+            resume_lifetime_s: None,
             request_id: Uuid::new_v4(),
             server_addr: server_bind_address.to_string(),
             full_name: "Full Name".into(),
@@ -243,6 +245,7 @@ mod tests {
         // Send Register with correct PSK
         info!(target: "citadel", "C2S Attempting to register with correct PSK");
         let register_command = InternalServiceRequest::Register {
+            resume_lifetime_s: None,
             request_id: Uuid::new_v4(),
             server_addr: server_bind_address.to_string(),
             full_name: "Full Name".into(),
@@ -267,6 +270,7 @@ mod tests {
         // Send Connect WITHOUT PSK when it is required
         info!(target: "citadel", "C2S Attempting to connect without PSK");
         let connect_command = InternalServiceRequest::Connect {
+            resume_lifetime_s: None,
             request_id: Uuid::new_v4(),
             username: "Username".into(),
             server_address: server_bind_address.to_string(),
@@ -292,6 +296,7 @@ mod tests {
         // Send Connect with INCORRECT PSK
         info!(target: "citadel", "C2S Attempting to connect with incorrect PSK");
         let connect_command = InternalServiceRequest::Connect {
+            resume_lifetime_s: None,
             request_id: Uuid::new_v4(),
             username: "Username".into(),
             server_address: server_bind_address.to_string(),
@@ -317,6 +322,7 @@ mod tests {
         // Send Connect with correct PSK
         info!(target: "citadel", "C2S Attempting to connect with correct PSK");
         let connect_command = InternalServiceRequest::Connect {
+            resume_lifetime_s: None,
             request_id: Uuid::new_v4(),
             username: "Username".into(),
             server_address: server_bind_address.to_string(),
@@ -511,6 +517,7 @@ mod tests {
                 .split();
 
         let register_command = InternalServiceRequest::Register {
+            resume_lifetime_s: None,
             server_addr: server_bind_address.to_string(),
             full_name: String::from("John"),
             username: String::from("john_doe"),

@@ -11,6 +11,6 @@ export type NoticeTarget = { account: string,
  */
 server_host: string | null, 
 /**
- * `conversation:<peer>`, `call:<peer>` or `requests`.
+ * `conversation:<peer>`, `call:<peer>`, `requests`, or `sign-in` for the account's sign-in.
  */
 open: string, };

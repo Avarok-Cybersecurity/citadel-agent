@@ -21,7 +21,7 @@
 //! - `connect.rs` (this file) → `remote.connect()` → Connects to EXISTING account, SAME CID
 
 use crate::kernel::reconnect::sign_in::{self, SignIn};
-use crate::kernel::reconnect::{LinkState, Reauth};
+use crate::kernel::reconnect::LinkState;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::revfs_seed;
 use crate::kernel::session_route::SessionRoute;
@@ -50,6 +50,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         security_key,
         recovery_phrase,
         admission_token,
+        resume_lifetime_s,
         connect_mode,
         udp_mode,
         keep_alive_timeout,
@@ -258,7 +259,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             SignIn::TakeOverReconnect => {
                 citadel_sdk::logging::info!(target: "citadel", "[Connect] Session {} for user {} is reconnecting; the sign-in takes it over", cid, username);
                 let credentials = crate::kernel::reconnect::Credentials {
-                    reauth: pq_sign_in::reauth(SessionScope::Full, false, password),
+                    reauth: pq_sign_in::kept(SessionScope::Full, false, password, None).reauth,
                     connect_mode,
                     udp_mode,
                     keep_alive_timeout,
@@ -306,6 +307,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             security_key,
             recovery_phrase,
             admission: admission_token,
+            resume_lifetime_s,
         },
     );
 
@@ -351,8 +353,13 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             // `remote.sessions()`, which does not go through a subscription.
 
             let scope = underway.scope;
+            let granted = conn_success.resume.clone();
+            let resume_max_lifetime_s = conn_success
+                .resume_max_lifetime_s
+                .map(|secs| u32::try_from(secs).unwrap_or(u32::MAX));
+            let kept = underway.finish(password.clone(), granted.clone());
             let reconnect_credentials = crate::kernel::reconnect::Credentials {
-                reauth: underway.finish(password.clone()),
+                reauth: kept.reauth,
                 connect_mode,
                 udp_mode,
                 keep_alive_timeout,
@@ -500,16 +507,11 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             // reuse request has something to prove itself against -- and only when the
             // password is all the sign-in proved. A session a key or the recovery phrase opened
             // records none, so neither a reuse nor an attach can reach it on a password.
-            let fingerprint = match &reconnect_credentials.reauth {
-                Reauth::Password(password) => {
-                    crate::kernel::credential_fingerprint::derive(
-                        remote,
-                        &username,
-                        password.clone(),
-                    )
-                    .await
+            let fingerprint = match kept.proved_alone {
+                Some(password) => {
+                    crate::kernel::credential_fingerprint::derive(remote, &username, password).await
                 }
-                Reauth::NeedsUser(_) => None,
+                None => None,
             };
 
             let subscribers = crate::kernel::session_subscribers::SessionSubscribers::new(uuid);
@@ -538,8 +540,13 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                     cid,
                     request_id: Some(request_id),
                     identity: None,
+                    resume_valid_until_utc: granted.as_ref().map(|c| c.valid_until_utc()),
+                    resume_max_lifetime_s,
                 },
             );
+            if let Some(credential) = granted {
+                crate::kernel::resume::watch::spawn(this, cid, credential);
+            }
 
             crate::kernel::c2s_reader::spawn(
                 SessionRoute::new(subscribers, this.tx_to_localhost_clients.clone()),

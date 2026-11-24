@@ -1,6 +1,8 @@
 //! The reducer, `authorize`, names, the snapshot and signature checks at the peer caps
 //! (`PEER_VOLUME_LIMITS`), against a time budget; each run prints what it measured. Native only
 //! (no clock on wasm32-unknown-unknown). Budgets are for a release build; a debug build gets 25x.
+//! Ignored in the general test run, which may land on a shared machine; the `vfs` CI job runs
+//! them on a hosted runner: `cargo test -p citadel-vfs --release --test t_perf -- --ignored`.
 #![cfg(not(target_arch = "wasm32"))]
 
 mod common;
@@ -100,6 +102,7 @@ fn at_the_caps(volume: &VolumeId) -> Vec<Op> {
 }
 
 #[test]
+#[ignore = "timing: run by the vfs CI job on a hosted runner"]
 fn at_the_peer_caps() {
     let volume = VolumeId::pair(1001, 1002).unwrap_or_else(|| panic!("pair"));
     let ops = at_the_caps(&volume);
@@ -159,6 +162,7 @@ fn at_the_peer_caps() {
 }
 
 #[test]
+#[ignore = "timing: run by the vfs CI job on a hosted runner"]
 fn signature_check_per_op() {
     let volume = VolumeId::pair(1001, 1002).unwrap_or_else(|| panic!("pair"));
     let key = Key::from_byte(9);
@@ -190,6 +194,7 @@ fn signature_check_per_op() {
 }
 
 #[test]
+#[ignore = "timing: run by the vfs CI job on a hosted runner"]
 fn a_chain_at_max_depth() {
     let volume = VolumeId::pair(1001, 1002).unwrap_or_else(|| panic!("pair"));
     let author = Principal::member(1001);

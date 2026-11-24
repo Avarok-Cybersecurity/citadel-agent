@@ -215,13 +215,48 @@ jobs:
           cd ci
           docker compose -f docker-compose.test.yml down -v --remove-orphans
   # Branch protection can require ONE name that is true only when every job above succeeded. Seven
+  # citadel-vfs must give the same answers in the browser as natively: its fixture corpus runs
+  # on wasm32 under the wasm-bindgen test runner of the locked wasm-bindgen version. Its time
+  # budget runs here too, on a hosted runner, never on a shared machine.
+  vfs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: Avarok-Cybersecurity/gh-actions-deps@master
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci-vfs"
+      - run: rustup target add wasm32-unknown-unknown
+      - name: The wasm-bindgen version the lockfile pins
+        id: wbg
+        run: |
+          v=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
+          [ -n "$v" ] || { echo "::error::no wasm-bindgen in Cargo.lock"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@${{ steps.wbg.outputs.version }}
+      - name: The corpus on wasm32
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+        run: cargo test -p citadel-vfs --target wasm32-unknown-unknown
+      - name: The time budget at the caps
+        run: cargo test -p citadel-vfs --release --test t_perf -- --ignored --nocapture --test-threads=1
+
   # per-job names drifted once ("tests (ubuntu-latest)" after the matrix moved to ubuntu-24.04) and
   # blocked a merge with every check green; a job skipped by an earlier failure also reads as
   # passing to a per-job rule. This aggregate does neither. The parent's required-checks.json names it.
   all-checks:
     name: All checks
     if: always()
-    needs: [tests, fork-safety, clippy, fmt, typescript-bindings-fresh, persisted-formats-append-only, typescript-integration]
+    needs: [tests, fork-safety, clippy, fmt, typescript-bindings-fresh, persisted-formats-append-only, typescript-integration, vfs]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

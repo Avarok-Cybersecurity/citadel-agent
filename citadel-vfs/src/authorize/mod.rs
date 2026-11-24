@@ -136,3 +136,12 @@ pub fn class_of(tree: &Tree, ctx: &VolumeCtx, actor: &Principal, entry: &InodeId
         _ => Class::Outsider,
     }
 }
+
+/// Whom an outsider's new entry under `at` must be owned by (its admitter), if it is admitted
+/// there; for anyone else, `None`.
+pub fn admitter_at(tree: &Tree, actor: &Principal, at: &InodeId, now_ms: u64) -> Option<Principal> {
+    actor::admission_roots(tree, actor, at, now_ms)
+        .into_iter()
+        .next()
+        .map(|(_, admission)| admission.by.clone())
+}

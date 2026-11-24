@@ -12,11 +12,14 @@ pub mod cbor;
 mod hash;
 pub mod inode;
 pub mod limits;
+pub mod migrate;
 pub mod model;
 pub mod name;
 pub mod op;
 pub mod principal;
 pub mod reduce;
+pub mod snapshot;
+pub mod views;
 pub mod volume;
 
 pub use hash::{from_hex, sha3_256, to_hex};

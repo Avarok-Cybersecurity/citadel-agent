@@ -27,7 +27,7 @@ pub fn hex<const N: usize>(text: &str) -> [u8; N] {
 }
 
 pub fn hex_vec(text: &str) -> Vec<u8> {
-    assert!(text.len() % 2 == 0, "odd hex {text}");
+    assert!(text.len().is_multiple_of(2), "odd hex {text}");
     (0..text.len() / 2)
         .map(|i| {
             u8::from_str_radix(&text[2 * i..2 * i + 2], 16).unwrap_or_else(|_| panic!("hex {text}"))

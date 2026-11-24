@@ -48,6 +48,28 @@ fn successive_calls_do_not_repeat_a_port() {
     );
 }
 
+/// A block is a whole claimed block, none of whose ports a single-port request is handed.
+#[test]
+fn a_block_shares_no_port_with_single_ports() {
+    let singles: Vec<u16> = (0..PORTS_PER_BLOCK).map(|_| get_free_port()).collect();
+    let block = get_free_port_block();
+    assert_eq!(block.len(), usize::from(PORTS_PER_BLOCK));
+    assert!(
+        block.start >= PORT_BASE && block.end <= PORT_END,
+        "{block:?}"
+    );
+    let later: Vec<u16> = (0..PORTS_PER_BLOCK).map(|_| get_free_port()).collect();
+    let shared: Vec<&u16> = singles
+        .iter()
+        .chain(&later)
+        .filter(|p| block.contains(p))
+        .collect();
+    assert!(
+        shared.is_empty(),
+        "{block:?} shares {shared:?} with single ports"
+    );
+}
+
 /// The test's process, standing in for another test: it takes two ports, binds neither,
 /// and stays alive until its stdin closes. Run only by the test below.
 #[test]

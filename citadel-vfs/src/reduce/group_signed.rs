@@ -102,7 +102,12 @@ impl GroupVerifier {
             return self.skip(seq, index, &op, SkipReason::BadSignature);
         }
         match self.fold.tree().seen.get(&op.header.op_id) {
-            Some(held) if *held == op.op_hash => return Verdict::Folded(Ok(Applied::AlreadyHeld)),
+            Some(held) if *held == op.op_hash => {
+                return match self.fold.advance((seq, index)) {
+                    Ok(()) => Verdict::Folded(Ok(Applied::AlreadyHeld)),
+                    Err(halt) => Verdict::Halt(halt),
+                };
+            }
             _ => {}
         }
         let head = self.heads.get(&author).copied();

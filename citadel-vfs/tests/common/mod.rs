@@ -3,6 +3,7 @@
 
 pub mod build;
 pub mod fold;
+pub mod keys;
 pub mod legacy;
 pub mod show;
 pub mod trees;

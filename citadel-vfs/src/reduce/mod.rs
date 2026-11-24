@@ -68,6 +68,16 @@ pub enum SkipReason {
     StalePrev,
 }
 
+impl SkipReason {
+    /// The group checks made before an op's signature is known good (`vfs-group.md` §2).
+    pub fn before_signature(&self) -> bool {
+        matches!(
+            self,
+            Self::Invalid | Self::NotAuthor | Self::KeyChanged | Self::BadSignature
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Skipped {
     pub op_id: [u8; 16],

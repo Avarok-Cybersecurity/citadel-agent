@@ -74,8 +74,18 @@ impl Tree {
     }
 
     /// Record a skip decided before the reducer (a group's signature checks, a pair's cut).
+    /// A skip decided before the op's signature was verified does not hold its `op_id`: only
+    /// the author's own signed op can.
     pub fn record_skip(&mut self, op: &Op, reason: SkipReason) {
-        self.skip(op, reason);
+        if reason.before_signature() {
+            self.skipped.push(Skipped {
+                op_id: op.header.op_id,
+                op_hash: op.op_hash,
+                reason,
+            });
+        } else {
+            self.skip(op, reason);
+        }
     }
 
     /// Redacted ops whose target no applied `Purge` removed: each is `Invalid`

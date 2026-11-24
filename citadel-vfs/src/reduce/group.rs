@@ -61,7 +61,7 @@ impl GroupFold {
         self.owner
     }
 
-    fn advance(&mut self, at: (u64, u32)) -> Result<(), FoldHalt> {
+    pub(super) fn advance(&mut self, at: (u64, u32)) -> Result<(), FoldHalt> {
         if self.last.is_some_and(|last| at <= last) {
             return Err(FoldHalt::OutOfOrder);
         }

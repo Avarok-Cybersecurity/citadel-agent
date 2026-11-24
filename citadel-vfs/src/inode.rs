@@ -28,6 +28,21 @@ pub enum Namespace {
 }
 
 impl Namespace {
+    pub const ALL: [Self; 8] = [
+        Self::Root,
+        Self::Seed,
+        Self::AppHome,
+        Self::RevfsDir,
+        Self::RevfsFile,
+        Self::Transfer,
+        Self::ChatDoc,
+        Self::ChatFile,
+    ];
+
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|n| n.as_str() == text)
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Root => "root",

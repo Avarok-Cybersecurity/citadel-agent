@@ -2,7 +2,7 @@
 
 use super::{hex, J};
 use citadel_vfs::cbor::Value;
-use citadel_vfs::model::{EntryKind, Mode, Pointee};
+use citadel_vfs::model::{Admitted, AdmittedKey, Caps, ClaimWhat, EntryKind, Mode, Pointee};
 use citadel_vfs::op::{op_hash, Body, Header, Op, OpKind};
 use citadel_vfs::{InodeId, Principal, VolumeId};
 
@@ -112,6 +112,39 @@ pub fn body(kind: &str, b: &J, root: InodeId) -> Body {
         "chown" => Body::Chown {
             owner: principal(&b["owner"]),
         },
+        "admit" => {
+            let caps = &b["caps"];
+            let cap = |i: usize| caps[i].as_u64().unwrap_or_else(|| panic!("caps {caps}"));
+            Body::Admit {
+                who: admitted(&b["who"]),
+                expires_ms: b["expires_ms"]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("expires_ms")),
+                caps: Caps {
+                    max_bytes: cap(0),
+                    max_entries: cap(1),
+                    max_ops_per_min: cap(2),
+                },
+            }
+        }
+        "dismiss" => Body::Dismiss {
+            who: AdmittedKey::from_value(value(&b["who"])).unwrap_or_else(|e| panic!("who: {e:?}")),
+            lasts: b["lasts"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|l| (principal(&l[0]), l[1].as_str().map(hex::<32>)))
+                .collect(),
+        },
+        "claim" => Body::Claim {
+            link_id: hex::<16>(
+                b["link_id"]["$hex"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("link_id")),
+            ),
+            what: ClaimWhat::from_value(placeholders(value(&b["what"]), &[(1, 1952), (2, 3309)]))
+                .unwrap_or_else(|e| panic!("what: {e:?}")),
+        },
         other => panic!("fixture body of kind {other} is not modelled here"),
     }
 }
@@ -140,4 +173,23 @@ pub fn op(o: &J, volume: &VolumeId, root: InodeId) -> Op {
         body: Some(body),
         op_hash,
     }
+}
+
+/// `authorize/cases.json` writes `link_pk`, `key_pk` and `link_sig` as `00` ("no case turns on
+/// their bytes"): widen each to its length so the codec's exact-length rule holds.
+fn placeholders(v: Value, at: &[(usize, usize)]) -> Value {
+    let Value::Array(mut items) = v else { return v };
+    for (i, len) in at {
+        if let Some(Value::Bytes(b)) = items.get_mut(*i) {
+            if b.as_slice() == [0] {
+                *b = vec![0; *len];
+            }
+        }
+    }
+    Value::Array(items)
+}
+
+pub fn admitted(j: &J) -> Admitted {
+    Admitted::from_value(placeholders(value(j), &[(2, 1952)]))
+        .unwrap_or_else(|e| panic!("who {j}: {e:?}"))
 }

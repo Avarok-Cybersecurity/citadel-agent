@@ -4,6 +4,7 @@
 pub mod build;
 pub mod fold;
 pub mod show;
+pub mod trees;
 
 pub use serde_json::Value as J;
 

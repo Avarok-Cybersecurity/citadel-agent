@@ -91,6 +91,13 @@ fn same(reauth: &Reauth, watched: &ResumeCredential) -> bool {
             && held.issued_at_utc() == watched.issued_at_utc())
 }
 
+/// The moment `credential` expires by this computer's clock: the server's moment, moved by
+/// how far this clock was off from the server's when the credential was accepted. The watch
+/// waits for this, never for the server's time, so a wrong clock fires neither early nor late.
+pub(crate) fn deadline(credential: &ResumeCredential) -> u64 {
+    credential.expires_at_local()
+}
+
 /// Starts the watch for `cid`'s credential. It ends by itself when the session ends, signs in
 /// again, or the credential expires.
 pub(crate) fn spawn<T: IOInterface + Sync, R: Ratchet>(
@@ -105,7 +112,7 @@ pub(crate) fn spawn<T: IOInterface + Sync, R: Ratchet>(
             lock.get(&cid)
                 .is_some_and(|conn| same(&conn.reconnect.reauth, &watched))
         };
-        if until_expired(&SystemClock, watched.expires_at_local(), still_held).await {
+        if until_expired(&SystemClock, deadline(&watched), still_held).await {
             announce(&this, cid, watched.valid_until_utc());
         }
     }));

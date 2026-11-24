@@ -2,7 +2,8 @@
 //! that slept through the moment or had its clock moved is found out at the next look.
 
 use super::expiry::RECHECK;
-use super::watch::{sign_in_notice, until_expired, Clock};
+use super::test_support::{credential_accepted_at, ISSUED_AT};
+use super::watch::{deadline, sign_in_notice, until_expired, Clock};
 use citadel_internal_service_types::NoticeKind;
 use futures::future::BoxFuture;
 use parking_lot::Mutex;
@@ -108,6 +109,26 @@ async fn a_session_that_no_longer_holds_the_credential_is_told_nothing() {
     assert_eq!(clock.sleeps(), 2);
     let already_expired = until_expired(&clock, START, || false).await;
     assert!(!already_expired, "a session that is gone was told");
+}
+
+/// Control: make `deadline` the server's `valid_until_utc` instead of `expires_at_local`.
+#[tokio::test]
+async fn a_device_whose_clock_is_wrong_waits_for_the_moment_on_its_own_clock() {
+    // An hour's credential, accepted on a computer three hours ahead, then three hours behind.
+    for skew in [3 * HOUR as i64, -3 * HOUR as i64] {
+        let local = ISSUED_AT.saturating_add_signed(skew);
+        let held = credential_accepted_at(3_600, local).await;
+        assert_eq!(
+            held.valid_until_utc(),
+            ISSUED_AT + HOUR,
+            "the server's time"
+        );
+        assert_eq!(
+            deadline(&held),
+            local + HOUR,
+            "the moment by this computer's clock, {skew} ms off the server's"
+        );
+    }
 }
 
 #[test]

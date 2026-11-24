@@ -22,6 +22,12 @@ const USER: &str = "alice";
 
 /// A credential issued at [`ISSUED_AT`] to live `lifetime_s` seconds.
 pub(crate) async fn credential(lifetime_s: u64) -> ResumeCredential {
+    credential_accepted_at(lifetime_s, ISSUED_AT).await
+}
+
+/// A credential issued at [`ISSUED_AT`] by the server's clock and accepted when this
+/// computer's clock read `local_ms`: a device whose clock is off by the difference.
+pub(crate) async fn credential_accepted_at(lifetime_s: u64, local_ms: u64) -> ResumeCredential {
     let policy = ResumePolicy::new(Duration::from_secs(lifetime_s)).expect("policy");
     let settings = PqAuthServerSettings::new(
         OprfSeed::from_bytes([9; 32]),
@@ -72,5 +78,5 @@ pub(crate) async fn credential(lifetime_s: u64) -> ResumeCredential {
     let request = device.request(lifetime_s).expect("request");
     let grant =
         grant_after(&settings, CID, &record, &verified, &request, ISSUED_AT).expect("grant");
-    ResumeCredential::accept(grant, device, CID, &request, ISSUED_AT).expect("credential")
+    ResumeCredential::accept(grant, device, CID, &request, local_ms).expect("credential")
 }

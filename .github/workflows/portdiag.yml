@@ -3,28 +3,44 @@ on:
   push:
     branches: [diag/win-ports-1123]
 jobs:
-  diag:
+  control:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-24.04]
+        os: [windows-latest, ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+        working-directory: citadel-internal-service/tests/common/src
     steps:
       - uses: actions/checkout@v4
-      - name: Port configuration (windows)
-        if: startsWith(matrix.os, 'windows')
-        shell: pwsh
+      - name: "Fixed: the allocator's own tests pass, three times"
         run: |
-          netsh int ipv4 show dynamicport tcp
-          netsh int ipv4 show dynamicport udp
-          netsh int ipv4 show excludedportrange tcp
-          netsh int ipv4 show excludedportrange udp
-          Get-NetTCPConnection -State Listen | Sort-Object LocalPort | Format-Table LocalAddress,LocalPort,OwningProcess
-      - name: Port configuration (linux)
-        if: startsWith(matrix.os, 'ubuntu')
-        run: cat /proc/sys/net/ipv4/ip_local_port_range
-      - name: Build
-        run: rustc -O diag/portdiag.rs -o portdiag.exe
-      - name: Run
-        run: ./portdiag.exe
+          rustc --edition 2021 --test ports.rs -o ports_fixed.exe
+          ./ports_fixed.exe
+          ./ports_fixed.exe
+          ./ports_fixed.exe
+      - name: "Control: a claim that excludes nobody must fail both two-holder tests"
+        run: |
+          cp ports.rs ports.rs.orig
+          sed -i.bak 's/Err(TryLockError::WouldBlock) => None,/Err(TryLockError::WouldBlock) => Some(file),/' ports.rs
+          test "$(grep -c -F 'WouldBlock) => Some(file),' ports.rs)" = 1
+          rustc --edition 2021 --test ports.rs -o ports_control.exe
+          if ./ports_control.exe > control.txt 2>&1; then
+            cat control.txt
+            echo "the control passed, so the tests discriminate nothing"
+            exit 1
+          fi
+          cat control.txt
+          grep -F 'two live processes were both handed a port' control.txt
+          grep -F 'both were handed a port' control.txt
+          grep -F 'test result: FAILED. 2 passed; 2 failed' control.txt
+      - name: "Restored: byte-identical, and green again"
+        run: |
+          cp ports.rs.orig ports.rs
+          touch ports.rs
+          git diff --exit-code -- ports.rs
+          rustc --edition 2021 --test ports.rs -o ports_restored.exe
+          ./ports_restored.exe

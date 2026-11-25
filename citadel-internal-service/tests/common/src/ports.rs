@@ -1,5 +1,6 @@
 //! Test ports nobody else can be handed.
 
+use citadel_app_net_policy::AGENT_PORT;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::net::TcpListener;
 use std::ops::Range;
@@ -35,14 +36,32 @@ const PORTS_PER_BLOCK: u16 = 16;
 const BLOCKS: u16 = 750; // 750 * 16 = 12_000 ports, ending at 32_000.
 const PORT_END: u16 = PORT_BASE + BLOCKS * PORTS_PER_BLOCK;
 
+// The agent a developer runs listens on its own port while their tests run: no test may be
+// handed it, so the range that ports are handed out from must not contain it.
+const _: () = assert!(
+    AGENT_PORT < PORT_BASE || AGENT_PORT >= PORT_END,
+    "the test port range contains the agent's own port"
+);
+
 /// A port no other live test process has been or will be handed.
 pub fn get_free_port() -> u16 {
+    allocator(PortAllocator::next_port)
+}
+
+/// A whole block of consecutive ports no other live test process has been or will be handed,
+/// for a server that takes a range (a TURN relay's).
+pub fn get_free_port_block() -> Range<u16> {
+    allocator(|ports| ports.claim_a_block())
+}
+
+fn allocator<T>(take: impl FnOnce(&mut PortAllocator) -> T) -> T {
     static PORTS: Mutex<Option<PortAllocator>> = Mutex::new(None);
-    PORTS
-        .lock()
-        .expect("an earlier port allocation panicked")
-        .get_or_insert_with(|| PortAllocator::for_pid(std::process::id()))
-        .next_port()
+    take(
+        PORTS
+            .lock()
+            .expect("an earlier port allocation panicked")
+            .get_or_insert_with(|| PortAllocator::for_pid(std::process::id())),
+    )
 }
 
 /// One process's ports: the blocks it has claimed and what is left of the newest.

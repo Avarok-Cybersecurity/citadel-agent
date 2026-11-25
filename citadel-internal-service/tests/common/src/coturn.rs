@@ -17,11 +17,11 @@ pub struct Coturn {
     pub port: u16,
 }
 
+/// A claimed port (crate::get_free_port) whose UDP side is free too: the UDP and TCP listeners
+/// both bind it.
 fn free_port() -> u16 {
-    // The UDP and TCP listeners both bind this port.
     loop {
-        let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = tcp.local_addr().unwrap().port();
+        let port = crate::get_free_port();
         if std::net::UdpSocket::bind(("127.0.0.1", port)).is_ok() {
             return port;
         }
@@ -35,7 +35,8 @@ impl Coturn {
             std::env::temp_dir().join(format!("citadel-agent-coturn-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let port = free_port();
-        let relay_base = 40000 + (port % 2000) * 10;
+        // Claimed for this process, like the listening port: no other test is handed them.
+        let relay = crate::get_free_port_block();
         // A panicking test may exit before Drop runs; the watchdog kills turnserver once the test
         // process is gone (or on SIGTERM from Drop).
         const WATCHDOG: &str = "p=$1; shift; \"$@\" & c=$!; trap 'kill $c; exit 0' TERM; \
@@ -46,8 +47,8 @@ impl Coturn {
             .args(["-n", "--lt-cred-mech", "--fingerprint", "--no-tls"])
             .args(["--listening-ip", "127.0.0.1", "--relay-ip", "127.0.0.1"])
             .args(["--listening-port", &port.to_string()])
-            .args(["--min-port", &relay_base.to_string()])
-            .args(["--max-port", &(relay_base + 9).to_string()])
+            .args(["--min-port", &relay.start.to_string()])
+            .args(["--max-port", &(relay.end - 1).to_string()])
             .args(["--user", &format!("{USER}:{PASSWORD}"), "--realm", REALM])
             .args(["--allow-loopback-peers", "--simple-log"])
             .arg("--pidfile")

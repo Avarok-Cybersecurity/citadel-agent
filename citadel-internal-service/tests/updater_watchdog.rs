@@ -5,6 +5,7 @@
 
 use citadel_internal_service::updater::watch_os::OsWatch;
 use citadel_internal_service::updater::watchdog::{supervise, Outcome, WatchPlan};
+use citadel_internal_service_test_common::get_free_port;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
@@ -19,14 +20,6 @@ fn gone_pid() -> u32 {
     let pid = child.id();
     child.wait().unwrap();
     pid
-}
-
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
 }
 
 fn plan(dir: &Path, port: u16) -> WatchPlan {
@@ -45,7 +38,7 @@ fn plan(dir: &Path, port: u16) -> WatchPlan {
 #[test]
 fn a_new_agent_that_exits_at_once_is_replaced_by_the_old_one() {
     let dir = tempfile::tempdir().unwrap();
-    let plan = plan(dir.path(), free_port());
+    let plan = plan(dir.path(), get_free_port());
     script(&plan.target, "exit 3");
     script(&plan.backup, "exit 0 # old");
     assert_eq!(supervise(&plan, &OsWatch), Outcome::RolledBack);
@@ -62,7 +55,7 @@ fn a_new_agent_that_exits_at_once_is_replaced_by_the_old_one() {
 #[test]
 fn a_new_agent_that_answers_on_its_socket_is_kept() {
     let dir = tempfile::tempdir().unwrap();
-    let port = free_port();
+    let port = get_free_port();
     let plan = plan(dir.path(), port);
     let listener = format!(
         "exec python3 -c 'import socket; s=socket.socket(); \

@@ -509,17 +509,20 @@ pub(crate) fn spawn_group_channel_receiver(
                 {
                     log::trace!(target:"citadel", "User {implicated_cid:?} Received Group Broadcast: {inbound_group_broadcast:?}");
                     let message = match inbound_group_broadcast {
-                        GroupBroadcastPayload::Message { payload, sender } => {
-                            Some(InternalServiceResponse::GroupMessageNotification(
-                                GroupMessageNotification {
-                                    cid: implicated_cid,
-                                    peer_cid: sender,
-                                    message: payload.into_buffer().into(),
-                                    group_key,
-                                    request_id: None,
-                                },
-                            ))
-                        }
+                        GroupBroadcastPayload::Message {
+                            payload,
+                            sender,
+                            id: _,
+                            position: _,
+                        } => Some(InternalServiceResponse::GroupMessageNotification(
+                            GroupMessageNotification {
+                                cid: implicated_cid,
+                                peer_cid: sender,
+                                message: payload.into_buffer().into(),
+                                group_key,
+                                request_id: None,
+                            },
+                        )),
                         GroupBroadcastPayload::Event { payload } => match payload {
                             GroupBroadcast::RequestJoin { sender, key: _ } => {
                                 Some(InternalServiceResponse::GroupJoinRequestNotification(

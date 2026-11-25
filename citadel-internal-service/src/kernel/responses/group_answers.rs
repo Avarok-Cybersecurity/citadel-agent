@@ -21,14 +21,19 @@ pub(crate) fn answer(
     send: Option<uuid::Uuid>,
 ) -> Option<InternalServiceResponse> {
     match broadcast {
-        GroupBroadcast::MessageResponse { key, delivery } => Some(
-            InternalServiceResponse::GroupMessageResponse(GroupMessageResponse {
+        GroupBroadcast::MessageResponse {
+            key,
+            delivery,
+            id: _,
+            position: _,
+        } => Some(InternalServiceResponse::GroupMessageResponse(
+            GroupMessageResponse {
                 cid,
                 group_key: *key,
                 delivery: delivery.clone(),
                 request_id: send,
-            }),
-        ),
+            },
+        )),
         GroupBroadcast::MessageRefused { key, refusal } => {
             Some(InternalServiceResponse::GroupMessageRefusedNotification(
                 GroupMessageRefusedNotification {

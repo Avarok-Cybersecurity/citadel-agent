@@ -38,6 +38,7 @@ where
             multi_window: true,
             supervises_p2p: self.supervises_p2p(),
             notices_heard: self.notices.is_heard(),
+            app_notices: true,
             ihttp: true,
             request_id: Some(request_id),
         })
@@ -50,6 +51,9 @@ where
     /// Once hosted, an account stays hosted for the life of its session.
     pub(crate) async fn host_ilm_for(&self, cid: u64) {
         let io: Arc<dyn HostIo> = Arc::new(self.clone());
+        let reminders: Arc<dyn crate::kernel::reminders::runner::ReminderIo> =
+            Arc::new(self.clone());
+        self.reminders.start(reminders, cid);
         match self.ilm_hosts.ensure(cid, io).await {
             Ok(_) => self.supervise(cid),
             Err(err) => warn!(target: "citadel", "[ILM-HOST] {cid}: not hosted: {err}"),

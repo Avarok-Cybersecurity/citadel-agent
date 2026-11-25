@@ -18,6 +18,7 @@ pub(crate) struct HandledRequestResult {
 }
 
 mod agent_own;
+mod app_notices;
 mod app_session;
 mod apps_ihttp;
 mod apps_kv;
@@ -413,6 +414,10 @@ where
         InternalServiceRequest::AppsGetAgentSettings { .. }
         | InternalServiceRequest::AppsSetAgentSettings { .. } => {
             apps_settings::handle(this, uuid, command).await
+        }
+        InternalServiceRequest::AppNoticePost { .. }
+        | InternalServiceRequest::AppRemindersSync { .. } => {
+            app_notices::handle(this, uuid, command).await
         }
         InternalServiceRequest::IhttpSend { .. } => apps_ihttp::handle(this, uuid, command).await,
         InternalServiceRequest::AppSessionOpen { .. }
@@ -1149,6 +1154,12 @@ fn refusal_response(
             request_id: Some(*request_id),
             message: message.to_string(),
         }),
+        InternalServiceRequest::AppNoticePost {
+            request_id, cid, ..
+        }
+        | InternalServiceRequest::AppRemindersSync {
+            request_id, cid, ..
+        } => app_notices::failure(*cid, *request_id, AppNoticeRefusal::NotAttached),
         InternalServiceRequest::GroupListJoined { request_id, cid } => {
             InternalServiceResponse::GroupListJoinedFailure(GroupListJoinedFailure {
                 cid: *cid,
@@ -1235,6 +1246,9 @@ pub(crate) fn requires_owned_session(command: &InternalServiceRequest) -> bool {
             // A member's own grants on this agent (kernel/apps/settings.rs).
             | InternalServiceRequest::AppsGetAgentSettings { .. }
             | InternalServiceRequest::AppsSetAgentSettings { .. }
+            // An account's reminders: only its own windows set them (kernel/reminders).
+            | InternalServiceRequest::AppNoticePost { .. }
+            | InternalServiceRequest::AppRemindersSync { .. }
             | InternalServiceRequest::Deregister { .. } // The conversation store answers by CID from the agent's own store, not
                                                         // through `propose_target`, so a signed-out account would otherwise hand
                                                         // its history to any connection naming it.

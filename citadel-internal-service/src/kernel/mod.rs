@@ -60,6 +60,7 @@ pub(crate) mod received_files;
 pub(crate) mod received_reads;
 pub(crate) mod reconnect;
 pub(crate) mod recovery_domain;
+pub(crate) mod reminders;
 pub(crate) mod resume;
 pub mod supervisor;
 
@@ -148,6 +149,8 @@ pub struct CitadelWorkspaceService<T, R: Ratchet> {
     pub(crate) control_origins: Arc<control_origin::ControlOrigins>,
     /// Native notices and the menu-bar app's account rows (kernel/notices).
     pub(crate) notices: Arc<notices::NoticeHub>,
+    /// Apps' reminders, fired by the agent with no window open (kernel/reminders).
+    pub(crate) reminders: Arc<reminders::Reminders>,
     /// The agent's updater, when the shipped binary configured one (kernel/updates).
     pub(crate) updates: Arc<updates::UpdatesSlot>,
     /// Security-key challenges waiting for a window's touch (kernel/sign_in/key_relay.rs).
@@ -200,6 +203,7 @@ impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
             client_capabilities: self.client_capabilities.clone(),
             control_origins: self.control_origins.clone(),
             notices: self.notices.clone(),
+            reminders: self.reminders.clone(),
             updates: self.updates.clone(),
             key_challenges: self.key_challenges.clone(),
             browser_transfers: self.browser_transfers.clone(),
@@ -231,6 +235,9 @@ impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
             remote: None,
             server_connection_map: Arc::new(RwLock::new(Default::default())),
             notices: Arc::new(notices::NoticeHub::new(None, clients.clone(), Vec::new())),
+            reminders: Arc::new(reminders::Reminders::new(Arc::new(
+                reminders::runner::SystemClock,
+            ))),
             tx_to_localhost_clients: clients,
             media_lanes: Arc::new(RwLock::new(Default::default())),
             orphan_sessions: Arc::new(RwLock::new(Default::default())),

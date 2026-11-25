@@ -26,6 +26,7 @@ fn notice() -> NativeNotice {
             server_host: None,
             open: "conversation:9".into(),
         },
+        id: None,
         request_id: None,
     }
 }

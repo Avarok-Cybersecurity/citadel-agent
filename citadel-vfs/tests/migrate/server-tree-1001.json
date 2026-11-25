@@ -1,0 +1,66 @@
+{
+ "source": "server-scope tree, key server_1001",
+ "me": 1001,
+ "tree": {
+  "name": "",
+  "type": "directory",
+  "path": "/",
+  "children": [
+   {
+    "name": "Backups",
+    "type": "directory",
+    "path": "/Backups",
+    "children": [
+     {
+      "name": "db.sqlite",
+      "type": "file",
+      "path": "/Backups/db.sqlite",
+      "fileState": "ServerStored",
+      "createdAt": 210,
+      "updatedAt": 211,
+      "fileMetadata": {
+       "fileId": "s-1",
+       "fileName": "db.sqlite",
+       "fileSize": 4096,
+       "fileType": "application/vnd.sqlite3",
+       "virtualDirectory": "/server/1001/s-1",
+       "uploadedByCid": 1001
+      }
+     },
+     {
+      "name": "odd.txt",
+      "type": "file",
+      "path": "/Backups/odd.txt",
+      "fileState": "Remote",
+      "createdAt": 220,
+      "updatedAt": 221,
+      "fileMetadata": {
+       "fileId": "s-2",
+       "fileName": "odd.txt",
+       "fileSize": 1,
+       "fileType": "text/plain",
+       "virtualDirectory": "/x",
+       "uploadedByCid": 1001
+      }
+     }
+    ],
+    "createdAt": 200,
+    "updatedAt": 201
+   }
+  ],
+  "createdAt": 1,
+  "updatedAt": 2
+ },
+ "expect": {
+  "ops": [
+   "revfs-dir:/Backups in root \"Backups\" none owner 1001 mode 770 at 200",
+   "revfs-file:s-1 in revfs-dir:/Backups \"db.sqlite\" revfs(owner 1001,host server,/server/1001/s-1,4096,application/vnd.sqlite3) owner 1001 mode 660 at 210"
+  ],
+  "skipped": [
+   [
+    "/Backups/odd.txt",
+    "Inconsistent"
+   ]
+  ]
+ }
+}

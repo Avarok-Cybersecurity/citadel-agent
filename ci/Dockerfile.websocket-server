@@ -27,6 +27,7 @@ COPY citadel-release-signature ./citadel-release-signature
 COPY citadel-app-id ./citadel-app-id
 COPY citadel-app-signature ./citadel-app-signature
 COPY citadel-identity ./citadel-identity
+COPY citadel-vfs ./citadel-vfs
 COPY citadel-app-net-policy ./citadel-app-net-policy
 COPY citadel-ihttp-types ./citadel-ihttp-types
 COPY citadel-app-sdk-types ./citadel-app-sdk-types

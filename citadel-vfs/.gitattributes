@@ -1,0 +1,3 @@
+tests/unicode/*.txt -text
+tests/contracts/** -text
+tests/migrate/*.json -text

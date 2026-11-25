@@ -47,7 +47,7 @@ wrappers! {
         fn write_text(text: &str) -> () = ClipboardWriteText { text: text.into() }, |r| r;
     }
     notify {
-        fn notify(title: &str, body: &str) -> () = Notify { title: title.into(), body: body.into() }, |r| r;
+        fn notify(title: &str, body: &str) -> () = Notify { title: title.into(), body: body.into(), kind: None, about: None }, |r| r;
     }
     documents {
         fn open(node_id: &str) -> Vec<u8> = DocOpen { node_id: node_id.into() }, |s: DocState| s.state.0;

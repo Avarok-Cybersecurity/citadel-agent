@@ -1,0 +1,50 @@
+{
+ "source": "cdoc-chat:1001:#index as chat-local-db.ts stores it",
+ "me": 1001,
+ "entries": [
+  {
+   "doc_id": "doc-a",
+   "peer_cid": 1002,
+   "title": {
+    "title": "Notes/2026\u0007",
+    "at": 500,
+    "by": 1002
+   }
+  },
+  {
+   "doc_id": "doc-b",
+   "peer_cid": 1001,
+   "title": null
+  },
+  {
+   "doc_id": "doc-c",
+   "peer_cid": 1002,
+   "title": {
+    "title": "..",
+    "at": 400,
+    "by": 1001
+   }
+  },
+  {
+   "doc_id": "doc-d",
+   "peer_cid": 1002,
+   "title": {
+    "title": "Plan \u0378",
+    "at": 450,
+    "by": 1001
+   }
+  }
+ ],
+ "expect": {
+  "device:1001": [
+   "seed:Documents in root \"Documents\" none owner 1001 mode 770 at 0",
+   "chat-doc:doc-b in seed:Documents \"doc-b\" doc(doc-b) owner 1001 mode 660 at 0"
+  ],
+  "pair:1001:1002": [
+   "seed:Documents in root \"Documents\" none owner 1001 mode 770 at 400",
+   "chat-doc:doc-a in seed:Documents \"Notes-2026-\" doc(doc-a) owner 1001 mode 660 at 500",
+   "chat-doc:doc-c in seed:Documents \"doc-c\" doc(doc-c) owner 1001 mode 660 at 400",
+   "chat-doc:doc-d in seed:Documents \"doc-d\" doc(doc-d) owner 1001 mode 660 at 450"
+  ]
+ }
+}

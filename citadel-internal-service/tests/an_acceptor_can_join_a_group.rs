@@ -108,6 +108,86 @@ mod tests {
         Ok(())
     }
 
+    /// The groups `who`'s agent lists as joined: its live group channels (list_joined.rs).
+    async fn joined_groups(who: &mut PeerReturnHandle) -> Vec<MessageGroupKey> {
+        who.0
+            .send(InternalServiceRequest::GroupListJoined {
+                cid: who.2,
+                request_id: Uuid::new_v4(),
+            })
+            .unwrap();
+        next_matching(&mut who.1, "GroupListJoined answer", |r| match r {
+            InternalServiceResponse::GroupListJoinedSuccess(s) => Some(s.groups),
+            _ => None,
+        })
+        .await
+    }
+
+    /// The UI's app topics rely on this order (topic-admission.ts): the join's Success says only
+    /// that the owner was asked; the joiner is in once its agent says the group's channel opened,
+    /// with no request id, and only then lists the group as joined.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_topic_joiner_is_in_only_when_its_channel_opens() -> Result<(), Box<dyn Error>> {
+        setup_log();
+        let mut agents = two_registered_agents().await?;
+        let (a, b) = split(&mut agents);
+        a_dials_hosted_b(a, b).await;
+        a.0.send(InternalServiceRequest::GroupCreateAppTopic {
+            cid: a.2,
+            request_id: Uuid::new_v4(),
+            max_msg_bytes: 64,
+            max_msgs_per_s: 2,
+        })?;
+        let key = next_matching(&mut a.1, "GroupCreateSuccess", |r| match r {
+            InternalServiceResponse::GroupCreateSuccess(s) => Some(s.group_key),
+            _ => None,
+        })
+        .await;
+
+        b.0.send(InternalServiceRequest::GroupRequestJoin {
+            cid: b.2,
+            group_key: key,
+            request_id: Uuid::new_v4(),
+        })?;
+        let first = next_matching(&mut b.1, "the join's first answer", |r| match r {
+            InternalServiceResponse::GroupRequestJoinSuccess(s) => Some(("asked", s.group_key)),
+            InternalServiceResponse::GroupChannelCreateSuccess(s) => Some(("channel", s.group_key)),
+            _ => None,
+        })
+        .await;
+        assert_eq!(first, ("asked", key), "the owner has not answered yet");
+        assert!(!joined_groups(b).await.contains(&key), "asked is not in");
+
+        let asked = next_matching(&mut a.1, "GroupJoinRequestNotification", |r| match r {
+            InternalServiceResponse::GroupJoinRequestNotification(n) => Some(n),
+            _ => None,
+        })
+        .await;
+        assert_eq!((asked.peer_cid, asked.group_key), (b.2, key));
+        a.0.send(InternalServiceRequest::GroupRespondRequest {
+            cid: a.2,
+            peer_cid: b.2,
+            group_key: key,
+            response: true,
+            request_id: Uuid::new_v4(),
+            invitation: false,
+        })?;
+        let opened = next_matching(&mut b.1, "GroupChannelCreateSuccess", |r| match r {
+            InternalServiceResponse::GroupChannelCreateSuccess(s) => Some(s),
+            _ => None,
+        })
+        .await;
+        assert_eq!(
+            (opened.cid, opened.group_key, opened.request_id),
+            (b.2, key, None)
+        );
+        assert!(
+            joined_groups(b).await.contains(&key),
+            "a channel is a membership"
+        );
+        Ok(())
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn an_acceptor_lists_the_dialling_owners_groups() -> Result<(), Box<dyn Error>> {
         setup_log();

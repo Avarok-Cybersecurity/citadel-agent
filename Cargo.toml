@@ -74,16 +74,16 @@ citadel-app-net-policy = { path = "citadel-app-net-policy", version = "0.1.0" }
 citadel-ihttp-types = { path = "citadel-ihttp-types", version = "0.1.0" }
 
 # Avarok deps
-citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "9ccfb045" }
-citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "9ccfb045" }
-citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "9ccfb045" }
-citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "9ccfb045" }
-citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "9ccfb045" }
-citadel_proto = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "9ccfb045" }
+citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "b3d440db" }
+citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "b3d440db" }
+citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "b3d440db" }
+citadel_crypt = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "b3d440db" }
+citadel_io = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "b3d440db" }
+citadel_proto = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "b3d440db" }
 # Tests only: a Flat group's application ciphertext, measured against the topic cap (app_topic.rs).
-citadel_treekem = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "9ccfb045" }
+citadel_treekem = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "b3d440db" }
 # Tests only: the server-side post-quantum sign-in settings (tests/common/src/pq.rs).
-citadel_user = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "9ccfb045" }
+citadel_user = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false, rev = "b3d440db" }
 
 # Standard deps
 serde = { version = "1.0.104", features = ["derive"] }

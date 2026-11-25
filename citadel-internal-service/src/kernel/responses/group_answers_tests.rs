@@ -1,6 +1,6 @@
 use super::*;
 use citadel_sdk::prelude::{
-    GroupDelivery, GroupMessageRefusal, GroupStateSource, NotDelivered, NotRelayed,
+    GroupDelivery, GroupMessageId, GroupMessageRefusal, GroupStateSource, NotDelivered, NotRelayed,
 };
 
 const KEY: MessageGroupKey = MessageGroupKey { cid: 7, mgid: 3 };
@@ -19,6 +19,8 @@ fn a_delivery_report_reaches_the_window_member_by_member() {
     let InternalServiceResponse::GroupMessageResponse(report) =
         answered(GroupBroadcast::MessageResponse {
             key: KEY,
+            id: GroupMessageId([0; 16]),
+            position: None,
             delivery: delivery.clone(),
         })
     else {
@@ -36,6 +38,8 @@ fn a_message_that_reached_no_one_says_why() {
     let InternalServiceResponse::GroupMessageResponse(report) =
         answered(GroupBroadcast::MessageResponse {
             key: KEY,
+            id: GroupMessageId([0; 16]),
+            position: None,
             delivery: GroupDelivery::NotRelayed(NotRelayed::NoGroupKey),
         })
     else {
@@ -132,6 +136,8 @@ fn a_report_carries_the_send_it_answers() {
     let send = uuid::Uuid::new_v4();
     let report = GroupBroadcast::MessageResponse {
         key: KEY,
+        id: GroupMessageId([0; 16]),
+        position: None,
         delivery: GroupDelivery::NotRelayed(NotRelayed::SessionEnded),
     };
     let Some(InternalServiceResponse::GroupMessageResponse(report)) =

@@ -89,6 +89,7 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             GroupBroadcast::Message {
                 sender: peer_cid,
                 key: group_key,
+                id: _,
                 message,
             } => super::group_heard::message(
                 &connection.groups,

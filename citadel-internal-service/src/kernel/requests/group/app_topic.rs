@@ -69,6 +69,8 @@ pub fn app_topic_group_options(
         limits: Some(limits),
         // Ephemeral: nothing is held for an absent member, so there is no backlog to age out.
         retention: None,
+        // Ephemeral: nothing is kept, so there is nothing to replay to a returning member.
+        replay: None,
     })
 }
 

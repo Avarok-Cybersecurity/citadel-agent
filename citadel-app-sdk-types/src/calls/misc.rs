@@ -89,7 +89,8 @@ abi_types! {
     pub struct Notify {
         pub title: String,
         pub body: String,
-        /// Absent is `Other`: an app that predates it sends none.
+        /// Absent: the app's own notice to its member, shown whole. Set: it may carry someone
+        /// else's words, so with previews off only the host's line ("Calendar: new invitation") shows.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub kind: Option<NotifyKind>,
         /// The host names who a notice is from only when this is a change it told the instance

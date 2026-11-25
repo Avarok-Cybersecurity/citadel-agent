@@ -7,7 +7,8 @@ import type { NotifyKind } from "./NotifyKind";
  */
 export type Notify = { title: string, body: string, 
 /**
- * Absent is `Other`: an app that predates it sends none.
+ * Absent: the app's own notice to its member, shown whole. Set: it may carry someone
+ * else's words, so with previews off only the host's line ("Calendar: new invitation") shows.
  */
 kind?: NotifyKind | null, 
 /**

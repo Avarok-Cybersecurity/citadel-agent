@@ -71,6 +71,8 @@ pub enum SkipReason {
     BytesGone,
     SentRecord,
     UnsharedUpload,
+    /// A file this member stores for the peer: it appears when the peer's own pass runs.
+    StoredForPeer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -114,10 +114,9 @@ pub fn migrate_peer_tree(
             revfs(me, Principal::member(peer), meta),
             Principal::member(me),
         )),
-        RevfsFileState::Hosted if meta.uploaded_by_cid == peer => Ok((
-            revfs(peer, Principal::member(me), meta),
-            Principal::member(peer),
-        )),
+        // Only a Revfs pointee's owner may write it: the owner's own pass (its `Remote` node)
+        // creates the entry, and the host's pass leaves it to them.
+        RevfsFileState::Hosted if meta.uploaded_by_cid == peer => Err(SkipReason::StoredForPeer),
         _ => Err(SkipReason::Inconsistent),
     };
     let mut walk = Walk {

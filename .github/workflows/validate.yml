@@ -121,6 +121,8 @@ jobs:
       - run: node .github/scripts/check-mac-runner-is-fork-safe.mjs
       - name: The guard refuses every unguarded shape
         run: node --test .github/scripts/mac-runner-routing.test.mjs
+      - name: The test image copies every workspace member
+        run: node .github/scripts/check-docker-copies-every-member.mjs
 
   clippy:
     runs-on: ubuntu-24.04

@@ -111,7 +111,6 @@
  "expect": {
   "ops": [
    "revfs-dir:/Projects in root \"Projects\" none owner 1002 mode 770 at 100",
-   "revfs-file:f-remote in revfs-dir:/Projects \"plan.md\" revfs(owner 1001,host 1002,/1001/f-remote,12,text/markdown) owner 1001 mode 660 at 110",
    "revfs-file:f-hosted in revfs-dir:/Projects \"theirs.bin\" revfs(owner 1002,host 1001,/1002/f-hosted,34,application/octet-stream) owner 1002 mode 660 at 120",
    "seed:Transfers in root \"Transfers\" none owner 1002 mode 770 at 60",
    "transfer:t-sent in seed:Transfers \"report.pdf\" standard(cdcdcdcd…,50,application/pdf) owner 1002 mode 660 at 60"
@@ -120,6 +119,10 @@
    [
     "/Sent Files/photo.jpg",
     "SentRecord"
+   ],
+   [
+    "/Projects/plan.md",
+    "StoredForPeer"
    ]
   ]
  }

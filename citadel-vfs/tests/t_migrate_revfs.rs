@@ -3,9 +3,10 @@
 
 mod common;
 
-use citadel_vfs::authorize::Denied;
-use citadel_vfs::migrate::{migrate_peer_tree, migrate_server_tree, Migration, Received};
-use citadel_vfs::reduce::{MergeFold, SkipReason, Tree};
+use citadel_vfs::migrate::{
+    migrate_peer_tree, migrate_server_tree, Migration, Received, SkipReason,
+};
+use citadel_vfs::reduce::{MergeFold, Tree};
 use citadel_vfs::views::{badge, Badge};
 use citadel_vfs::{InodeId, Namespace, Principal, VolumeId};
 use common::legacy::{describe_all, node, stamp};
@@ -70,17 +71,6 @@ fn check(volume: &VolumeId, m: &Migration, f: &J) {
 const ALICE: &str = include_str!("migrate/peer-tree-1001.json");
 const BOB: &str = include_str!("migrate/peer-tree-1002.json");
 
-/// OPEN (reported, not ruled): `vfs-migration.md` §3 has the host's pass write a `Hosted` file
-/// with `pointee.owner` = the peer, and `vfs-authorize.md` §3 lets only `pointee.owner` write a
-/// `Revfs` pointee. As frozen, the host's `Create` is skipped `RevfsOwnerOnly` and the entry
-/// comes from the owner's pass. These assertions hold that reading until it is ruled.
-fn only_hosted_creates_skipped(tree: &Tree, hosted: usize) {
-    assert_eq!(tree.skipped().len(), hosted, "{:?}", tree.skipped());
-    for s in tree.skipped() {
-        assert_eq!(s.reason, SkipReason::Denied(Denied::RevfsOwnerOnly));
-    }
-}
-
 fn fold(volume: &VolumeId, ops: Vec<citadel_vfs::op::Op>) -> Tree {
     MergeFold::fold(volume.clone(), ops).unwrap_or_else(|| panic!("merge"))
 }
@@ -104,7 +94,7 @@ both! {
         let (volume, me, m, _) = peer(ALICE);
         let once = stamp(&m.ops, &volume, &Principal::member(me));
         let tree = fold(&volume, once.clone());
-        only_hosted_creates_skipped(&tree, 1);
+        assert!(tree.skipped().is_empty(), "{:?}", tree.skipped());
         let twice = fold(&volume, once.iter().chain(once.iter()).cloned().collect());
         assert_eq!(twice, tree);
     }
@@ -115,7 +105,7 @@ both! {
         let a_ops = stamp(&a.ops, &volume, &Principal::member(alice));
         let b_ops = stamp(&b.ops, &volume, &Principal::member(bob));
         let both = fold(&volume, a_ops.iter().chain(b_ops.iter()).cloned().collect());
-        only_hosted_creates_skipped(&both, 2);
+        assert!(both.skipped().is_empty(), "{:?}", both.skipped());
         // Archive, Projects, Résumés, plan.md, theirs.bin, Transfers, photo.jpg, report.pdf.
         assert_eq!(both.entries().count(), 8, "one entry per derived id");
         let plan = InodeId::derive(&volume, Namespace::RevfsFile, "f-remote").unwrap_or_else(|_| panic!("id"));
@@ -123,6 +113,18 @@ both! {
         assert_eq!(badge(pointee, &Principal::member(alice)), Some(Badge::Owner));
         assert_eq!(badge(pointee, &Principal::member(bob)), Some(Badge::Host));
         assert_eq!(badge(pointee, &Principal::member(1003)), Some(Badge::Other));
+    }
+
+    fn a_hosted_file_appears_only_from_its_owner() {
+        let (volume, alice, a, _) = peer(ALICE);
+        let (_, bob, b, _) = peer(BOB);
+        let theirs = InodeId::derive(&volume, Namespace::RevfsFile, "f-hosted").unwrap_or_else(|_| panic!("id"));
+        assert!(a.skipped.iter().any(|s| s.why == SkipReason::StoredForPeer && s.what == "/Projects/theirs.bin"));
+        let hosts = fold(&volume, stamp(&a.ops, &volume, &Principal::member(alice)));
+        assert!(!hosts.exists(&theirs), "the host's pass writes no entry for a file it stores for the peer");
+        let owners = fold(&volume, stamp(&b.ops, &volume, &Principal::member(bob)));
+        let pointee = &owners.entry(&theirs).unwrap_or_else(|| panic!("the owner's pass writes it")).pointee.value;
+        assert_eq!(badge(pointee, &Principal::member(alice)), Some(Badge::Host));
     }
 
     fn a_sent_record_appears_only_from_the_receiver() {

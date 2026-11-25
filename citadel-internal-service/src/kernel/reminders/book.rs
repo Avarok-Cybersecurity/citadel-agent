@@ -52,6 +52,9 @@ pub(crate) fn acceptable(notice: &AppNotice) -> bool {
         && !notice.title.chars().any(char::is_control)
         && notice.body.chars().count() <= BODY_MAX
         && !notice.body.chars().any(|c| c.is_control() && c != '\n')
+        && notice.sender_only.as_deref().is_none_or(|s| {
+            !s.is_empty() && s.chars().count() <= TITLE_MAX && !s.chars().any(char::is_control)
+        })
 }
 
 impl Book {

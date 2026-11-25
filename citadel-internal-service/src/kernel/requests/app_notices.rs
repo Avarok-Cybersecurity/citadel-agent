@@ -38,7 +38,11 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
             cid,
             notice,
         } => {
-            let outcome = if !acceptable(&notice) || notice.fire_at_ms.is_some() {
+            // Posted notices carry someone else's words; reminders are the member's own events.
+            let outcome = if !acceptable(&notice)
+                || notice.fire_at_ms.is_some()
+                || notice.sender_only.is_none()
+            {
                 Err(AppNoticeRefusal::BadTarget)
             } else if this.show_app_notice(cid, &notice, false).await {
                 Ok(())

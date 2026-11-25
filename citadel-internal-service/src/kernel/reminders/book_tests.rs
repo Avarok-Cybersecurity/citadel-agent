@@ -9,6 +9,7 @@ pub(crate) fn reminder(id: &str, at: u64) -> AppNotice {
         node_id: "workspace-root".to_string(),
         title: "Standup".to_string(),
         body: "Starts at 10:00".to_string(),
+        sender_only: None,
         fire_at_ms: Some(at),
         start_ms: Some(at + 600_000),
     }
@@ -144,4 +145,16 @@ fn the_book_survives_its_encoding() {
     book.take_due(1);
     book.hold(reminder("h", 0));
     assert_eq!(Book::decode(&book.encode().unwrap()).unwrap(), book);
+}
+
+#[test]
+fn a_sender_line_must_be_one_short_line() {
+    let with = |line: &str| AppNotice {
+        sender_only: Some(line.to_string()),
+        ..reminder("a", 1)
+    };
+    assert!(acceptable(&with("Calendar: invitation from bob")));
+    assert!(!acceptable(&with("")));
+    assert!(!acceptable(&with("Calendar\nthe launch codes")));
+    assert!(!acceptable(&with(&"x".repeat(TITLE_MAX + 1))));
 }

@@ -156,3 +156,42 @@ fn a_long_message_is_cut_to_the_preview_length() {
         (PREVIEW_CHARS, "Someone")
     );
 }
+
+fn invitation() -> AppNotice {
+    AppNotice {
+        id: "page:n1".into(),
+        app_id: "net.avarok.calendar".into(),
+        node_id: "workspace-root".into(),
+        title: "Invitation: Salary review".into(),
+        body: SECRET.into(),
+        sender_only: Some("Calendar: invitation from bob".into()),
+        fire_at_ms: None,
+        start_ms: None,
+    }
+}
+
+#[test]
+fn someone_elses_notice_says_only_who_sent_it_without_previews() {
+    let (title, body) = app_notice_text(&invitation(), false, NotificationPreview::SenderOnly);
+    assert_eq!(title, "Calendar: invitation from bob");
+    assert_eq!(body, "");
+}
+
+#[test]
+fn someone_elses_notice_shows_whole_with_previews() {
+    let (title, body) = app_notice_text(&invitation(), false, NotificationPreview::Text);
+    assert_eq!(title, "Invitation: Salary review");
+    assert_eq!(body, SECRET);
+}
+
+#[test]
+fn a_reminder_of_ones_own_event_shows_its_title_either_way() {
+    let own = AppNotice {
+        sender_only: None,
+        ..invitation()
+    };
+    for preview in [NotificationPreview::SenderOnly, NotificationPreview::Text] {
+        let (title, _) = app_notice_text(&own, true, preview);
+        assert_eq!(title, "Missed: Invitation: Salary review");
+    }
+}

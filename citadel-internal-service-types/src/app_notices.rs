@@ -5,7 +5,7 @@
 //! A notice names the node to open, never a URL: the click opens `open=node:<node_id>` on the
 //! workspace's own origin, the way every other native notice does (`NoticeTarget`).
 
-use crate::plaintext_debug_fmt;
+use crate::{plaintext_debug_fmt, secret_debug_fmt};
 use custom_debug::Debug;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -29,6 +29,13 @@ pub struct AppNotice {
     pub title: String,
     #[debug(with = plaintext_debug_fmt)]
     pub body: String,
+    /// Present on a notice that carries someone else's words (an invitation, a booking, a poll):
+    /// all it says while the account shows only who sent things, e.g. "Calendar: invitation from
+    /// Alice". Absent on a reminder of the member's own event, whose title always shows.
+    #[debug(with = secret_debug_fmt)]
+    #[serde(default)]
+    #[cfg_attr(feature = "typescript", ts(type = "string | undefined"))]
+    pub sender_only: Option<String>,
     #[cfg_attr(feature = "typescript", ts(type = "bigint | undefined"))]
     pub fire_at_ms: Option<u64>,
     /// When what the reminder is for begins.

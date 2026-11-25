@@ -13,7 +13,13 @@ id: string, app_id: string,
 /**
  * The node the app's instance is mounted on: what a click opens.
  */
-node_id: string, title: string, body: string, fire_at_ms: bigint | undefined, 
+node_id: string, title: string, body: string, 
+/**
+ * Present on a notice that carries someone else's words (an invitation, a booking, a poll):
+ * all it says while the account shows only who sent things, e.g. "Calendar: invitation from
+ * Alice". Absent on a reminder of the member's own event, whose title always shows.
+ */
+sender_only: string | undefined, fire_at_ms: bigint | undefined, 
 /**
  * When what the reminder is for begins.
  */

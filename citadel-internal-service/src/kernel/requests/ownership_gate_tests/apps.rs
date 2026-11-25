@@ -99,6 +99,9 @@ fn notice(fire_at_ms: Option<u64>) -> AppNotice {
         node_id: "workspace-root".into(),
         title: "t".into(),
         body: "b".into(),
+        sender_only: fire_at_ms
+            .is_none()
+            .then(|| "Calendar: invitation from bob".into()),
         fire_at_ms,
         start_ms: None,
     }

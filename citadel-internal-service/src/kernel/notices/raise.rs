@@ -9,7 +9,7 @@ use crate::kernel::conversations::ConversationIo;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    AccountPreferences, AccountRow, InternalServiceResponse, NoticeRows,
+    AccountPreferences, AccountRow, InternalServiceResponse, NoticeRows, NotificationPreview,
 };
 use citadel_sdk::logging::warn;
 use citadel_sdk::prelude::Ratchet;
@@ -133,6 +133,18 @@ impl<T: IOInterface + Sync, R: Ratchet> CitadelWorkspaceService<T, R> {
         }
     }
 
+    /// The account's notification preview. Unreadable preferences show the least: the defaults
+    /// hide previews.
+    pub(crate) async fn preview_of(&self, cid: u64) -> NotificationPreview {
+        preferences(self, cid)
+            .await
+            .unwrap_or_else(|e| {
+                warn!(target: "citadel", "[NOTICES] {cid}: preferences unreadable, using the defaults: {e}");
+                AccountPreferences::UI_DEFAULTS
+            })
+            .notification_preview
+    }
+
     /// Fill in the peer's name where the notification did not carry it.
     fn named(&self, cid: u64, source: NoticeSource) -> NoticeSource {
         let name = |peer: u64| self.peer_username(cid, peer);
@@ -163,16 +175,11 @@ impl<T: IOInterface + Sync, R: Ratchet> CitadelWorkspaceService<T, R> {
             let conn = map.get(&cid)?;
             (conn.username.clone(), conn.server_host.clone())
         };
-        // Unreadable preferences show the least: the defaults hide previews.
-        let prefs = preferences(self, cid).await.unwrap_or_else(|e| {
-            warn!(target: "citadel", "[NOTICES] {cid}: preferences unreadable, using the defaults: {e}");
-            AccountPreferences::UI_DEFAULTS
-        });
         Some(NoticeContext {
             cid,
             account,
             server_host,
-            preview: prefs.notification_preview,
+            preview: self.preview_of(cid).await,
             muted: self.is_muted(cid).await,
             focused,
         })

@@ -123,7 +123,7 @@ impl<T: IOInterface + Sync, R: Ratchet> CitadelWorkspaceService<T, R> {
             .await
     }
 
-    async fn is_muted(&self, cid: u64) -> bool {
+    pub(crate) async fn is_muted(&self, cid: u64) -> bool {
         match self.kv().get(&format!("{MUTED_KEY}{cid}")).await {
             Ok(value) => value.is_some_and(|v| v.first() == Some(&1)),
             Err(e) => {

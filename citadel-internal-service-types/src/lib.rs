@@ -27,6 +27,10 @@ mod group_responses_more;
 pub use group_responses::*;
 pub use group_responses_more::*;
 mod admission;
+mod app_notices;
+pub use app_notices::{
+    AppNotice, AppNoticeAccepted, AppNoticeFailure, AppNoticeNotification, AppNoticeRefusal,
+};
 mod app_session;
 pub use app_session::*;
 mod identity;
@@ -1319,6 +1323,9 @@ pub enum InternalServiceResponse {
     AppKvFailure(AppKvFailure),
     AppsAgentSettings(AppsAgentSettings),
     AppsAgentSettingsFailure(AppsAgentSettingsFailure),
+    AppNoticeAccepted(AppNoticeAccepted),
+    AppNoticeFailure(AppNoticeFailure),
+    AppNoticeNotification(Box<AppNoticeNotification>),
     IhttpSendAccepted(IhttpSendAccepted),
     IhttpSendFailure(IhttpSendFailure),
     IhttpFrameNotification(IhttpFrameNotification),
@@ -2116,6 +2123,23 @@ pub enum InternalServiceRequest {
         cid: u64,
         private_network: bool,
     },
+    /// Show an app's notice natively now (kernel/reminders); answered with `AppNoticeAccepted`,
+    /// or `AppNoticeFailure` (`Unheard`: the page shows it itself).
+    AppNoticePost {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        notice: AppNotice,
+    },
+    /// Replace every reminder this session holds for `app_id` with `reminders` (each with a
+    /// `fire_at_ms`); the agent fires them, with no window open. Answered as `AppNoticePost` is.
+    AppRemindersSync {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        app_id: String,
+        reminders: Vec<AppNotice>,
+    },
     /// The menu-bar app reporting how an `UpdateInstall` went: `error` is why it did not, and
     /// the agent that receives it is the one still running. Gated by the launch token.
     UpdateInstallResult {
@@ -2614,7 +2638,9 @@ impl InternalServiceRequest {
             | Self::AppSessionSend { cid, .. }
             | Self::AppSessionClose { cid, .. }
             | Self::AppsGetAgentSettings { cid, .. }
-            | Self::AppsSetAgentSettings { cid, .. } => Some(*cid),
+            | Self::AppsSetAgentSettings { cid, .. }
+            | Self::AppNoticePost { cid, .. }
+            | Self::AppRemindersSync { cid, .. } => Some(*cid),
             // Exhaustive on purpose: no `_` arm.
             //
             // The catch-all made this gate fail OPEN by omission — a variant

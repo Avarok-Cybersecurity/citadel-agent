@@ -10,4 +10,9 @@ export type NativeNotice = { cid: bigint, kind: NoticeKind, title: string,
  * The message text only when the account shows previews; otherwise a
  * description of what happened.
  */
-body: string, target: NoticeTarget, request_id: string | null, };
+body: string, target: NoticeTarget, 
+/**
+ * Shown again under the same id, a notice replaces the one already shown instead of adding
+ * a second (an app notice's id); `None` for one that is never repeated.
+ */
+id: string | null, request_id: string | null, };

@@ -23,6 +23,11 @@ supervises_p2p: boolean,
  */
 notices_heard: boolean, 
 /**
+ * The agent takes apps' notices (`AppNoticePost`) and keeps their reminders, firing them
+ * itself (`AppRemindersSync`). Absent from older agents: the page treats that as false.
+ */
+app_notices: boolean, 
+/**
  * The agent relays internal HTTP for the accounts whose ILM it hosts (`IhttpSend`), and
  * its ILM advertises that to peers.
  */

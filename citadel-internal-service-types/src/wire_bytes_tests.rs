@@ -6,8 +6,8 @@
 //! and on the build before `wire_bytes` (the frames were checked against both).
 
 use crate::{
-    wire_bytes, AppKvResult, AttachProof, InternalServicePayload, SecurityKeyCeremony,
-    SignInCredential,
+    bytes_debug_fmt, map_debug_fmt, wire_bytes, AppKvResult, AttachProof, InternalServicePayload,
+    SecurityKeyCeremony, SignInCredential,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -59,9 +59,12 @@ fn the_tcp_codec_carries_every_frame_unchanged() {
     }
 }
 
+/// A frame and the type that writes it back.
+type Case = (&'static str, fn(&str) -> String);
+
 #[test]
 fn the_containers_keep_their_frames_too() {
-    let cases: [(&str, fn(&str) -> String); 6] = [
+    let cases: [Case; 6] = [
         (r#"{"Value":[1,2]}"#, written_back::<AppKvResult>),
         (r#"{"Value":null}"#, written_back::<AppKvResult>),
         (r#"{"Token":[1,2]}"#, written_back::<AttachProof>),
@@ -98,22 +101,26 @@ fn a_byte_field_written_as_a_string_is_refused_as_before() {
 
 /// The same fields with and without `wire_bytes`: the attribute changes nothing either wire
 /// carries, only the shape a byte-aware serializer (serde-wasm-bindgen) is handed.
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, custom_debug::Debug, PartialEq)]
 struct Plain {
+    #[debug(with = bytes_debug_fmt)]
     one: Vec<u8>,
     maybe: Option<Vec<u8>>,
     many: Vec<Vec<u8>>,
+    #[debug(with = map_debug_fmt)]
     keyed: HashMap<String, Vec<u8>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, custom_debug::Debug, PartialEq)]
 struct Typed {
+    #[debug(with = bytes_debug_fmt)]
     #[serde(with = "wire_bytes")]
     one: Vec<u8>,
     #[serde(default, with = "wire_bytes::option")]
     maybe: Option<Vec<u8>>,
     #[serde(with = "wire_bytes::seq")]
     many: Vec<Vec<u8>>,
+    #[debug(with = map_debug_fmt)]
     #[serde(with = "wire_bytes::map")]
     keyed: HashMap<String, Vec<u8>>,
 }

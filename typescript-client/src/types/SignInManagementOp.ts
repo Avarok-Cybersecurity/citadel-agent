@@ -4,4 +4,4 @@ import type { SignInPolicy } from "./SignInPolicy";
 /**
  * A change to the account's sign-in factors (`citadel_types::auth::SignInManagementOp`).
  */
-export type SignInManagementOp = "ListCredentials" | { "AddSecurityKey": { label: string, } } | { "RenameCredential": { id: number, label: string, } } | { "RemoveCredential": { id: number, } } | { "SetSignInPolicy": { policy: SignInPolicy, } } | { "SetPassword": { new_password: number[], } } | "RegenerateRecoveryPhrase";
+export type SignInManagementOp = "ListCredentials" | { "AddSecurityKey": { label: string, } } | { "RenameCredential": { id: number, label: string, } } | { "RemoveCredential": { id: number, } } | { "SetSignInPolicy": { policy: SignInPolicy, } } | { "SetPassword": { new_password: Uint8Array, } } | "RegenerateRecoveryPhrase";

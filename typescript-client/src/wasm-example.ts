@@ -40,7 +40,7 @@ async function wasmClientExample() {
             server_addr: '127.0.0.1:8080', // This should be the actual Citadel server address
             full_name: 'Alice Test User',
             username: 'alice_test',
-            proposed_password: Array.from(new TextEncoder().encode('password123')),
+            proposed_password: new TextEncoder().encode('password123'),
             connect_after_register: true,
             session_security_settings: {
                 security_level: 'Standard',
@@ -73,7 +73,7 @@ async function wasmClientExample() {
         console.log('Sending P2P message...');
         await client.sendP2PMessage({
             request_id: InternalServiceWasmClient.generateUUID(),
-            message: Array.from(new TextEncoder().encode('Hello from TypeScript WASM client!')),
+            message: new TextEncoder().encode('Hello from TypeScript WASM client!'),
             cid: BigInt(client.getCurrentCid()!),
             peer_cid: BigInt(peerCid),
             security_level: 'Standard'
@@ -140,7 +140,7 @@ async function p2pExample() {
             server_addr: '127.0.0.1:8080',
             full_name: 'Alice Test',
             username: 'alice_test',
-            proposed_password: Array.from(new TextEncoder().encode('password123')),
+            proposed_password: new TextEncoder().encode('password123'),
             connect_after_register: true,
             session_security_settings: {
                 security_level: 'Standard',
@@ -160,7 +160,7 @@ async function p2pExample() {
             server_addr: '127.0.0.1:8080',
             full_name: 'Bob Test',
             username: 'bob_test',
-            proposed_password: Array.from(new TextEncoder().encode('password456')),
+            proposed_password: new TextEncoder().encode('password456'),
             connect_after_register: true,
             session_security_settings: {
                 security_level: 'Standard',
@@ -187,7 +187,7 @@ async function p2pExample() {
         // Exchange messages
         await alice.sendP2PMessage({
             request_id: InternalServiceWasmClient.generateUUID(),
-            message: Array.from(new TextEncoder().encode('Hello Bob, this is Alice!')),
+            message: new TextEncoder().encode('Hello Bob, this is Alice!'),
             cid: BigInt(aliceCid),
             peer_cid: BigInt(bobCid),
             security_level: 'Standard'
@@ -196,7 +196,7 @@ async function p2pExample() {
 
         await bob.sendP2PMessage({
             request_id: InternalServiceWasmClient.generateUUID(),
-            message: Array.from(new TextEncoder().encode('Hi Alice, nice to meet you!')),
+            message: new TextEncoder().encode('Hi Alice, nice to meet you!'),
             cid: BigInt(bobCid),
             peer_cid: BigInt(aliceCid),
             security_level: 'Standard'

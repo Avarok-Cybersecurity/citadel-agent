@@ -27,7 +27,8 @@ pub struct ReadPulledFileChunkSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub offset: u64,
     #[debug(with = bytes_debug_fmt)]
-    #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
+    #[serde(with = "crate::wire_bytes")]
     pub data: Vec<u8>,
 }
 

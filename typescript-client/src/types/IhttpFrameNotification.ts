@@ -11,4 +11,4 @@ cid: bigint, peer_cid: bigint,
 /**
  * One CBOR `IhttpFrame`, already validated.
  */
-frame: number[], request_id: string | null, };
+frame: Uint8Array, request_id: string | null, };

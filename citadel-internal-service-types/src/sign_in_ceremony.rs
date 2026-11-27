@@ -19,6 +19,8 @@ pub enum SecurityKeyCeremony {
     /// WebAuthn `get` with `allowCredentials = credential_ids`.
     Authenticate {
         #[debug(with = credential_ids_fmt)]
+        #[cfg_attr(feature = "typescript", ts(type = "Array<Uint8Array>"))]
+        #[serde(with = "crate::wire_bytes::seq")]
         credential_ids: Vec<Vec<u8>>,
     },
     /// WebAuthn `create` of a non-discoverable credential with the PRF extension enabled, for
@@ -26,9 +28,13 @@ pub enum SecurityKeyCeremony {
     /// of the new credential for its PRF output.
     Register {
         #[debug(with = bytes_debug_fmt)]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
+        #[serde(with = "crate::wire_bytes")]
         user_id: Vec<u8>,
         user_name: String,
         #[debug(with = credential_ids_fmt)]
+        #[cfg_attr(feature = "typescript", ts(type = "Array<Uint8Array>"))]
+        #[serde(with = "crate::wire_bytes::seq")]
         exclude_credential_ids: Vec<Vec<u8>>,
     },
 }

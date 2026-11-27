@@ -34,3 +34,6 @@ sha3 = "0.10"
 
 [dev-dependencies]
 serde_json = "1.0"
+# wire_bytes_tests: the TCP codec's frames, and the shape a byte-aware serializer is handed.
+bincode2 = { workspace = true }
+serde_test = "1"

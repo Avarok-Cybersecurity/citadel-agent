@@ -68,8 +68,9 @@ pub struct IhttpFrameNotification {
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub peer_cid: u64,
     /// One CBOR `IhttpFrame`, already validated.
-    #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
     #[debug(with = plaintext_debug_fmt)]
+    #[serde(with = "crate::wire_bytes")]
     pub frame: Vec<u8>,
     pub request_id: Option<Uuid>,
 }

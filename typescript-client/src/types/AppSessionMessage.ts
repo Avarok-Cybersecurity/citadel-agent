@@ -3,4 +3,4 @@
 /**
  * One message the external server sent the session.
  */
-export type AppSessionMessage = { cid: bigint, request_id: string | null, install_id: string, session: number, body: number[], };
+export type AppSessionMessage = { cid: bigint, request_id: string | null, install_id: string, session: number, body: Uint8Array, };

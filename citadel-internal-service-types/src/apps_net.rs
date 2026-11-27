@@ -61,8 +61,9 @@ pub struct AppHttpRequest {
     /// Absolute: `https://host[:port]/path?query`.
     pub url: String,
     pub headers: Vec<AppHttpHeader>,
-    #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
     #[debug(with = plaintext_debug_fmt)]
+    #[serde(with = "crate::wire_bytes")]
     pub body: Vec<u8>,
 }
 
@@ -125,8 +126,9 @@ pub struct AppFetchResponse {
     pub request_id: Option<Uuid>,
     pub status: u16,
     pub headers: Vec<AppHttpHeader>,
-    #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
     #[debug(with = plaintext_debug_fmt)]
+    #[serde(with = "crate::wire_bytes")]
     pub body: Vec<u8>,
     /// Redirects followed, each decided again by the policy.
     pub redirects: u8,
@@ -167,8 +169,9 @@ pub struct AppFetchStreamChunk {
     pub request_id: Option<Uuid>,
     /// From 0, increasing by one.
     pub seq: u32,
-    #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
     #[debug(with = plaintext_debug_fmt)]
+    #[serde(with = "crate::wire_bytes")]
     pub bytes: Vec<u8>,
 }
 

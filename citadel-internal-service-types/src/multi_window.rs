@@ -53,14 +53,15 @@ pub struct SessionRoleNotification {
 pub enum AttachProof {
     /// The account's password; checked as a live sign-in checks it.
     Password(
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         #[debug(skip)]
         crate::SecBuffer,
     ),
     /// A token an earlier password attach to this same session returned.
     Token(
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         #[debug(with = plaintext_debug_fmt)]
+        #[serde(with = "crate::wire_bytes")]
         Vec<u8>,
     ),
 }
@@ -76,8 +77,9 @@ pub struct SessionAttached {
     /// Proves a later attach to this session without the password. Lives as
     /// long as the session does, in the agent's memory only.
     // A secret: length only, never a single byte of it (plaintext_debug_fmt).
-    #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
     #[debug(with = plaintext_debug_fmt)]
+    #[serde(with = "crate::wire_bytes")]
     pub token: Vec<u8>,
     pub request_id: Option<Uuid>,
 }

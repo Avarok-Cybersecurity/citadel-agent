@@ -45,8 +45,9 @@ pub enum AppKvOp {
     },
     Set {
         key: String,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         #[debug(with = plaintext_debug_fmt)]
+        #[serde(with = "crate::wire_bytes")]
         value: Vec<u8>,
     },
     Delete {
@@ -66,8 +67,9 @@ pub enum AppKvOp {
 pub enum AppKvResult {
     /// `Get`: the value, or none for a key never set or deleted.
     Value(
-        #[cfg_attr(feature = "typescript", ts(type = "number[] | null"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array | null"))]
         #[debug(with = opt_plaintext_debug_fmt)]
+        #[serde(with = "crate::wire_bytes::option")]
         Option<Vec<u8>>,
     ),
     /// `Set` or `Delete` done.

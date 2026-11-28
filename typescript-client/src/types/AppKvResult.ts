@@ -3,4 +3,4 @@
 /**
  * What an `AppKv` request found or did.
  */
-export type AppKvResult = { "Value": number[] | null } | "Done" | { "Keys": { keys: Array<string>, next: string | null, } };
+export type AppKvResult = { "Value": Uint8Array | null } | "Done" | { "Keys": { keys: Array<string>, next: string | null, } };

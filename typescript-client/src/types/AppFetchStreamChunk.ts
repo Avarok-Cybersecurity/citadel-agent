@@ -7,4 +7,4 @@ export type AppFetchStreamChunk = { cid: bigint, request_id: string | null,
 /**
  * From 0, increasing by one.
  */
-seq: number, bytes: number[], };
+seq: number, bytes: Uint8Array, };

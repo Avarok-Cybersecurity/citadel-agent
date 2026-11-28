@@ -4,7 +4,7 @@ import type { AppHttpHeader } from "./AppHttpHeader";
 /**
  * A buffered `AppFetch`'s answer.
  */
-export type AppFetchResponse = { cid: bigint, request_id: string | null, status: number, headers: Array<AppHttpHeader>, body: number[], 
+export type AppFetchResponse = { cid: bigint, request_id: string | null, status: number, headers: Array<AppHttpHeader>, body: Uint8Array, 
 /**
  * Redirects followed, each decided again by the policy.
  */

@@ -3,7 +3,7 @@
 /**
  * One decoded-ready media frame, reassembled and released in order.
  */
-export type MediaFrameNotification = { cid: bigint, peer_cid: bigint, track: number, kind: number, sequence: number, timestamp: number, flags: number, payload: number[], 
+export type MediaFrameNotification = { cid: bigint, peer_cid: bigint, track: number, kind: number, sequence: number, timestamp: number, flags: number, payload: Uint8Array, 
 /**
  * Always None: frames are unsolicited, and like MessageNotification they are
  * routed to the right tab by `cid`, never by the request that started the

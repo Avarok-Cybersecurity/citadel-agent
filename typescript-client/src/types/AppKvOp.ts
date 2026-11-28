@@ -3,4 +3,4 @@
 /**
  * One operation on the namespace.
  */
-export type AppKvOp = { "Get": { key: string, } } | { "Set": { key: string, value: number[], } } | { "Delete": { key: string, } } | { "List": { prefix: string | null, after: string | null, } };
+export type AppKvOp = { "Get": { key: string, } } | { "Set": { key: string, value: Uint8Array, } } | { "Delete": { key: string, } } | { "List": { prefix: string | null, after: string | null, } };

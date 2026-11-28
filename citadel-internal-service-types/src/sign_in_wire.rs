@@ -48,6 +48,9 @@ pub struct SignInCredential {
     pub label: String,
     /// The WebAuthn credential id, for a security key.
     #[debug(with = optional_bytes_fmt)]
+    #[cfg_attr(feature = "typescript", ts(type = "Uint8Array | null"))]
+    #[serde(default)]
+    #[serde(with = "crate::wire_bytes::option")]
     pub credential_id: Option<Vec<u8>>,
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub created_ms: u64,
@@ -82,7 +85,7 @@ pub enum SignInManagementOp {
     /// change from a full session (the step-up holds the current password). The SDK turns the
     /// new password into a fresh factor on this device; the server never sees it.
     SetPassword {
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         new_password: SecBuffer,
     },
     /// Replace the recovery phrase with a new one. The agent binds it to the canonical domain of

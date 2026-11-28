@@ -1,7 +1,7 @@
 //! The apps requests act only for a session the caller is attached to.
 use super::{gate_decision, requires_owned_session, GateDecision};
 use citadel_internal_service_types::{
-    AppHttpRequest, AppKvNamespace, AppKvOp, AppNetGrant, InternalServiceRequest,
+    AppHttpRequest, AppKvNamespace, AppKvOp, AppNetGrant, AppNotice, InternalServiceRequest,
 };
 use uuid::Uuid;
 
@@ -77,7 +77,34 @@ fn apps_requests(cid: u64) -> Vec<InternalServiceRequest> {
             install_id: "i".into(),
             session: 1,
         },
+        // An account's reminders are set and cancelled by its own windows only.
+        InternalServiceRequest::AppNoticePost {
+            request_id,
+            cid,
+            notice: notice(None),
+        },
+        InternalServiceRequest::AppRemindersSync {
+            request_id,
+            cid,
+            app_id: "net.avarok.calendar".into(),
+            reminders: vec![notice(Some(1))],
+        },
     ]
+}
+
+fn notice(fire_at_ms: Option<u64>) -> AppNotice {
+    AppNotice {
+        id: "reminder:e:1".into(),
+        app_id: "net.avarok.calendar".into(),
+        node_id: "workspace-root".into(),
+        title: "t".into(),
+        body: "b".into(),
+        sender_only: fire_at_ms
+            .is_none()
+            .then(|| "Calendar: invitation from bob".into()),
+        fire_at_ms,
+        start_ms: None,
+    }
 }
 
 #[test]

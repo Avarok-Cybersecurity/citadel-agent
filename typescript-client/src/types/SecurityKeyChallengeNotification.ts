@@ -18,7 +18,7 @@ challenge_id: string, purpose: SecurityKeyPurpose, rp_id: string, ceremony: Secu
 /**
  * 32 bytes: the PRF `eval.first` input.
  */
-prf_salt: Array<number>, 
+prf_salt: Uint8Array, 
 /**
  * How long the SDK waits for the touch. An answer after that is refused.
  *

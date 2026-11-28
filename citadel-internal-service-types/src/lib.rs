@@ -27,6 +27,10 @@ mod group_responses_more;
 pub use group_responses::*;
 pub use group_responses_more::*;
 mod admission;
+mod app_notices;
+pub use app_notices::{
+    AppNotice, AppNoticeAccepted, AppNoticeFailure, AppNoticeNotification, AppNoticeRefusal,
+};
 mod app_session;
 pub use app_session::*;
 mod identity;
@@ -51,6 +55,7 @@ mod supervisor;
 mod turn;
 pub use chat_level::{ChatSecurityLevel, PeerSecurityMinimum};
 mod updates;
+pub mod wire_bytes;
 pub use admission::{AdmissionChallengeWire, AdmissionProviderWire};
 pub use apps_ihttp::{
     IhttpFrameNotification, IhttpSendAccepted, IhttpSendFailure, IhttpSendRefusal,
@@ -443,8 +448,9 @@ pub struct MessageNotification {
     //
     // `bytes_debug_fmt` prints the length and the first and last five bytes,
     // which is what every other byte field in this file already does.
-    #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
     #[debug(with = plaintext_debug_fmt)]
+    #[serde(with = "crate::wire_bytes")]
     pub message: Vec<u8>,
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
@@ -511,8 +517,9 @@ pub struct MediaFrameNotification {
     pub sequence: u32,
     pub timestamp: u32,
     pub flags: u8,
-    #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
     #[debug(with = bytes_debug_fmt)]
+    #[serde(with = "crate::wire_bytes")]
     pub payload: Vec<u8>,
     /// Always None: frames are unsolicited, and like MessageNotification they are
     /// routed to the right tab by `cid`, never by the request that started the
@@ -727,7 +734,8 @@ pub enum FileSource {
         // `FileSource::ByteContents` could dump hundreds of MiB into
         // the log. See `bytes_debug_fmt` earlier in this file.
         #[debug(with = bytes_debug_fmt)]
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
+        #[serde(with = "crate::wire_bytes")]
         data: Vec<u8>,
     },
     /// A browser file this session staged on the agent with `StageUploadChunk`,
@@ -934,8 +942,9 @@ pub struct LocalDBGetKVSuccess {
     #[cfg_attr(feature = "typescript", ts(type = "bigint | null"))]
     pub peer_cid: Option<u64>,
     pub key: String,
-    #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
     #[debug(with = bytes_debug_fmt)]
+    #[serde(with = "crate::wire_bytes")]
     pub value: Vec<u8>,
     pub request_id: Option<Uuid>,
 }
@@ -1008,8 +1017,9 @@ pub struct LocalDBGetAllKVSuccess {
     pub cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint | null"))]
     pub peer_cid: Option<u64>,
-    #[cfg_attr(feature = "typescript", ts(type = "Record<string, number[]>"))]
+    #[cfg_attr(feature = "typescript", ts(type = "Record<string, Uint8Array>"))]
     #[debug(with = map_debug_fmt)]
+    #[serde(with = "crate::wire_bytes::map")]
     pub map: HashMap<String, Vec<u8>>,
     pub request_id: Option<Uuid>,
 }
@@ -1319,6 +1329,9 @@ pub enum InternalServiceResponse {
     AppKvFailure(AppKvFailure),
     AppsAgentSettings(AppsAgentSettings),
     AppsAgentSettingsFailure(AppsAgentSettingsFailure),
+    AppNoticeAccepted(AppNoticeAccepted),
+    AppNoticeFailure(AppNoticeFailure),
+    AppNoticeNotification(Box<AppNoticeNotification>),
     IhttpSendAccepted(IhttpSendAccepted),
     IhttpSendFailure(IhttpSendFailure),
     IhttpFrameNotification(IhttpFrameNotification),
@@ -1356,7 +1369,7 @@ pub enum InternalServiceRequest {
         /// than dial whichever server a same-named account happens to be registered to.
         server_address: String,
         /// Absent for a `KeyOnly` account and for a recovery-phrase sign-in.
-        #[cfg_attr(feature = "typescript", ts(type = "number[] | null"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array | null"))]
         password: Option<SecBuffer>,
         /// Whether this window can answer a `SecurityKeyChallengeNotification`.
         security_key: bool,
@@ -1364,7 +1377,7 @@ pub enum InternalServiceRequest {
         /// the recovery console: a session that may only manage how the account signs in. The
         /// agent binds it to the account's server (`kernel/recovery_domain.rs`).
         #[serde(default)]
-        #[cfg_attr(feature = "typescript", ts(type = "number[] | null", optional))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array | null", optional))]
         recovery_phrase: Option<SecBuffer>,
         /// A Turnstile token for a server that checks fresh sign-ins (Turnstile action
         /// `sign-in`). Never logged.
@@ -1423,7 +1436,7 @@ pub enum InternalServiceRequest {
         server_addr: String,
         full_name: String,
         username: String,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         proposed_password: SecBuffer,
         connect_after_register: bool,
         #[cfg_attr(feature = "typescript", ts(type = "SessionSecuritySettings"))]
@@ -1450,12 +1463,12 @@ pub enum InternalServiceRequest {
     /// Draw a new identity seed, seal it under `unlock_password`, and hold it unlocked.
     IdentityCreate {
         request_id: Uuid,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         unlock_password: SecBuffer,
     },
     IdentityUnlock {
         request_id: Uuid,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         unlock_password: SecBuffer,
     },
     /// Forget the unsealed identity now (it is also forgotten after the configured idle time).
@@ -1465,7 +1478,7 @@ pub enum InternalServiceRequest {
     /// The recovery phrase, for a request that proves the unlock password again.
     IdentityExport {
         request_id: Uuid,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         unlock_password: SecBuffer,
     },
     /// Sign a "Sign in with Citadel" attempt with the identity key (contracts
@@ -1482,22 +1495,24 @@ pub enum InternalServiceRequest {
         aud: String,
         /// The issuer's attempt nonce.
         #[debug(with = bytes_debug_fmt)]
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
+        #[serde(with = "crate::wire_bytes")]
         nonce: Vec<u8>,
         /// `SHA3-256(verifier)` from the sign-in link.
         #[debug(with = bytes_debug_fmt)]
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
+        #[serde(with = "crate::wire_bytes")]
         challenge: Vec<u8>,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         unlock_password: SecBuffer,
     },
     /// Recreate an identity from its 24-word phrase (space separated) and seal it under
     /// `unlock_password`. Refused while this agent holds an identity.
     IdentityImport {
         request_id: Uuid,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         phrase: SecBuffer,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         unlock_password: SecBuffer,
     },
     /// The identity's signed binding to account `cid`'s username on its pinned domain.
@@ -1550,13 +1565,14 @@ pub enum InternalServiceRequest {
     },
     Message {
         request_id: Uuid,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         // Length only, like the inbound counterpart. This is the SAME material
         // -- the user's decrypted message body -- and it was printing its first
         // and last five bytes, which for a chat line is its opening word. The
         // response side already learned this; the request side had not, which
         // is how the original leak happened.
         #[debug(with = plaintext_debug_fmt)]
+        #[serde(with = "crate::wire_bytes")]
         message: Vec<u8>,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
@@ -1608,8 +1624,9 @@ pub enum InternalServiceRequest {
         timestamp: u32,
         /// Bit 0 = keyframe, bit 1 = discardable under congestion.
         flags: u8,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         #[debug(with = bytes_debug_fmt)]
+        #[serde(with = "crate::wire_bytes")]
         payload: Vec<u8>,
     },
 
@@ -1653,7 +1670,8 @@ pub enum InternalServiceRequest {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         offset: u64,
         #[debug(with = bytes_debug_fmt)]
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
+        #[serde(with = "crate::wire_bytes")]
         data: Vec<u8>,
     },
     /// See `ReadPulledFileChunkSuccess`. Names a file this session pulled with
@@ -1813,8 +1831,9 @@ pub enum InternalServiceRequest {
         #[cfg_attr(feature = "typescript", ts(type = "bigint | null"))]
         peer_cid: Option<u64>,
         key: String,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         #[debug(with = bytes_debug_fmt)]
+        #[serde(with = "crate::wire_bytes")]
         value: Vec<u8>,
     },
     LocalDBDeleteKV {
@@ -1884,13 +1903,14 @@ pub enum InternalServiceRequest {
     GroupMessage {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         // Length only, like the inbound counterpart. This is the SAME material
         // -- the user's decrypted message body -- and it was printing its first
         // and last five bytes, which for a chat line is its opening word. The
         // response side already learned this; the request side had not, which
         // is how the original leak happened.
         #[debug(with = plaintext_debug_fmt)]
+        #[serde(with = "crate::wire_bytes")]
         message: Vec<u8>,
         #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
         group_key: MessageGroupKey,
@@ -2116,6 +2136,23 @@ pub enum InternalServiceRequest {
         cid: u64,
         private_network: bool,
     },
+    /// Show an app's notice natively now (kernel/reminders); answered with `AppNoticeAccepted`,
+    /// or `AppNoticeFailure` (`Unheard`: the page shows it itself).
+    AppNoticePost {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        notice: AppNotice,
+    },
+    /// Replace every reminder this session holds for `app_id` with `reminders` (each with a
+    /// `fire_at_ms`); the agent fires them, with no window open. Answered as `AppNoticePost` is.
+    AppRemindersSync {
+        request_id: Uuid,
+        #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
+        cid: u64,
+        app_id: String,
+        reminders: Vec<AppNotice>,
+    },
     /// The menu-bar app reporting how an `UpdateInstall` went: `error` is why it did not, and
     /// the agent that receives it is the one still running. Gated by the launch token.
     UpdateInstallResult {
@@ -2133,8 +2170,9 @@ pub enum InternalServiceRequest {
         cid: u64,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         peer_cid: u64,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         #[debug(with = plaintext_debug_fmt)]
+        #[serde(with = "crate::wire_bytes")]
         message: Vec<u8>,
         #[cfg_attr(feature = "typescript", ts(type = "SecurityLevel"))]
         security_level: SecurityLevel,
@@ -2147,9 +2185,11 @@ pub enum InternalServiceRequest {
         request_id: Uuid,
         challenge_id: Uuid,
         #[debug(with = plaintext_debug_fmt)]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
+        #[serde(with = "crate::wire_bytes")]
         credential_id: Vec<u8>,
         /// The 32-byte WebAuthn PRF output. Handed to the SDK and wiped; never logged.
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         prf_output: SecBuffer,
     },
     /// The user cancelled, or the key has no PRF support: the asking request fails now
@@ -2230,8 +2270,9 @@ pub enum InternalServiceRequest {
         cid: u64,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         peer_cid: u64,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         #[debug(with = plaintext_debug_fmt)]
+        #[serde(with = "crate::wire_bytes")]
         frame: Vec<u8>,
     },
     /// Open, or find, this install's `citadel.session` to `server` for `acting_username`; see
@@ -2253,8 +2294,9 @@ pub enum InternalServiceRequest {
         cid: u64,
         install_id: String,
         session: u32,
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         #[debug(with = plaintext_debug_fmt)]
+        #[serde(with = "crate::wire_bytes")]
         body: Vec<u8>,
     },
     /// Close the install's `session`. Answered with `AppSessionState` (`closed`) or
@@ -2305,7 +2347,7 @@ pub enum InternalServiceRequest {
         server_addr: String,
         username: String,
         /// The 24 words as typed. Never logged.
-        #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+        #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
         phrase: SecBuffer,
         /// What to call this device among the account's security events (1 to 64 characters).
         device_label: String,
@@ -2614,7 +2656,9 @@ impl InternalServiceRequest {
             | Self::AppSessionSend { cid, .. }
             | Self::AppSessionClose { cid, .. }
             | Self::AppsGetAgentSettings { cid, .. }
-            | Self::AppsSetAgentSettings { cid, .. } => Some(*cid),
+            | Self::AppsSetAgentSettings { cid, .. }
+            | Self::AppNoticePost { cid, .. }
+            | Self::AppRemindersSync { cid, .. } => Some(*cid),
             // Exhaustive on purpose: no `_` arm.
             //
             // The catch-all made this gate fail OPEN by omission — a variant
@@ -2711,6 +2755,8 @@ mod sign_in_wire_tests;
 mod staged_upload_wire_tests;
 #[cfg(test)]
 mod types_hash_tests;
+#[cfg(test)]
+mod wire_bytes_tests;
 
 #[cfg(test)]
 mod tests {

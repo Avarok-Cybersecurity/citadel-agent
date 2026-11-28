@@ -8,7 +8,7 @@ export type SignInCredential = { id: number, kind: FactorKind, label: string,
 /**
  * The WebAuthn credential id, for a security key.
  */
-credential_id: Array<number> | null, created_ms: bigint, last_used_ms: bigint | null, 
+credential_id: Uint8Array | null, created_ms: bigint, last_used_ms: bigint | null, 
 /**
  * The SDK's flag for a used single-use factor; no factor the agent offers is single-use.
  */

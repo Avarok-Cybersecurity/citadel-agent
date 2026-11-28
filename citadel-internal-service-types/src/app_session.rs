@@ -52,8 +52,9 @@ pub struct AppSessionMessage {
     pub request_id: Option<Uuid>,
     pub install_id: String,
     pub session: u32,
-    #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
     #[debug(with = plaintext_debug_fmt)]
+    #[serde(with = "crate::wire_bytes")]
     pub body: Vec<u8>,
 }
 

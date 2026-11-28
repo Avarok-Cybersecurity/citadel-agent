@@ -142,8 +142,9 @@ pub struct GroupMessageNotification {
     // It carried `bytes_debug_fmt`, which samples the first and last five bytes.
     // That is the right trade for a key or a chunk and the wrong one for a
     // message: five bytes of a chat line is its opening word.
-    #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
     #[debug(with = plaintext_debug_fmt)]
+    #[serde(with = "crate::wire_bytes")]
     pub message: Vec<u8>,
     #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,

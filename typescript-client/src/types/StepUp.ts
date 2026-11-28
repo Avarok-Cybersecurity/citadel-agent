@@ -4,7 +4,7 @@
  * The factors a window offers to prove the account again before a change to its sign-in
  * factors. A session signed in with a recovery code offers none.
  */
-export type StepUp = { password: number[] | null, 
+export type StepUp = { password: Uint8Array | null, 
 /**
  * Whether the window can answer a [`SecurityKeyChallengeNotification`]. Adding a key
  * needs it (the new key's touch) even when the step-up itself is the password alone.

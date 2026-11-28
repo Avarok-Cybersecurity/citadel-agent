@@ -12,7 +12,9 @@
 //! - The click target names the account, its server and the target id; never
 //!   any content, which a URL would carry into history and logs.
 
-use citadel_internal_service_types::{NativeNotice, NoticeKind, NoticeTarget, NotificationPreview};
+use citadel_internal_service_types::{
+    AppNotice, NativeNotice, NoticeKind, NoticeTarget, NotificationPreview,
+};
 
 /// The longest message text a notice shows.
 pub(crate) const PREVIEW_CHARS: usize = 100;
@@ -124,8 +126,28 @@ pub(crate) fn decide(source: &NoticeSource, ctx: &NoticeContext) -> Option<Nativ
             server_host: ctx.server_host.clone(),
             open,
         },
+        id: None,
         request_id: None,
     })
+}
+
+/// The title and text the menu-bar app shows for an app's notice. One that carries someone else's
+/// words says only its sender line unless the account shows previews; a reminder of the member's
+/// own event always shows its title. A reminder fired late says so.
+pub(crate) fn app_notice_text(
+    notice: &AppNotice,
+    late: bool,
+    preview: NotificationPreview,
+) -> (String, String) {
+    let (title, body) = match &notice.sender_only {
+        Some(line) if preview != NotificationPreview::Text => (line.clone(), String::new()),
+        _ => (notice.title.clone(), notice.body.clone()),
+    };
+    if late {
+        (format!("Missed: {title}"), body)
+    } else {
+        (title, body)
+    }
 }
 
 fn kind_and_peer(source: &NoticeSource) -> (NoticeKind, u64) {

@@ -87,14 +87,14 @@ export class CitadelClient {
 
     private async sendConnectRequest(options: ConnectOptions): Promise<ConnectSuccess> {
         const requestId = uuidv4();
-        const passwordBytes = Buffer.from(this.config.password, 'utf-8');
+        const passwordBytes = new TextEncoder().encode(this.config.password);
 
         const connectRequest: InternalServiceRequest = {
             Connect: {
                 request_id: requestId,
                 username: this.config.username,
                 server_address: this.config.serverAddress,
-                password: Array.from(passwordBytes),
+                password: passwordBytes,
                 // A password sign-in: this client cannot answer a security-key challenge.
                 security_key: false,
                 connect_mode: options.connectMode || { Standard: { force_login: false } },
@@ -124,12 +124,12 @@ export class CitadelClient {
         }
 
         const requestId = uuidv4();
-        const messageBytes = Buffer.from(message, 'utf-8');
+        const messageBytes = new TextEncoder().encode(message);
 
         const messageRequest: InternalServiceRequest = {
             Message: {
                 request_id: requestId,
-                message: Array.from(messageBytes),
+                message: messageBytes,
                 cid: this.connectedCid,
                 peer_cid: options.peer_cid || null,
                 security_level: options.security_level || "Standard"
@@ -202,7 +202,12 @@ export class CitadelClient {
             });
 
             try {
-                const message = JSON.stringify(payload);
+                // The agent reads byte fields as JSON arrays of numbers; a Uint8Array would
+                // stringify as an object of indices.
+                const message = JSON.stringify(payload, (_key: string, value: unknown) =>
+                    ArrayBuffer.isView(value)
+                        ? Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength))
+                        : value);
                 this.ws.send(message);
             } catch (error) {
                 this.pendingRequests.delete(requestId);

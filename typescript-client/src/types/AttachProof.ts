@@ -3,4 +3,4 @@
 /**
  * What proves a caller may join a session another connection holds.
  */
-export type AttachProof = { "Password": number[] } | { "Token": number[] };
+export type AttachProof = { "Password": Uint8Array } | { "Token": Uint8Array };

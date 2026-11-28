@@ -69,10 +69,34 @@ abi_types! {
         pub text: String,
     }
 
+    /// What an app's notice is about, so the host can say so without its words.
+    #[serde(rename_all = "snake_case")]
+    pub enum NotifyKind {
+        Invitation,
+        Booking,
+        Poll,
+        Other,
+    }
+
+    /// The change a notice is about: a key in a member's own namespace on a node.
+    pub struct NotifyAbout {
+        pub node_id: String,
+        pub author: String,
+        pub key: String,
+    }
+
     /// A host toast badged with the app's name.
     pub struct Notify {
         pub title: String,
         pub body: String,
+        /// Absent: the app's own notice to its member, shown whole. Set: it may carry someone
+        /// else's words, so with previews off only the host's line ("Calendar: new invitation") shows.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub kind: Option<NotifyKind>,
+        /// The host names who a notice is from only when this is a change it told the instance
+        /// of, and then from the change as the server reported it. An app never names anyone.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub about: Option<NotifyAbout>,
     }
 
     pub struct DocOpen {

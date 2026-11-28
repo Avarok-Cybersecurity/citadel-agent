@@ -26,6 +26,8 @@ pub enum NoticeKind {
     IncomingCall,
     /// The account's resume credential has run out: a click opens its sign-in.
     SignInNeeded,
+    /// An app's notice (a Calendar reminder): a click opens the node it names.
+    App,
 }
 
 /// Where a click on a notice opens. The client builds the URL from its own
@@ -38,7 +40,8 @@ pub struct NoticeTarget {
     pub account: String,
     /// The workspace server as the user typed it; absent from older sessions.
     pub server_host: Option<String>,
-    /// `conversation:<peer>`, `call:<peer>`, `requests`, or `sign-in` for the account's sign-in.
+    /// `conversation:<peer>`, `call:<peer>`, `requests`, `node:<node id>` for an app's notice, or
+    /// `sign-in` for the account's sign-in.
     pub open: String,
 }
 
@@ -56,6 +59,9 @@ pub struct NativeNotice {
     #[debug(with = plaintext_debug_fmt)]
     pub body: String,
     pub target: NoticeTarget,
+    /// Shown again under the same id, a notice replaces the one already shown instead of adding
+    /// a second (an app notice's id); `None` for one that is never repeated.
+    pub id: Option<String>,
     pub request_id: Option<Uuid>,
 }
 

@@ -12,4 +12,4 @@ method: string,
 /**
  * Absolute: `https://host[:port]/path?query`.
  */
-url: string, headers: Array<AppHttpHeader>, body: number[], };
+url: string, headers: Array<AppHttpHeader>, body: Uint8Array, };

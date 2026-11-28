@@ -4,4 +4,4 @@
  * One chunk of a pulled file. The file is complete when
  * `offset + data.len() == total_size`.
  */
-export type ReadPulledFileChunkSuccess = { cid: bigint, request_id: string | null, total_size: bigint, offset: bigint, data: number[], };
+export type ReadPulledFileChunkSuccess = { cid: bigint, request_id: string | null, total_size: bigint, offset: bigint, data: Uint8Array, };

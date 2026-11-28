@@ -46,7 +46,7 @@ impl Drop for RecoveryCodes {
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
 pub struct StepUp {
-    #[cfg_attr(feature = "typescript", ts(type = "number[] | null"))]
+    #[cfg_attr(feature = "typescript", ts(type = "Uint8Array | null"))]
     pub password: Option<SecBuffer>,
     /// Whether the window can answer a [`SecurityKeyChallengeNotification`]. Adding a key
     /// needs it (the new key's touch) even when the step-up itself is the password alone.
@@ -86,6 +86,8 @@ pub struct SecurityKeyChallengeNotification {
     pub ceremony: SecurityKeyCeremony,
     /// 32 bytes: the PRF `eval.first` input.
     #[debug(with = plaintext_debug_fmt)]
+    #[cfg_attr(feature = "typescript", ts(type = "Uint8Array"))]
+    #[serde(with = "crate::wire_bytes")]
     pub prf_salt: Vec<u8>,
     /// How long the SDK waits for the touch. An answer after that is refused.
     ///

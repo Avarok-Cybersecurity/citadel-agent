@@ -9,4 +9,4 @@ export type SessionAttached = { cid: bigint, role: SessionRole,
  * Proves a later attach to this session without the password. Lives as
  * long as the session does, in the agent's memory only.
  */
-token: number[], request_id: string | null, };
+token: Uint8Array, request_id: string | null, };

@@ -5,6 +5,7 @@ import type { AppHttpRequest } from "./AppHttpRequest";
 import type { AppKvNamespace } from "./AppKvNamespace";
 import type { AppKvOp } from "./AppKvOp";
 import type { AppNetGrant } from "./AppNetGrant";
+import type { AppNotice } from "./AppNotice";
 import type { Attachment } from "./Attachment";
 import type { BrowserConsoleEntry } from "./BrowserConsoleEntry";
 import type { ConfigCommand } from "./ConfigCommand";
@@ -28,7 +29,7 @@ server_address: string,
 /**
  * Absent for a `KeyOnly` account and for a recovery-phrase sign-in.
  */
-password: number[] | null, 
+password: Uint8Array | null, 
 /**
  * Whether this window can answer a `SecurityKeyChallengeNotification`.
  */
@@ -38,7 +39,7 @@ security_key: boolean,
  * the recovery console: a session that may only manage how the account signs in. The
  * agent binds it to the account's server (`kernel/recovery_domain.rs`).
  */
-recovery_phrase?: number[] | null, 
+recovery_phrase?: Uint8Array | null, 
 /**
  * A Turnstile token for a server that checks fresh sign-ins (Turnstile action
  * `sign-in`). Never logged.
@@ -77,7 +78,7 @@ resume_lifetime_s?: number | null, connect_mode: ConnectMode, udp_mode: UdpMode,
  * already true of every build the pipeline produces; it is written
  * down because the failure names neither the cause nor the component.
  */
-server_addr: string, full_name: string, username: string, proposed_password: number[], connect_after_register: boolean, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, 
+server_addr: string, full_name: string, username: string, proposed_password: Uint8Array, connect_after_register: boolean, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, 
 /**
  * A Turnstile token for a server that checks fresh registrations (Turnstile action
  * `register`). It admits the registration only: Turnstile tokens are single-use, so with
@@ -88,7 +89,7 @@ admission_token?: string | null,
 /**
  * As `Connect::resume_lifetime_s`, for the sign-in this request ends in.
  */
-resume_lifetime_s?: number | null, } } | { "IdentityStatus": { request_id: string, } } | { "IdentityCreate": { request_id: string, unlock_password: number[], } } | { "IdentityUnlock": { request_id: string, unlock_password: number[], } } | { "IdentityLock": { request_id: string, } } | { "IdentityExport": { request_id: string, unlock_password: number[], } } | { "IdentitySignChallenge": { request_id: string, 
+resume_lifetime_s?: number | null, } } | { "IdentityStatus": { request_id: string, } } | { "IdentityCreate": { request_id: string, unlock_password: Uint8Array, } } | { "IdentityUnlock": { request_id: string, unlock_password: Uint8Array, } } | { "IdentityLock": { request_id: string, } } | { "IdentityExport": { request_id: string, unlock_password: Uint8Array, } } | { "IdentitySignChallenge": { request_id: string, 
 /**
  * The issuer's canonical domain (`work.avarok.net`).
  */
@@ -100,11 +101,11 @@ aud: string,
 /**
  * The issuer's attempt nonce.
  */
-nonce: number[], 
+nonce: Uint8Array, 
 /**
  * `SHA3-256(verifier)` from the sign-in link.
  */
-challenge: number[], unlock_password: number[], } } | { "IdentityImport": { request_id: string, phrase: number[], unlock_password: number[], } } | { "IdentityBinding": { request_id: string, cid: bigint, } } | { "ServerDiscovery": { request_id: string, server_addr: string, } } | { "RegisterIdentity": { request_id: string, 
+challenge: Uint8Array, unlock_password: Uint8Array, } } | { "IdentityImport": { request_id: string, phrase: Uint8Array, unlock_password: Uint8Array, } } | { "IdentityBinding": { request_id: string, cid: bigint, } } | { "ServerDiscovery": { request_id: string, server_addr: string, } } | { "RegisterIdentity": { request_id: string, 
 /**
  * What the person typed: a domain, `host:port`, or a URL.
  */
@@ -116,7 +117,7 @@ resume_lifetime_s?: number | null, } } | { "ConnectIdentity": { request_id: stri
 /**
  * As `Connect::resume_lifetime_s`, for the sign-in this request ends in.
  */
-resume_lifetime_s?: number | null, } } | { "Message": { request_id: string, message: number[], cid: bigint, peer_cid: bigint | null, security_level: SecurityLevel, } } | { "Disconnect": { request_id: string, cid: bigint, } } | { "MediaOpen": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "MediaSend": { request_id: string, cid: bigint, peer_cid: bigint, 
+resume_lifetime_s?: number | null, } } | { "Message": { request_id: string, message: Uint8Array, cid: bigint, peer_cid: bigint | null, security_level: SecurityLevel, } } | { "Disconnect": { request_id: string, cid: bigint, } } | { "MediaOpen": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "MediaSend": { request_id: string, cid: bigint, peer_cid: bigint, 
 /**
  * Which stream within the call: audio, main video, or thumbnail video.
  */
@@ -132,13 +133,13 @@ timestamp: number,
 /**
  * Bit 0 = keyframe, bit 1 = discardable under congestion.
  */
-flags: number, payload: number[], } } | { "MediaClose": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "Deregister": { request_id: string, cid: bigint, } } | { "SendFile": { request_id: string, 
+flags: number, payload: Uint8Array, } } | { "MediaClose": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "Deregister": { request_id: string, cid: bigint, } } | { "SendFile": { request_id: string, 
 /**
  * File source - either a direct path or a reference to a PickFile result.
  * Use FileSource::Path for direct file paths, or FileSource::PickFileRef
  * to reference a previously picked file via its request_id.
  */
-source: FileSource, cid: bigint, peer_cid: bigint | null, chunk_size: number | null, transfer_type: TransferType, } } | { "StageUploadChunk": { request_id: string, cid: bigint, upload_id: string, file_name: string, total_size: bigint, offset: bigint, data: number[], } } | { "ReadPulledFileChunk": { request_id: string, cid: bigint, peer_cid: bigint | null, virtual_directory: string, offset: bigint, max_len: number, } } | { "RespondFileTransfer": { cid: bigint, peer_cid: bigint, object_id: ObjectId, accept: boolean, download_location: string | null, request_id: string, } } | { "DownloadFile": { virtual_directory: string, security_level: SecurityLevel | null, delete_on_pull: boolean, cid: bigint, peer_cid: bigint | null, request_id: string, } } | { "DeleteVirtualFile": { virtual_directory: string, cid: bigint, peer_cid: bigint | null, request_id: string, } } | { "PickFile": { request_id: string, cid: bigint, 
+source: FileSource, cid: bigint, peer_cid: bigint | null, chunk_size: number | null, transfer_type: TransferType, } } | { "StageUploadChunk": { request_id: string, cid: bigint, upload_id: string, file_name: string, total_size: bigint, offset: bigint, data: Uint8Array, } } | { "ReadPulledFileChunk": { request_id: string, cid: bigint, peer_cid: bigint | null, virtual_directory: string, offset: bigint, max_len: number, } } | { "RespondFileTransfer": { cid: bigint, peer_cid: bigint, object_id: ObjectId, accept: boolean, download_location: string | null, request_id: string, } } | { "DownloadFile": { virtual_directory: string, security_level: SecurityLevel | null, delete_on_pull: boolean, cid: bigint, peer_cid: bigint | null, request_id: string, } } | { "DeleteVirtualFile": { virtual_directory: string, cid: bigint, peer_cid: bigint | null, request_id: string, } } | { "PickFile": { request_id: string, cid: bigint, 
 /**
  * Optional title for the file picker dialog
  */
@@ -168,7 +169,7 @@ accept: boolean, udp_mode: UdpMode, session_security_settings: SessionSecuritySe
  * The accepting half of the TURN relay config: the initiator's PeerConnect carries the
  * other. Absent means no relay. Ignored on a decline.
  */
-turn?: PeerTurnConfig | null, } } | { "PeerRegister": { request_id: string, cid: bigint, peer_cid: bigint, session_security_settings: SessionSecuritySettings, connect_after_register: boolean, peer_session_password: PreSharedKey | null, } } | { "PeerRegisterRespond": { request_id: string, cid: bigint, peer_cid: bigint, accept: boolean, } } | { "LocalDBGetKV": { request_id: string, cid: bigint, peer_cid: bigint | null, key: string, } } | { "LocalDBSetKV": { request_id: string, cid: bigint, peer_cid: bigint | null, key: string, value: number[], } } | { "LocalDBDeleteKV": { request_id: string, cid: bigint, peer_cid: bigint | null, key: string, } } | { "LocalDBGetAllKV": { request_id: string, cid: bigint, peer_cid: bigint | null, } } | { "LocalDBClearAllKV": { request_id: string, cid: bigint, peer_cid: bigint | null, } } | { "GetSessions": { request_id: string, } } | { "GetAccountInformation": { request_id: string, cid: bigint | null, } } | { "GroupCreate": { cid: bigint, request_id: string, initial_users_to_invite: UserIdentifier[] | null, } } | { "GroupCreateAppTopic": { cid: bigint, request_id: string, 
+turn?: PeerTurnConfig | null, } } | { "PeerRegister": { request_id: string, cid: bigint, peer_cid: bigint, session_security_settings: SessionSecuritySettings, connect_after_register: boolean, peer_session_password: PreSharedKey | null, } } | { "PeerRegisterRespond": { request_id: string, cid: bigint, peer_cid: bigint, accept: boolean, } } | { "LocalDBGetKV": { request_id: string, cid: bigint, peer_cid: bigint | null, key: string, } } | { "LocalDBSetKV": { request_id: string, cid: bigint, peer_cid: bigint | null, key: string, value: Uint8Array, } } | { "LocalDBDeleteKV": { request_id: string, cid: bigint, peer_cid: bigint | null, key: string, } } | { "LocalDBGetAllKV": { request_id: string, cid: bigint, peer_cid: bigint | null, } } | { "LocalDBClearAllKV": { request_id: string, cid: bigint, peer_cid: bigint | null, } } | { "GetSessions": { request_id: string, } } | { "GetAccountInformation": { request_id: string, cid: bigint | null, } } | { "GroupCreate": { cid: bigint, request_id: string, initial_users_to_invite: UserIdentifier[] | null, } } | { "GroupCreateAppTopic": { cid: bigint, request_id: string, 
 /**
  * The install's manifest `limits.topics.max_msg_bytes`: the server refuses a larger
  * message to the group. At most `TOPIC_MAX_MSG_BYTES_CEILING`.
@@ -178,15 +179,15 @@ max_msg_bytes: number,
  * The install's manifest `limits.topics.max_msgs_per_s`, per sender. At most
  * `TOPIC_MAX_MSGS_PER_S_CEILING`.
  */
-max_msgs_per_s: number, } } | { "GroupLeave": { cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupEnd": { cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupMessage": { cid: bigint, message: number[], group_key: MessageGroupKey, request_id: string, } } | { "GroupInvite": { cid: bigint, peer_cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupRespondRequest": { cid: bigint, peer_cid: bigint, group_key: MessageGroupKey, response: boolean, request_id: string, invitation: boolean, } } | { "GroupKick": { cid: bigint, peer_cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupListGroupsFor": { cid: bigint, peer_cid: bigint | null, request_id: string, } } | { "GroupListJoined": { cid: bigint, request_id: string, } } | { "GroupRequestJoin": { cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "ConnectionManagement": { request_id: string, management_command: ConfigCommand, } } | { "ConversationSend": { request_id: string, cid: bigint, peer_cid: bigint, content: string, message_type: MessageType, reply_to: string | null, mentions: Array<string> | null, attachments: Array<Attachment> | null, document_id: string | null, document_title: string | null, security_level: SecurityLevel, } } | { "ConversationResend": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, } } | { "ConversationEdit": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, contents: string, } } | { "ConversationDelete": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, } } | { "ConversationReact": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, emoji: string, active: boolean, } } | { "ConversationMarkRead": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "ConversationRecord": { request_id: string, cid: bigint, peer_cid: bigint, message: ConversationMessage, } } | { "ConversationPatch": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, patch: MessagePatch, } } | { "ConversationClear": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "ConversationList": { request_id: string, cid: bigint, } } | { "ConversationPage": { request_id: string, cid: bigint, peer_cid: bigint, page: number | null, } } | { "SetAccountPreferences": { request_id: string, cid: bigint, preferences: AccountPreferences, } } | { "GetAccountPreferences": { request_id: string, cid: bigint, } } | { "NoticeSubscribe": { request_id: string, token: string, } } | { "NoticeSetMuted": { request_id: string, token: string, cid: bigint, muted: boolean, } } | { "UpdateGetStatus": { request_id: string, } } | { "UpdateCheckNow": { request_id: string, } } | { "UpdateApply": { request_id: string, } } | { "UpdateSetSettings": { request_id: string, auto_install: boolean, } } | { "AppsGetAgentSettings": { request_id: string, cid: bigint, } } | { "AppsSetAgentSettings": { request_id: string, cid: bigint, private_network: boolean, } } | { "UpdateInstallResult": { request_id: string, token: string, version: string, error: string | null, } } | { "SendReliable": { request_id: string, cid: bigint, peer_cid: bigint, message: number[], security_level: SecurityLevel, 
+max_msgs_per_s: number, } } | { "GroupLeave": { cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupEnd": { cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupMessage": { cid: bigint, message: Uint8Array, group_key: MessageGroupKey, request_id: string, } } | { "GroupInvite": { cid: bigint, peer_cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupRespondRequest": { cid: bigint, peer_cid: bigint, group_key: MessageGroupKey, response: boolean, request_id: string, invitation: boolean, } } | { "GroupKick": { cid: bigint, peer_cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "GroupListGroupsFor": { cid: bigint, peer_cid: bigint | null, request_id: string, } } | { "GroupListJoined": { cid: bigint, request_id: string, } } | { "GroupRequestJoin": { cid: bigint, group_key: MessageGroupKey, request_id: string, } } | { "ConnectionManagement": { request_id: string, management_command: ConfigCommand, } } | { "ConversationSend": { request_id: string, cid: bigint, peer_cid: bigint, content: string, message_type: MessageType, reply_to: string | null, mentions: Array<string> | null, attachments: Array<Attachment> | null, document_id: string | null, document_title: string | null, security_level: SecurityLevel, } } | { "ConversationResend": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, } } | { "ConversationEdit": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, contents: string, } } | { "ConversationDelete": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, } } | { "ConversationReact": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, emoji: string, active: boolean, } } | { "ConversationMarkRead": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "ConversationRecord": { request_id: string, cid: bigint, peer_cid: bigint, message: ConversationMessage, } } | { "ConversationPatch": { request_id: string, cid: bigint, peer_cid: bigint, message_id: string, patch: MessagePatch, } } | { "ConversationClear": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "ConversationList": { request_id: string, cid: bigint, } } | { "ConversationPage": { request_id: string, cid: bigint, peer_cid: bigint, page: number | null, } } | { "SetAccountPreferences": { request_id: string, cid: bigint, preferences: AccountPreferences, } } | { "GetAccountPreferences": { request_id: string, cid: bigint, } } | { "NoticeSubscribe": { request_id: string, token: string, } } | { "NoticeSetMuted": { request_id: string, token: string, cid: bigint, muted: boolean, } } | { "UpdateGetStatus": { request_id: string, } } | { "UpdateCheckNow": { request_id: string, } } | { "UpdateApply": { request_id: string, } } | { "UpdateSetSettings": { request_id: string, auto_install: boolean, } } | { "AppsGetAgentSettings": { request_id: string, cid: bigint, } } | { "AppsSetAgentSettings": { request_id: string, cid: bigint, private_network: boolean, } } | { "AppNoticePost": { request_id: string, cid: bigint, notice: AppNotice, } } | { "AppRemindersSync": { request_id: string, cid: bigint, app_id: string, reminders: Array<AppNotice>, } } | { "UpdateInstallResult": { request_id: string, token: string, version: string, error: string | null, } } | { "SendReliable": { request_id: string, cid: bigint, peer_cid: bigint, message: Uint8Array, security_level: SecurityLevel, 
 /**
  * "json", "text", "yjs-update", "opaque", "cbor-command", or none.
  */
-compression_hint: string | null, } } | { "SecurityKeyAnswer": { request_id: string, challenge_id: string, credential_id: Array<number>, 
+compression_hint: string | null, } } | { "SecurityKeyAnswer": { request_id: string, challenge_id: string, credential_id: Uint8Array, 
 /**
  * The 32-byte WebAuthn PRF output. Handed to the SDK and wiped; never logged.
  */
-prf_output: number[], } } | { "SecurityKeyDecline": { request_id: string, challenge_id: string, reason: string, } } | { "SignInManagement": { request_id: string, cid: bigint, op: SignInManagementOp, step_up: StepUp, } } | { "BrowserConsole": { request_id: string, cid: bigint, entries: Array<BrowserConsoleEntry>, } } | { "AppFetch": { request_id: string, cid: bigint, app_id: string, install_id: string, grant: AppNetGrant, request: AppHttpRequest, stream: boolean, } } | { "AppFetchCredit": { request_id: string, cid: bigint, fetch_id: string, n: number, } } | { "AppFetchCancel": { request_id: string, cid: bigint, fetch_id: string, } } | { "GetAppNetUsage": { request_id: string, cid: bigint, install_id: string, } } | { "AppKv": { request_id: string, cid: bigint, namespace: AppKvNamespace, op: AppKvOp, } } | { "IhttpSend": { request_id: string, cid: bigint, peer_cid: bigint, frame: number[], } } | { "AppSessionOpen": { request_id: string, cid: bigint, app_id: string, install_id: string, acting_username: string, server: string, } } | { "AppSessionSend": { request_id: string, cid: bigint, install_id: string, session: number, body: number[], } } | { "AppSessionClose": { request_id: string, cid: bigint, install_id: string, session: number, } } | { "Batched": { request_id: string, 
+prf_output: Uint8Array, } } | { "SecurityKeyDecline": { request_id: string, challenge_id: string, reason: string, } } | { "SignInManagement": { request_id: string, cid: bigint, op: SignInManagementOp, step_up: StepUp, } } | { "BrowserConsole": { request_id: string, cid: bigint, entries: Array<BrowserConsoleEntry>, } } | { "AppFetch": { request_id: string, cid: bigint, app_id: string, install_id: string, grant: AppNetGrant, request: AppHttpRequest, stream: boolean, } } | { "AppFetchCredit": { request_id: string, cid: bigint, fetch_id: string, n: number, } } | { "AppFetchCancel": { request_id: string, cid: bigint, fetch_id: string, } } | { "GetAppNetUsage": { request_id: string, cid: bigint, install_id: string, } } | { "AppKv": { request_id: string, cid: bigint, namespace: AppKvNamespace, op: AppKvOp, } } | { "IhttpSend": { request_id: string, cid: bigint, peer_cid: bigint, frame: Uint8Array, } } | { "AppSessionOpen": { request_id: string, cid: bigint, app_id: string, install_id: string, acting_username: string, server: string, } } | { "AppSessionSend": { request_id: string, cid: bigint, install_id: string, session: number, body: Uint8Array, } } | { "AppSessionClose": { request_id: string, cid: bigint, install_id: string, session: number, } } | { "Batched": { request_id: string, 
 /**
  * The list of commands to execute in parallel
  */
@@ -198,7 +199,7 @@ server_addr: string, username: string,
 /**
  * The 24 words as typed. Never logged.
  */
-phrase: number[], 
+phrase: Uint8Array, 
 /**
  * What to call this device among the account's security events (1 to 64 characters).
  */
